@@ -1,6 +1,6 @@
 """Zip is transport only. Comfy/Salad must see raw ``*.safetensors``.
 
-Never ``RUN unzip`` in the Dockerfile — that bakes the 17 GB files into an
+Never ``RUN unzip`` in the Dockerfile. That bakes the 17 GB files into an
 image layer. Inflate at container start (prefetch) or when staging locally.
 """
 from __future__ import annotations
@@ -80,7 +80,7 @@ def ensure_safetensors(dest: str | Path) -> str:
     if dest_p.is_file() and not is_zip_file(dest_p):
         return "have"
     if dest_p.is_file() and is_zip_file(dest_p):
-        # COPY foo.safetensors that is actually a zip — inflate in place.
+        # COPY foo.safetensors that is actually a zip. Inflate in place.
         tmp_zip = dest_p.with_suffix(dest_p.suffix + ".zip.bak")
         dest_p.replace(tmp_zip)
         try:

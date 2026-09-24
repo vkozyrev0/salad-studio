@@ -659,7 +659,7 @@ class BuildRequest(unittest.TestCase):
 
 class UnetVocabulary(unittest.TestCase):
     """Three unet families. The SNOFS cut must NOT be read as the plain distilled
-    one — its filename contains both "snofs" and "distilled", and mistaking it
+    one, its filename contains both "snofs" and "distilled", and mistaking it
     sends the request to the wrong container group."""
 
     def test_the_three_labels_round_trip(self) -> None:

@@ -1,8 +1,8 @@
 """Entry-point test: `python -m salad_studio` must resolve the app's main.
 
 Covers the module the audit flagged as untested (M19). Importing the
-package's `__main__` only binds the name — `main()` runs under the
-`__name__ == "__main__"` guard — so no window is created here.
+package's `__main__` only binds the name, `main()` runs under the
+`__name__ == "__main__"` guard, so no window is created here.
 """
 from __future__ import annotations
 

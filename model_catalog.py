@@ -3,7 +3,7 @@
 
 Weights live in art/model-cache/ (gitignored, under /art/). The on-disk
 index.json stores source URLs, Civitai ids, hashes, and local filenames.
-Salad Comfy still URL-loads on a new replica — this cache stops *this*
+Salad Comfy still URL-loads on a new replica, this cache stops *this*
 machine from re-pulling Civitai, and is the bake source for a custom image.
 
     python model_catalog.py seed
@@ -59,7 +59,7 @@ UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 )
-# Auto-fetch LoRAs under this size. UltraRealPhoto v2 is ~2 GB — metadata only.
+# Auto-fetch LoRAs under this size. UltraRealPhoto v2 is ~2 GB, metadata only.
 AUTO_MAX_BYTES = 64 * 1024 * 1024
 CIVITAI_REF = re.compile(
     r"(?:civitai:)?(?P<model>\d+)(?:@(?P<version>\d+))?",
@@ -179,11 +179,11 @@ KNOWN: list[dict[str, Any]] = [
             "sha256": "8F14F15040C2E041DE87058E29317663338BB6B77054D224C1BFCCFFCFEB1E35",
             "size_bytes": 9078612168,
             "note": (
-                "The checkpoint with SNOFS built in — the author's own SNOFS merged onto "
+                "The checkpoint with SNOFS built in, the author's own SNOFS merged onto "
                 "distilled Klein 9B as an fp8 unet, which is why the two-body plates "
                 "ride it: prompt_snofs_distilled_anatomy.json / _resms.json set node 70 "
                 "to this very filename. On this route there is no separate SNOFS LoRA "
-                "weight to set — the LoKr (civitai:1972981@2960556) belongs to the plain "
+                "weight to set, the LoKr (civitai:1972981@2960556) belongs to the plain "
                 "/ base Klein unet route, and stacked on this unet it measured safe but "
                 "redundant. Same bytes as the HF mirror edwixx/Flux2Klein9B_SNOFS "
                 "snofsSexNudesAndOtherFunStuff_distilledV12Fp8.safetensors, which is what "
@@ -658,14 +658,14 @@ KNOWN: list[dict[str, Any]] = [
             "size_bytes": 1090563760,
             "note": (
                 "LoKr; Comfy LoraLoader reads the format. Trained on full natural-language "
-                "sentences, not tags — the author's own vocabulary (missionary / doggystyle / "
+                "sentences, not tags, the author's own vocabulary (missionary / doggystyle / "
                 "cowgirl / spooning / prone position) is what it answers to. 0.3-0.7 on the "
                 "two-body recipe: when limbs explode, lower SNOFS FIRST, before the anatomy "
                 "fixer. The author's advice is to try SNOFS alone before stacking other "
                 "general NSFW LoRAs on it. Runs on Klein 9B base as well as distilled. On "
                 "this group the shipped plates ride the SNOFS distilled v1.2 UNET instead "
                 "(civitai:2416142@2786085, the unet prompt_snofs_distilled_anatomy.json "
-                "names) — 0.3 measured safe but redundant there; apply this LoKr on the "
+                "names), 0.3 measured safe but redundant there; apply this LoKr on the "
                 "plain / base Klein unet route."
             ),
         },
@@ -713,7 +713,7 @@ KNOWN: list[dict[str, Any]] = [
             "sha256": "016E0D4FE9409338A29D07DBA0BF00A9BBB4F4AA4753B7F54882372DF107CAE3",
             "size_bytes": 174099976,
             "note": (
-                "Sitting / back-facing two-body poses — the cowgirl weak spot. 1A is general "
+                "Sitting / back-facing two-body poses, the cowgirl weak spot. 1A is general "
                 "use and the author's default; 1C (2627093) is the other cut, and the MLX "
                 "builds are for Mac. Adds at ~1.0, and only when someone is sitting with "
                 "their back to the camera."
@@ -739,7 +739,7 @@ KNOWN: list[dict[str, Any]] = [
             "size_bytes": 165704424,
             "note": (
                 "Male genital / body accuracy. Trained words: penis, erect, flaccid, "
-                "foreskin, hung, uncircumcised — name the type in the prompt rather than "
+                "foreskin, hung, uncircumcised, name the type in the prompt rather than "
                 "leaving it to the model. v1.5BETA (2790299) has more variation but the "
                 "author flags distortion; v1.0 is the stable cut. ~0.6-1.0."
             ),
@@ -1095,7 +1095,7 @@ def cmd_seed(_: argparse.Namespace) -> int:
 def cmd_list(_: argparse.Namespace) -> int:
     data = load_index()
     if not data["items"]:
-        print("(empty — run seed)")
+        print("(empty, run seed)")
         return 0
     for it in data["items"]:
         local = it.get("local_file") or "-"

@@ -2138,7 +2138,7 @@ class ComfySubgraphUuid(unittest.TestCase):
         """A LoraLoaderModelOnly LoRA must reach the POST copy.
 
         WIDGET_ORDER had no entry for the class, so _widget_inputs returned {}
-        and the node left Convert with no lora_name — the ModelOnly pass in
+        and the node left Convert with no lora_name, the ModelOnly pass in
         prompt_for_salad_replica then dropped it, silently losing the LoRA.
         The class has two widgets (no strength_clip), so a LoraLoader tuple
         would misalign strength_model.

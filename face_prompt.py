@@ -97,7 +97,7 @@ def compose_face_prompt(
     looks_tier: str | None = None,
     pack: dict[str, Any] | None = None,
 ) -> str:
-    """Text-to-image prompt — identical string for fal and xai backends."""
+    """Text-to-image prompt, identical string for fal and xai backends."""
     pack = pack or load_pack()
     style = pack.get("style") or {}
     key, entry = _stage_entry(pack, age_stage)
@@ -161,7 +161,7 @@ def compose_age_edit_prompt(
 def compose_negative(
     age_stage: str | None = None, pack: dict[str, Any] | None = None
 ) -> str:
-    """Combined negative / Avoid string — same content for fal --negative and xai."""
+    """Combined negative / Avoid string, same content for fal --negative and xai."""
     pack = pack or load_pack()
     style = pack.get("style") or {}
     bits = [style.get("global_negative") or ""]
@@ -181,9 +181,9 @@ def compose_body_prompt(
     pregnancy_stage: str | None = None,
     pack: dict[str, Any] | None = None,
 ) -> str:
-    """Body catalog prompt — same age_stages + house style as faces (no face).
+    """Body catalog prompt, same age_stages + house style as faces (no face).
 
-    `pregnancy_stage`: none|early|mid|late — when early/mid/late, injects
+    `pregnancy_stage`: none|early|mid|late, when early/mid/late, injects
     visible belly progression for female body plates.
     """
     pack = pack or load_pack()

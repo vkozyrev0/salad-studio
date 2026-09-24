@@ -81,7 +81,7 @@ def main() -> int:
                 print(f"FAILED {name}: {type(exc).__name__}: {exc}", flush=True)
                 failed += 1
     if failed:
-        print(f"aborted — {failed}/{len(JOBS)} download(s) failed")
+        print(f"aborted, {failed}/{len(JOBS)} download(s) failed")
         return 1
     print("ok both unets")
     return 0

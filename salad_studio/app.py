@@ -458,7 +458,7 @@ class SaladStudio(tk.Tk):
         gw = self.var_gateway.get().strip()
         if not gw:
             # Empty Config gateway: mark the active word Down, then fall through
-            # on purpose — the probe below still fills the dual replica badges
+            # on purpose. The probe below still fills the dual replica badges
             # from the profile gateways (see _status_targets).
             self._set_salad_word("Down")
         if self._salad_check_busy:
@@ -534,7 +534,7 @@ class SaladStudio(tk.Tk):
         self._policy.columnconfigure(1, weight=1)
         ttk.Label(
             self._policy,
-            text="Salad group probes for the Config gateway. Load reads the live group (including portal edits). Apply PATCHes Salad — not the Docker image.",
+            text="Salad group probes for the Config gateway. Load reads the live group (including portal edits). Apply PATCHes Salad, not the Docker image.",
             wraplength=760,
         ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
         self.var_pol_group = tk.StringVar(value="")
@@ -1137,7 +1137,7 @@ class SaladStudio(tk.Tk):
 
         issue_box = ttk.LabelFrame(
             self._helper,
-            text="Image issue / problem (highest priority — the AI must fix this first)",
+            text="Image issue / problem (highest priority, the AI must fix this first)",
             padding=8,
         )
         issue_box.grid(row=2, column=0, sticky="ew", pady=(8, 0))
@@ -1211,9 +1211,9 @@ class SaladStudio(tk.Tk):
     def _refresh_helper_image_label(self) -> None:
         latest = self._latest_generated_image()
         if not self.var_helper_image.get():
-            text = "off — no image is sent to DeepSeek"
+            text = "off, no image is sent to DeepSeek"
         elif latest is None:
-            text = "no generated image yet — nothing will be attached"
+            text = "no generated image yet, nothing will be attached"
         else:
             text = f"attaching {latest.name}"
         try:
@@ -1283,7 +1283,7 @@ class SaladStudio(tk.Tk):
         if backend == "deepseek":
             key = tokens.read_token("deepseek")
             if not key:
-                self.helper_state.set("No DeepSeek key — save one on the Tokens tab")
+                self.helper_state.set("No DeepSeek key. Save one on the Tokens tab")
                 self._set_helper_reply(
                     "No DeepSeek key is saved. Add it on the Tokens tab, then press "
                     "Help again."
@@ -1341,7 +1341,7 @@ class SaladStudio(tk.Tk):
         if not positive and not negative:
             messagebox.showinfo(
                 "Salad Studio",
-                "The adjusted prompts are empty — ask DeepSeek for help first.",
+                "The adjusted prompts are empty. Ask DeepSeek for help first.",
             )
             return
         raw = self.editor_text.get("1.0", "end").strip()
@@ -1384,7 +1384,7 @@ class SaladStudio(tk.Tk):
         if isinstance(err, ai_helper.ReplyError):
             # Never blank the boxes: show the model's raw words instead.
             self._set_helper_reply(err.raw or str(err))
-            self.helper_state.set("Reply was not usable — raw text shown below")
+            self.helper_state.set("Reply was not usable. Raw text shown below")
             self.status.set("Prompt Assist: reply could not be parsed")
             self.log("warn", f"Prompt Assist: unparsable reply from {label} ({err})")
             return
@@ -1395,8 +1395,8 @@ class SaladStudio(tk.Tk):
             self.log("error", f"Prompt Assist ({label}): {err}")
             return
         assert out is not None
-        # A reply that is missing one of the two prompts — a reasoning model
-        # that restarted its JSON can leave one empty — must not wipe what the
+        # A reply that is missing one of the two prompts. A reasoning model
+        # that restarted its JSON can leave one empty. Must not wipe what the
         # artist typed in that box.
         blank: list[str] = []
         for widget, value, name in (
@@ -1412,13 +1412,13 @@ class SaladStudio(tk.Tk):
             self.log(
                 "warn",
                 f"Prompt Assist: the {label} reply carried no "
-                f"{' or '.join(blank)} prompt — what you had there is kept",
+                f"{' or '.join(blank)} prompt. What you had there is kept",
             )
         self._set_helper_reply(str(out.get("raw") or ""))
         found = str(out.get("issue") or "").strip()
         if found:
-            self.helper_state.set(f"Adjusted prompts updated — image issue: {found[:140]}")
-            self.log("info", f"Prompt Assist: {label} saw — {found}")
+            self.helper_state.set(f"Adjusted prompts updated. Image issue: {found[:140]}")
+            self.log("info", f"Prompt Assist: {label} saw, {found}")
         else:
             self.helper_state.set(f"Adjusted prompts updated from {label}")
         self.status.set("Prompt Assist: adjusted prompts updated")
@@ -1652,7 +1652,7 @@ class SaladStudio(tk.Tk):
         self.import_meta.grid(row=0, column=0, sticky="nsew")
         wf_box = ttk.LabelFrame(
             self._import,
-            text="Comfy workflow JSON (paste is held in memory — Clear Import if the UI crawls)",
+            text="Comfy workflow JSON (paste is held in memory. Clear Import if the UI crawls)",
             padding=8,
         )
         wf_box.grid(row=2, column=0, sticky="nsew")
@@ -1671,7 +1671,7 @@ class SaladStudio(tk.Tk):
         yscroll.grid(row=0, column=1, sticky="ns")
         knobs = ttk.LabelFrame(
             self._import,
-            text="Graph knobs (applied on Convert — empty = from paste; set to override)",
+            text="Graph knobs (applied on Convert, empty = from paste; set to override)",
             padding=8,
         )
         knobs.grid(row=3, column=0, sticky="ew", pady=(8, 0))
@@ -1785,7 +1785,7 @@ class SaladStudio(tk.Tk):
             return
         self.import_workflow.insert(
             "1.0",
-            f"[Comfy workflow JSON in memory — {n:,} characters]\n"
+            f"[Comfy workflow JSON in memory, {n:,} characters]\n"
             "Not shown in this box so the UI stays fast. Convert uses this paste.\n"
             "Clear Import to drop it.",
         )
@@ -3097,7 +3097,7 @@ class SaladStudio(tk.Tk):
                     msg = "JSON valid, but Civitai token is missing"
         line = msg
         if extra:
-            line = msg + " — " + "; ".join(extra)
+            line = msg + ", " + "; ".join(extra)
         self.json_status.set(msg if ok else line)
         self.log("ok" if ok else "error", f"Validate: {line}")
         if popup and not ok:
@@ -3281,13 +3281,13 @@ class SaladStudio(tk.Tk):
         # Route by the unet the graph loads. One container group serves one unet
         # family: a second ~9 GB unet cannot fit in VRAM beside the 8.66 GB text
         # encoder, so Comfy streams weights from host memory and a seconds-long
-        # render becomes minutes — which the gateway then cuts off with a 524.
+        # render becomes minutes, which the gateway then cuts off with a 524.
         #
         # The comparison is against the group the form's GATEWAY points at, not
         # against the form's unet. Loading a JSON into the editor rewrites
         # var_unet from the graph (_rebuild_from_json), so comparing the graph's
         # family to the form's unet compares the graph with itself and can never
-        # fire — which is how a SNOFS graph reached the klein group. (2026-09-22)
+        # fire, which is how a SNOFS graph reached the klein group. (2026-09-22)
         loaded = profiles.payload_unets(payload)
         want = profiles.unet_family(loaded[0]) if loaded else ""
         if want:
@@ -3307,7 +3307,7 @@ class SaladStudio(tk.Tk):
                 name, routed = target
                 self.log(
                     "info",
-                    f"Routed to profile {name!r} (gateway {routed.gateway}) — this graph loads "
+                    f"Routed to profile {name!r} (gateway {routed.gateway}). This graph loads "
                     f"{loaded[0]}, so it belongs on the {want} group.",
                 )
                 p = routed
@@ -3364,11 +3364,11 @@ class SaladStudio(tk.Tk):
                 if err:
                     # Probe rather than re-apply the cached word. A failed render
                     # usually means the replica went away mid-job, and the cache
-                    # still says Ready from before it did — which is how the app
+                    # still says Ready from before it did, which is how the app
                     # kept reporting a container that had already restarted as up.
                     self._check_salad_status(silent=True)
                     self.var_gen_state.set(f"Failed after {elapsed}s")
-                    self.status.set("Failed — see Logs")
+                    self.status.set("Failed. See Logs")
                     messagebox.showerror("Salad Studio", err)
                     return
                 self._apply_generate_gate(self.var_salad_status.get())

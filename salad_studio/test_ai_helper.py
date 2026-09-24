@@ -1,6 +1,6 @@
 """Prompt Assist: the DeepSeek request contract and reply parsing.
 
-The HTTP transport is faked at the boundary — the shipped code builds the
+The HTTP transport is faked at the boundary, the shipped code builds the
 request, so the URL, the auth header and the body are all the real ones.
 """
 from __future__ import annotations
@@ -545,7 +545,7 @@ class ReplyParsing(unittest.TestCase):
 
     def test_json_with_surrounding_prose(self) -> None:
         self.assertEqual(
-            ai.parse_reply('Here you go: {"positive": "a", "negative": "b"} — enjoy'),
+            ai.parse_reply('Here you go: {"positive": "a", "negative": "b"}, enjoy'),
             ("a", "b"),
         )
 
@@ -648,8 +648,8 @@ class ScriptedSend:
 class AReasoningModelsReplyIsNotItsFragment(unittest.TestCase):
     """The reported bug: a piece of the reply was taken for the whole reply.
 
-    A model that reasons first quotes things that parse as JSON — the schema in
-    this module's own system prompt, a first draft — and that quoted piece used
+    A model that reasons first quotes things that parse as JSON, the schema in
+    this module's own system prompt, a first draft, and that quoted piece used
     to be handed back as the answer.
     """
 

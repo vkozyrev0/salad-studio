@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline tests for salad_studio.generator — never hits the network."""
+"""Offline tests for salad_studio.generator, never hits the network."""
 from __future__ import annotations
 
 import base64
@@ -319,7 +319,7 @@ class PromptEditorPayload(unittest.TestCase):
 
 class CheckLoraUrls(unittest.TestCase):
     """A LoRA is loaded by the replica *from its URL* when the Comfy graph runs.
-    Nothing is downloaded here — the check only catches a wrong or expired URL
+    Nothing is downloaded here, the check only catches a wrong or expired URL
     while it is cheap, instead of letting it surface later as an HTTP 524."""
 
     URL = "https://civitai.com/api/download/models/2615554?token=test-token"
@@ -392,7 +392,7 @@ class CheckLoraUrls(unittest.TestCase):
     def test_a_ranged_get_206_counts_as_resolved(self) -> None:
         """206 is the ranged GET's normal answer when the CDN honours `Range`.
 
-        Civitai's does — HEAD is refused with 403 and the GET returns
+        Civitai's does, HEAD is refused with 403 and the GET returns
         ``206 Partial Content``. Testing only for 200 therefore reported every
         live LoRA as "unconfirmed" and warned on every tokenised URL.
         """

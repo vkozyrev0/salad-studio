@@ -1,9 +1,9 @@
-# 22 — Can we get anatomically correct two-body scenes *every time*?
+# 22. Can we get anatomically correct two-body scenes *every time*?
 
 **Status: an external research record, not a decision.** Two independent
 deep-research passes ran on **2026-09-23** against the question *"we need our sex
 scenes to be perfect, anatomically correct, every time"*. Both returned
-**Partial** — coverage gaps remain and are listed in §7. This document records
+**Partial**. Coverage gaps remain and are listed in §7. This document records
 what they found, with the sources they cite, so the next session does not
 re-derive it.
 
@@ -26,17 +26,17 @@ Three findings, and both passes converge on all three.
 1. **No diffusion configuration in either family is documented as guaranteeing
    anatomically correct two-body interlock.** No source either pass inspected
    publishes a measured per-scene seed hit rate or a two-body anatomy benchmark.
-   The numbers that circulate — *"~20 % unwanted second male"*, *"vaginal ~50 %
-   of the time when anal was requested"* — are author and user anecdotes, not
+   The numbers that circulate, *"~20 % unwanted second male"*, *"vaginal ~50 %
+   of the time when anal was requested"*, are author and user anecdotes, not
    measurements, and the passes say so.
 2. **The only route where interlocked anatomy is correct *by construction* is
-   3D** — a DAZ figure taken through Blender (geograft weld → render →
+   3D**. A DAZ figure taken through Blender (geograft weld → render →
    composite), or an engine with hand-keyed penetration. Diffusion is then
    reserved for styling and aftereffects.
 3. **The one code-verified mechanism for keeping two partners' features from
    bleeding together targets our current family, not SDXL.** Masking each
-   regional LoRA's activation delta to its own box — so it multiplies to zero
-   everywhere else — is implemented for **Krea 2 / Flux.2-Klein** and explicitly
+   regional LoRA's activation delta to its own box, so it multiplies to zero
+   everywhere else, is implemented for **Krea 2 / Flux.2-Klein** and explicitly
    refuses adapters trained for a different base architecture [18]. An
    SDXL/Illustrious stack therefore **cannot** use it and is left with regional
    prompting, which reduces cross-contamination rather than eliminating it.
@@ -47,11 +47,11 @@ diffusion config. It is either *accept the seed lottery and select* (what doc 21
 
 ---
 
-## 2. Route A — what we already run (Klein / SNOFS)
+## 2. Route A. What we already run (Klein / SNOFS)
 
 - Per-partner separation by **per-region LoRA-delta masking** is the only
   code-verified technique. Implementations: **RegioCraft** and the **Nougan
-  regional-character node** — both scoped to Krea 2 / Flux.2-Klein, both refusing
+  regional-character node**, both scoped to Krea 2 / Flux.2-Klein, both refusing
   mismatched adapters [18].
 - This is the family our verified recipe uses. It is *not* a guarantee: doc 21 §1
   records 2 of 7 seeds acceptable on the judged prompt.
@@ -59,12 +59,12 @@ diffusion config. It is either *accept the seed lottery and select* (what doc 21
 
 ---
 
-## 3. Route B — SDXL / Illustrious
+## 3. Route B. SDXL / Illustrious
 
 ### 3.1 Salad Cloud does not stock the models this route needs
 
 - The portal ComfyUI recipe enumerates exactly **Dreamshaper 8, Stable Diffusion
-  XL, FLUX.1-Schnell, FLUX.1-Dev, SD 3.5 Medium, and `custom`** — no Illustrious,
+  XL, FLUX.1-Schnell, FLUX.1-Dev, SD 3.5 Medium, and `custom`**. No Illustrious,
   NoobAI, WAI-Illustrious, Pony, or Lustify [7]. The public catalog lists the same
   six recipes and offers "bring any Docker image" as the escape hatch [8].
 - The SDXL manifest downloads **only** Stability AI's base 1.0 and refiner 1.0.
@@ -93,7 +93,7 @@ diffusion config. It is either *accept the seed lottery and select* (what doc 21
   its author warns weights **above 0.8 fall apart** (especially alongside other
   LoRAs) and recommends **0.25–0.75** [2].
 - The **"Anatomy Helper"** fixer is trained on 333 images of women and improves
-  hands, feet and pose variety — a **single-body** enhancer, not a two-body
+  hands, feet and pose variety, a **single-body** enhancer, not a two-body
   interlock guarantee [3].
 - **Hassaku XL v3 (WIP)**, an Illustrious/WAI-based checkpoint, is documented by
   its author and users as unreliable for two-body scenes: extra people appear,
@@ -108,20 +108,20 @@ diffusion config. It is either *accept the seed lottery and select* (what doc 21
 ### 3.3 Separating two partners
 
 - Two character LoRAs stacked normally blend into "one face that's a blend of
-  both, in both spots" — a LoRA stack applies every adapter uniformly. The fix
+  both, in both spots". A LoRA stack applies every adapter uniformly. The fix
   (per-region delta masking, §2) is unavailable on SDXL [18].
 - SDXL's equivalent is **regional conditioning**:
-  - **Forge Couple** (Attention Couple port, SD1/SDXL only) — Basic mode maps
+  - **Forge Couple** (Attention Couple port, SD1/SDXL only). Basic mode maps
     each prompt line to a tile, Advanced gives 0.0–1.0 x/y boxes and per-region
     weights, Mask mode for hand-drawn regions, and a first/last "Global Effect"
     line for background or style tags [19].
-  - **Regional Prompter** — Attention mode is the default; **Latent mode is the
+  - **Regional Prompter**. Attention mode is the default; **Latent mode is the
     only mode that separates LoRAs to a region**, at a cost of areas × single-image
     time, and carries a documented latent-mode LoRA corruption issue whose
     remedies run from lowering CFG/LoRA weight and raising steps, through
     per-LoRA TE/UNet weights and LoRA block weight, to "if all else fails,
     inpaint" [20].
-  - **Latent Couple** — splits the latent space (divisions, positions, weights,
+  - **Latent Couple**. Splits the latent space (divisions, positions, weights,
     "end at this step", e.g. base region 0.2 and each character region 0.8) with
     subprompts joined by `AND`; its documented examples are SD 1.5-era [21].
 - Identity injection: **PuLID** SDXL (v1, v1.1) pairs a Lightning T2I branch with
@@ -130,7 +130,7 @@ diffusion config. It is either *accept the seed lottery and select* (what doc 21
   whose SDXL FaceID variants are labelled experimental. **Neither is a spatial or
   pose controller** [22].
 - The research-grade answer for two personalized subjects **in physical contact**
-  is **OMG** (ECCV 2024): a two-stage occlusion-friendly framework — layout
+  is **OMG** (ECCV 2024): a two-stage occlusion-friendly framework, layout
   generation plus visual-comprehension collection for occlusions, then designed
   noise blending whose initiation denoising timestep is the key to identity
   preservation and layout. It combines with LoRA or InstantID without extra
@@ -139,11 +139,11 @@ diffusion config. It is either *accept the seed lottery and select* (what doc 21
 ### 3.4 Pose control and interlock
 
 - **No concrete two-skeleton OpenPose recipe for SDXL at 1024 was verified** by
-  either pass — no node pack, preprocessor, handler, or documented limit for
+  either pass. No node pack, preprocessor, handler, or documented limit for
   overlapping interlocked bodies. Both passes name this the single highest-value
   unanswered operational question [13].
 - What does exist: an SDXL ControlNet trained on **DWPose** conditioning at 1024
-  for 15,000 steps [14]; preprocessors that emit **multi-skeleton** hints —
+  for 15,000 steps [14]; preprocessors that emit **multi-skeleton** hints.
   DWPose uses a YOLO bbox detector plus a whole-body estimator, returns a list of
   poses, encodes OpenPose JSON with a `people` list, and draws every detected
   pose on one canvas [15]; and an editor node pack with documented multi-person
@@ -171,14 +171,14 @@ stands and is *"no verified tool"*, not *"verified to be none"* [13][34][35].
 
 ---
 
-## 4. Route C — 3D: anatomy by construction
+## 4. Route C. 3D: anatomy by construction
 
 ### 4.1 DAZ → Blender
 
 - Genitals are added in DAZ Studio as a **geograft** plus shell and genital
   material, exported as a DBZ [28].
 - **Merge Geografts** removes the body vertices hidden beneath the anatomy piece
-  and merges boundary vertices into a single seamless mesh — a literal **weld**,
+  and merges boundary vertices into a single seamless mesh, a literal **weld**,
   not a generated approximation [24].
 - The cost: the operation is **vertex-number-based and destructive**. Morphs can
   no longer be imported afterwards, **all geografts must be merged in one pass**,
@@ -197,12 +197,12 @@ stands and is *"no verified tool"*, not *"verified to be none"* [13][34][35].
   (BSDF, Cycles), light with an HDRI, then Film → Transparent so the HDRI lights
   only and the render carries alpha for compositing. **8K stills took roughly
   34 minutes to 2 hours on a 6 GB RTX 3060** [26].
-- Isolation for compositing comes from **Cryptomatte** — ID mattes generated
+- Isolation for compositing comes from **Cryptomatte**, ID mattes generated
   automatically with motion blur, transparency and depth-of-field support, using
   organizational information already present at render time [27].
 - **Penetration mechanics:** a developer thread converges on **hand-keying**
-  penetration in the Maya/Blender rig alongside the rest of the animation —
-  described as producing *"by far the best results"* — with the same poster
+  penetration in the Maya/Blender rig alongside the rest of the animation,
+  described as producing *"by far the best results"*, with the same poster
   reporting his procedural attempts *"never came close to just manually animated
   scenes"* [30].
 
@@ -222,7 +222,7 @@ stands and is *"no verified tool"*, not *"verified to be none"* [13][34][35].
 - **Exporting DAZ characters with genitals to Unreal is itself a problem**: the
   official DazToUnreal bridge loses genital morphs (Shell), imports overlapping
   geometry (Merge Fitted), or drops the shell and genital UVs (Delete Overlapping
-  Polygons) — the last being the only variant whose vagina morphs export and work.
+  Polygons), the last being the only variant whose vagina morphs export and work.
   The community fallback is **DAZ → Blender (Diffeomorphic) → Unreal**, or the
   ~$120 DazToHue + Houdini package that ships full ControlRigs for the Golden
   Palace and Dicktator genitals [31].
@@ -248,7 +248,7 @@ stands and is *"no verified tool"*, not *"verified to be none"* [13][34][35].
   overruns as Cloudflare **524**. Multi-minute generation must use the **Job
   Queue** path, documented as having no timeout limit [11].
 - **Load-balancer settings cannot be changed after the container group is
-  created** — timeouts, algorithm and concurrency all require a **new group**.
+  created**. Timeouts, algorithm and concurrency all require a **new group**.
   An existing group can be repurposed by PATCHing `container.image` [11][34].
 - Default is **3 replicas**; at least 3 for testing and **at least 5 for
   production**, since nodes are **interruptible without warning** [9].
@@ -263,7 +263,7 @@ stands and is *"no verified tool"*, not *"verified to be none"* [13][34][35].
 
   Published SDXL figures: 5–15 s/image at 12 GB, 15–30 s at 24 GB with refiner;
   the SDXL-with-Refiner recipe is benchmarked at ~**3,405 images/$**
-  (~$0.000294/image, ~9.6 s average at 18 virtual users) — **at 1024×1024, 20 base
+  (~$0.000294/image, ~9.6 s average at 18 virtual users), **at 1024×1024, 20 base
   + 5 refiner steps, on a single-person workload**, so it does not price the
   target workload [12].
 - The manifest downloads models **before** the instance serves traffic; the first
@@ -282,8 +282,8 @@ stands and is *"no verified tool"*, not *"verified to be none"* [13][34][35].
 1. **A measured two-skeleton OpenPose recipe for SDXL at 1024**, including
    control weights and behaviour on overlapping interlocked bodies. Both passes
    name this the highest-value gap.
-2. **Per-region LoRA-delta masking that accepts SDXL/Illustrious adapters** —
-   today the implementations refuse them.
+2. **Per-region LoRA-delta masking that accepts SDXL/Illustrious adapters**.
+   Today the implementations refuse them.
 3. **Any published per-scene seed hit rate** for a diffusion configuration on
    two-body interlock, from any family. Nothing measured exists.
 4. **A head-to-head of the three routes** (DAZ/Blender, Unreal+MetaHuman,
@@ -317,7 +317,7 @@ Both reports returned **Partial**. The gaps that matter here:
   were enumerated; not every tag in `ghcr.io/saladtechnologies/comfyui-api`, so a
   prebuilt SDXL/Illustrious image outside those recipes cannot be fully excluded.
 - `salad.com/models` lists six recipes and **omits** flux1dev and
-  stablediffusion35medium that appear in the docs recipe page — the catalog page
+  stablediffusion35medium that appear in the docs recipe page. The catalog page
   is not a complete enumeration.
 - **No Reddit source was inspected** (r/adultgamedev, r/nsfwdev): fetches
   returned no page content, so no Reddit recommendation is claimed.
@@ -341,39 +341,39 @@ Numbered in citation order. All fetched **2026-09-23**.
 
 | # | Source |
 |---|---|
-| 1 | NoobAI-XL 1.0 — https://huggingface.co/Laxhar/noobai-XL-1.0 |
-| 2 | Multiple People / (2) Two People or more, for Illustrious — https://civitai.com/models/2124063/multiple-people-2-two-people-or-more-for-illustrious |
-| 3 | Anatomy Helper — https://civitai.com/models/1171869/anatomy-helper |
-| 4 | Subtle Poses AnalSex XL3; Anus/Vulva Helper XL — https://civarchive.com/models/1444070?modelVersionId=1919016 |
-| 5 | xinsir/controlnet-openpose-sdxl-1.0; NoobAI-XL ControlNet — https://huggingface.co/xinsir/controlnet-openpose-sdxl-1.0 ; https://civitai.com/models/929685 |
-| 6 | Hassaku XL (Illustrious) v3 WIP — https://civarchive.com/models/140272?modelVersionId=2010753 |
-| 7 | Salad recipe `form.json` + `manifests/sdxl-with-refiner.yml`; ComfyUI API Recipes — https://raw.githubusercontent.com/SaladTechnologies/salad-recipes/master/recipes/comfyui/form.json ; https://raw.githubusercontent.com/SaladTechnologies/salad-recipes/master/recipes/comfyui/manifests/sdxl-with-refiner.yml ; https://docs.salad.com/container-engine/reference/recipes/comfyui |
-| 8 | Recipes & Models — https://salad.com/models |
-| 9 | Deploy Image and Video Generation with ComfyUI — https://docs.salad.com/container-engine/how-to-guides/ai-machine-learning/deploy-stable-diffusion-comfy |
+| 1 | NoobAI-XL 1.0. https://huggingface.co/Laxhar/noobai-XL-1.0 |
+| 2 | Multiple People / (2) Two People or more, for Illustrious. https://civitai.com/models/2124063/multiple-people-2-two-people-or-more-for-illustrious |
+| 3 | Anatomy Helper. https://civitai.com/models/1171869/anatomy-helper |
+| 4 | Subtle Poses AnalSex XL3; Anus/Vulva Helper XL. https://civarchive.com/models/1444070?modelVersionId=1919016 |
+| 5 | xinsir/controlnet-openpose-sdxl-1.0; NoobAI-XL ControlNet. https://huggingface.co/xinsir/controlnet-openpose-sdxl-1.0 ; https://civitai.com/models/929685 |
+| 6 | Hassaku XL (Illustrious) v3 WIP. https://civarchive.com/models/140272?modelVersionId=2010753 |
+| 7 | Salad recipe `form.json` + `manifests/sdxl-with-refiner.yml`; ComfyUI API Recipes. https://raw.githubusercontent.com/SaladTechnologies/salad-recipes/master/recipes/comfyui/form.json ; https://raw.githubusercontent.com/SaladTechnologies/salad-recipes/master/recipes/comfyui/manifests/sdxl-with-refiner.yml ; https://docs.salad.com/container-engine/reference/recipes/comfyui |
+| 8 | Recipes & Models. https://salad.com/models |
+| 9 | Deploy Image and Video Generation with ComfyUI. https://docs.salad.com/container-engine/how-to-guides/ai-machine-learning/deploy-stable-diffusion-comfy |
 | 10 | In-repo: `salad_klein/manifest.yaml`; `salad_klein/test_prefetch.py`; doc 18 §3.1 |
-| 11 | Salad — Load Balancing Options; Long-Running Tasks — https://docs.salad.com/container-engine/explanation/gateway/load-balancer-options ; https://docs.salad.com/container-engine/explanation/job-processing/long-running-tasks |
-| 12 | Salad SDXL benchmark; hardware table from [9] — https://blog.salad.com/sdxl-benchmark/ |
+| 11 | Salad. Load Balancing Options; Long-Running Tasks. https://docs.salad.com/container-engine/explanation/gateway/load-balancer-options ; https://docs.salad.com/container-engine/explanation/job-processing/long-running-tasks |
+| 12 | Salad SDXL benchmark; hardware table from [9]. https://blog.salad.com/sdxl-benchmark/ |
 | 13 | doc 18 §2.3 (two-person pose conditioning: unverified but not unavailable) |
-| 14 | dimitribarbot/controlnet-dwpose-sdxl-1.0 — https://huggingface.co/dimitribarbot/controlnet-dwpose-sdxl-1.0 |
-| 15 | Fannovel16/comfyui_controlnet_aux (DWPose source + README) — https://github.com/Fannovel16/comfyui_controlnet_aux |
-| 16 | westNeighbor/ComfyUI-ultimate-openpose-editor — https://github.com/westNeighbor/ComfyUI-ultimate-openpose-editor |
-| 17 | ComfyUI Multi-Subject Workflows (Latent Couple Pose) — https://civitai.com/models/21100/comfyui-multi-subject-workflows |
-| 18 | RegioCraft README + Guide (EN); Nougan_Nodes regional-character-lora; CliffNodes Krea2-Multi-Character-Lora-Node — https://raw.githubusercontent.com/zeus-onl/RegioCraft/main/README.md ; https://raw.githubusercontent.com/Winnougan/Nougan_Nodes/main/docs/regional-character-lora.md ; https://github.com/CliffNodes/Krea2-Multi-Character-Lora-Node-w-bounding-box |
-| 19 | sd-forge-couple (SD Forge Attention Couple) — https://github.com/Haoming02/sd-forge-couple |
-| 20 | sd-webui-regional-prompter — https://github.com/hako-mikan/sd-webui-regional-prompter |
-| 21 | Latent Couple (two-shot diffusion port) — https://github.com/opparco/stable-diffusion-webui-two-shot |
-| 22 | PuLID (arXiv:2404.16022); PuLID repo; IP-Adapter — https://arxiv.org/abs/2404.16022 ; https://github.com/ToTheBeginning/PuLID ; https://github.com/tencent-ailab/IP-Adapter |
-| 23 | OMG: Occlusion-friendly Personalized Multi-concept Generation (arXiv:2403.10983) — https://arxiv.org/abs/2403.10983 |
-| 24 | Diffeomorphic import_daz — Setup_Finishing_Merge_Geografts — https://raw.githubusercontent.com/wiki/Diffeomorphic/import_daz/Setup_Finishing_Merge_Geografts.md |
-| 25 | Diffeomorphic import_daz — Setup_Rigging — https://raw.githubusercontent.com/wiki/Diffeomorphic/import_daz/Setup_Rigging.md |
-| 26 | F95zone — "DAZ to BLENDER basic setup + guide (feat. Diffeomorphic)" — https://f95zone.to/threads/daz-to-blender-basic-setup-guide-feat-diffeomorphic.201085/ |
-| 27 | Psyop/Cryptomatte — https://github.com/Psyop/Cryptomatte |
-| 28 | LoversLab — "Daz to Blender with Gens using Diffeomorphic (The Correct Way)", Nuverotic — https://www.loverslab.com/topic/240639-daz-to-blender-with-gens-using-diffeomorphic-the-correct-way/ |
-| 29 | Eroticissima — LoveTriggerSDK — https://www.eroticissima.wtf/sdk.html |
-| 30 | F95zone — "How do we do penetration mechanics in 3D games?" (Jun 2024) — https://f95zone.to/threads/how-do-we-do-penetration-mechanics-in-3d-games.210650/ |
-| 31 | F95zone — "About DazToUnreal workflow (+ gens tests)" — https://f95zone.to/threads/about-daztounreal-workflow-gens-tests.135115/ |
-| 32 | PRIMAL BONE MetaHuman nude female / bundle; Lewd Metahuman Creator — https://primalbone.itch.io/metahuman-nude-female ; https://primalbone.itch.io/metahuman-nude-male-and-female ; https://fireblade185.itch.io/lewd-metahuman-creator |
-| 33 | JANKU (Civitai 1277670); HomoSimile XL (Civitai 964011) — https://civitai.com/models/1277670 ; https://civitai.com/models/964011 |
+| 14 | dimitribarbot/controlnet-dwpose-sdxl-1.0. https://huggingface.co/dimitribarbot/controlnet-dwpose-sdxl-1.0 |
+| 15 | Fannovel16/comfyui_controlnet_aux (DWPose source + README). https://github.com/Fannovel16/comfyui_controlnet_aux |
+| 16 | westNeighbor/ComfyUI-ultimate-openpose-editor. https://github.com/westNeighbor/ComfyUI-ultimate-openpose-editor |
+| 17 | ComfyUI Multi-Subject Workflows (Latent Couple Pose). https://civitai.com/models/21100/comfyui-multi-subject-workflows |
+| 18 | RegioCraft README + Guide (EN); Nougan_Nodes regional-character-lora; CliffNodes Krea2-Multi-Character-Lora-Node. https://raw.githubusercontent.com/zeus-onl/RegioCraft/main/README.md ; https://raw.githubusercontent.com/Winnougan/Nougan_Nodes/main/docs/regional-character-lora.md ; https://github.com/CliffNodes/Krea2-Multi-Character-Lora-Node-w-bounding-box |
+| 19 | sd-forge-couple (SD Forge Attention Couple). https://github.com/Haoming02/sd-forge-couple |
+| 20 | sd-webui-regional-prompter. https://github.com/hako-mikan/sd-webui-regional-prompter |
+| 21 | Latent Couple (two-shot diffusion port). https://github.com/opparco/stable-diffusion-webui-two-shot |
+| 22 | PuLID (arXiv:2404.16022); PuLID repo; IP-Adapter. https://arxiv.org/abs/2404.16022 ; https://github.com/ToTheBeginning/PuLID ; https://github.com/tencent-ailab/IP-Adapter |
+| 23 | OMG: Occlusion-friendly Personalized Multi-concept Generation (arXiv:2403.10983). https://arxiv.org/abs/2403.10983 |
+| 24 | Diffeomorphic import_daz. Setup_Finishing_Merge_Geografts. https://raw.githubusercontent.com/wiki/Diffeomorphic/import_daz/Setup_Finishing_Merge_Geografts.md |
+| 25 | Diffeomorphic import_daz. Setup_Rigging. https://raw.githubusercontent.com/wiki/Diffeomorphic/import_daz/Setup_Rigging.md |
+| 26 | F95zone. "DAZ to BLENDER basic setup + guide (feat. Diffeomorphic)". https://f95zone.to/threads/daz-to-blender-basic-setup-guide-feat-diffeomorphic.201085/ |
+| 27 | Psyop/Cryptomatte. https://github.com/Psyop/Cryptomatte |
+| 28 | LoversLab. "Daz to Blender with Gens using Diffeomorphic (The Correct Way)", Nuverotic. https://www.loverslab.com/topic/240639-daz-to-blender-with-gens-using-diffeomorphic-the-correct-way/ |
+| 29 | Eroticissima. LoveTriggerSDK. https://www.eroticissima.wtf/sdk.html |
+| 30 | F95zone. "How do we do penetration mechanics in 3D games?" (Jun 2024). https://f95zone.to/threads/how-do-we-do-penetration-mechanics-in-3d-games.210650/ |
+| 31 | F95zone. "About DazToUnreal workflow (+ gens tests)". https://f95zone.to/threads/about-daztounreal-workflow-gens-tests.135115/ |
+| 32 | PRIMAL BONE MetaHuman nude female / bundle; Lewd Metahuman Creator. https://primalbone.itch.io/metahuman-nude-female ; https://primalbone.itch.io/metahuman-nude-male-and-female ; https://fireblade185.itch.io/lewd-metahuman-creator |
+| 33 | JANKU (Civitai 1277670); HomoSimile XL (Civitai 964011). https://civitai.com/models/1277670 ; https://civitai.com/models/964011 |
 | 34 | In-repo: `salad_studio/salad_status.py`; doc 15 (group facts, one unet family per group) |
 | 35 | doc 18 §2.4 (style aftereffects, genital-act correctness, camera control, medieval backgrounds: zero surviving evidence) |
 
@@ -382,14 +382,14 @@ Numbered in citation order. All fetched **2026-09-23**.
 ## 9. The one-paragraph version
 
 Neither family guarantees anatomically correct two-body interlock, and no source
-either pass inspected publishes a measured rate that says otherwise — the
+either pass inspected publishes a measured rate that says otherwise. The
 circulating figures are anecdotes. The one code-verified way to stop two
 partners' features bleeding together is per-region LoRA masking, which exists
 only for Krea 2 / Flux.2-Klein and refuses SDXL adapters, so SDXL is left with
 regional prompting that reduces rather than removes the problem. If "every time"
-is a hard requirement, the documented answer is 3D — a DAZ geograft welded in
+is a hard requirement, the documented answer is 3D, a DAZ geograft welded in
 Blender and composited with Cryptomatte, or an engine with hand-keyed
-penetration — with diffusion doing styling and aftereffects. What is missing
+penetration, with diffusion doing styling and aftereffects. What is missing
 before any of this becomes a plan is a measured two-skeleton SDXL pose recipe, a
 per-region masking implementation that accepts SDXL adapters, or any published
 per-scene hit rate from any diffusion configuration.

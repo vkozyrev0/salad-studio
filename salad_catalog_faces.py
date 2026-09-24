@@ -206,7 +206,7 @@ def wait_ready(key: str, base: str, ping_s: int) -> None:
         if code == 200:
             log(f"[ready] try {n} status=200")
             return
-        log(f"[ready] try {n} status={code} — sleep {ping_s}s")
+        log(f"[ready] try {n} status={code}, sleep {ping_s}s")
         time.sleep(ping_s)
 
 
@@ -301,7 +301,7 @@ def main() -> int:
     if args.status or not args.generate:
         return 0
     if PAUSE.is_file() and not args.ignore_pause:
-        log(f"[paused] {PAUSE} — not generating until the user says to resume")
+        log(f"[paused] {PAUSE}, not generating until the user says to resume")
         return 2
 
     key = salad_gen._read(salad_gen.CONFIG / "key")

@@ -2,7 +2,7 @@
 
 Stored under ``~/.config/salad/studio-prompt-catalog.json`` (not git). An
 entry is ``{"id", "name", "description", "ts", "request"}``, where ``request``
-is the same ``/prompt`` body the Prompt Editor holds — so an entry can be
+is the same ``/prompt`` body the Prompt Editor holds, so an entry can be
 loaded straight back into the editor. Civitai tokens are stripped before an
 entry is written.
 """
@@ -126,7 +126,7 @@ def add_entry(
     dest = _resolve(path)
     rows = _load(dest)
     if find_by_name(clean, dest) is not None:
-        raise ValueError(f"'{clean}' is already in the catalog — rename it or update that entry")
+        raise ValueError(f"'{clean}' is already in the catalog. Rename it or update that entry")
     ts = int(time.time())
     entry = {
         "id": _new_id(rows, clean, ts),

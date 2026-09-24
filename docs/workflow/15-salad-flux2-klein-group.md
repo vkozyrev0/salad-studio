@@ -1,4 +1,4 @@
-# 15 — Custom Salad container group for Flux.2 Klein 9B
+# 15. Custom Salad container group for Flux.2 Klein 9B
 
 > **Status:** **prefetch5** is pushed and both Klein groups were PATCHed
 > (2026-09-21, HTTP 200, `pending_change: true`). Until **version** bumps,
@@ -7,7 +7,7 @@
 > Do not PATCH again while pending. prefetch5 adds the SNOFS distilled
 > v1.2 fp8 UNET to the boot download. **prefetch4** remains the rgthree
 > recipe those groups were running:
-> `rgthree-comfy` is cloned **on this machine** and `COPY`’d into
+> `rgthree-comfy` is cloned **on this machine** and `COPY`'d into
 > `/opt/ComfyUI/custom_nodes/rgthree-comfy` at **local `docker build`**,
 > pin `2c5342a8cb0eaecaabf61435a5f37dd594c510ba`
 > (`salad_klein/RGTHREE_COMMIT.txt`). `prefetch.py` stays
@@ -32,7 +32,7 @@ Salad group env at create time, never into `Dockerfile` / `manifest.yaml`.
 ## Live groups
 
 Org / project **`life-sim` / `default`**. Same prefetch image and probes
-on both. Loganberry (`~/.config/salad/gateway`) is Flux.1 — do **not**
+on both. Loganberry (`~/.config/salad/gateway`) is Flux.1. Do **not**
 POST Klein graphs there.
 
 Salad Studio Config profiles: **`klein`** and **`klein5090`** (seeded on
@@ -62,8 +62,8 @@ weights in parallel after the 12 GB image pull.
 
 ## Matching Civitai on-site quality
 
-Civitai’s website generator is **not** Comfy. A Civitai plate with
-“Sampler: Euler, CFG 5, 40 steps, same seed” will **not** pixel-match
+Civitai's website generator is **not** Comfy. A Civitai plate with
+"Sampler: Euler, CFG 5, 40 steps, same seed" will **not** pixel-match
 Salad even when those knobs are copied. The hosted path is
 `engine: "flux2"` / `model: "klein"` with LoRAs as `{ airUrn: strength }`
 and default **simple** schedule. Salad POSTs a Comfy 0.35 graph.
@@ -74,7 +74,7 @@ and default **simple** schedule. Salad POSTs a Comfy 0.35 graph.
 | Schedule | **simple** (API default) | `Flux2Scheduler` (resolution-aware shift) **or** `BasicScheduler` `simple` |
 | CFG | `cfgScale` | `CFGGuider` |
 | LoRA | native AIR map into their unet | stock `LoraLoader`. Studio **Convert still expands** `Power Lora Loader (rgthree)` → `LoraLoader`. On **prefetch4**, `/prompt` can instantiate `Power Lora Loader (rgthree)` and `Image Comparer (rgthree)` if left unexpanded. **LIVE prefetch3** does **not** have rgthree (Generate omits comparer from the POST). Studio has no comparer slider (headless API); `SaveImage` is the plate. |
-| Seed | their RNG | `RandomNoise` — same integer is **not** the same noise tensor |
+| Seed | their RNG | `RandomNoise`. Same integer is **not** the same noise tensor |
 | Output | their encoder | `VAEDecode` + JPEG quality 90 |
 
 **What actually closes most of the oil-vs-ink gap** is the LoRA sitting
@@ -83,9 +83,9 @@ not Euler/CFG/steps. Aged Art **1449678 @ 2795018** author range
 **0.4–0.6**. Do not **Rebuild from Config** before Generate (it can swap
 in Detail Slider).
 
-Closest Comfy stand-in for Civitai’s schedule: `BasicScheduler` with
-`scheduler: "simple"` feeding `SamplerCustomAdvanced`’s `sigmas`.
-`Flux2Scheduler` is the Comfy/BFL Klein default; it is “more correct”
+Closest Comfy stand-in for Civitai's schedule: `BasicScheduler` with
+`scheduler: "simple"` feeding `SamplerCustomAdvanced`'s `sigmas`.
+`Flux2Scheduler` is the Comfy/BFL Klein default; it is "more correct"
 for Klein and **not** what Civitai used.
 
 Pixel clone of Civitai requires **their** engine (Orchestration API or
@@ -97,18 +97,18 @@ that still runs **our** sampler stack.
 
 ## Two-body plate recipe (SNOFS distilled + anatomy stack)
 
-> **SUPERSEDED 2026-09-23 — read [`21-klein-image-handoff.md`](21-klein-image-handoff.md) instead.**
+> **SUPERSEDED 2026-09-23. Read [`21-klein-image-handoff.md`](21-klein-image-handoff.md) instead.**
 > This section presents a 4-LoRA / 6-step / 5,049-char sectioned-prompt stack as
 > *the* shipped plate recipe, and states that "the prompt architecture is the
 > quality lever". Both are wrong as of the 2026-09-22 session:
 >
 > - The only recipe a **human has judged** is the one
->   `salad_klein/prompt_ledger.json` records under `verdicts` —
+>   `salad_klein/prompt_ledger.json` records under `verdicts`,
 >   `prompt_snofs_distilled_v12.json`, **no LoRAs**, 4 steps, CFG 1, and a
 >   **779-char** prompt, not 5,049.
 > - The measured finding is that the **seed dominates** (2 of 7 seeds
 >   acceptable), not the wording. A 4-LoRA stack was tested against no LoRAs
->   (`full` vs `alone`) and **both were bad** — the stack was never the lever.
+>   (`full` vs `alone`) and **both were bad**. The stack was never the lever.
 > - `prompt_snofs_distilled_anatomy*.json` remain on disk as the record of what
 >   was tried; no human verdict covers them.
 >
@@ -120,7 +120,7 @@ that still runs **our** sampler stack.
 and `prompt_snofs_distilled_anatomy_resms.json` (res_multistep, 12 steps) are
 the shipped two-body plates: **18+ only**, adults. Same graph, same LoRA stack,
 two sampler knobs. Both were rendered end-to-end on the Klein group before
-shipping (see **How these numbers were settled** below) — this section is a
+shipping (see **How these numbers were settled** below). This section is a
 measurement report, not a recipe handed down from a model card.
 
 | Knob | Value | Why |
@@ -133,7 +133,7 @@ measurement report, not a recipe handed down from a model card.
 | seed | `823441907752101` | Same seed in both files, so the two files differ only in the sampler knobs |
 
 **The stack** (`LoraLoader` chain 70→80→81→82→83; each `lora_name` is a Civitai
-download URL, so the Tokens tab's `?token=` is appended at POST — Logs show
+download URL, so the Tokens tab's `?token=` is appended at POST. Logs show
 HTTP **200** vs **401**; all four resolve 200 on the live group):
 
 | Node | LoRA | Weight | Role |
@@ -141,14 +141,14 @@ HTTP **200** vs **401**; all four resolve 200 on the live group):
 | 80 | Klein Detail Slider (`civitai:2334190@2625692`) | **-1.5** | Pushes texture away from the 3D-render look |
 | 81 | Klein Fixes NSFW (`civitai:2482439@2790993`) | **1.0** | Vulva / anus / pubic-hair fixes |
 | 82 | Klein Anatomy / Quality Fixer v1.5 (`civitai:2324991@2615554`) | **2.0** | Extra limbs, fused legs, glitches (3.0 for prominent artifacts) |
-| 83 | General Penis LoRA v1.0 (`civitai:2333479@2624854`) | **0.8** | Male anatomy. Trained words: penis / erect / flaccid / foreskin / hung / uncircumcised — **name the type in the prompt** |
+| 83 | General Penis LoRA v1.0 (`civitai:2333479@2624854`) | **0.8** | Male anatomy. Trained words: penis / erect / flaccid / foreskin / hung / uncircumcised. **Name the type in the prompt** |
 
 The last loader takes both `CLIPTextEncode` nodes, so the tail of the chain is
 where new LoRAs go.
 
 ### How these numbers were settled
 
-The first version of this recipe followed the usual advice — Klein 9B **base**,
+The first version of this recipe followed the usual advice. Klein 9B **base**,
 12–20 steps, CFG 1.3, SNOFS LoKr 0.3–0.7, a short photographic prompt. It
 rendered plaster mannequins: no heads, limbs fused into single tubes, no
 genitalia, an overall 3D-render look. Eight renders isolated the cause
@@ -166,14 +166,14 @@ genitalia, an overall 3D-render look. Eight renders isolated the cause
 Two conclusions, both measured rather than argued:
 
 1. **The prompt architecture is the quality lever, and the graph is not.**
-   c1 has the *proven* graph and still produced the failure — the only
+   c1 has the *proven* graph and still produced the failure. The only
    difference from the control is the prompt text. A short photographic
    paragraph with a placeholder token left in it is not a prompt this stack can
-   render. The house prompt is **sectioned** — `STYLE:` / `SUBJECTS:` /
+   render. The house prompt is **sectioned**, `STYLE:` / `SUBJECTS:` /
    `WOMAN:` / `MAN:` / `LIMB OWNERSHIP:` / `INTIMACY:` / `ANATOMY:` /
    `DETAIL:` on the positive side, `STYLE:` / `DETAIL FAILURE:` /
    `POSE FAILURES:` / `LEG SIDE ERRORS:` / `LEG ERRORS:` / `LIMB ERRORS:` /
-   `BODY FUSION:` / `SEX ACT ERRORS:` on the negative — and it spells out
+   `BODY FUSION:` / `SEX ACT ERRORS:` on the negative, and it spells out
    *whose limb is where*, names heads, and counts feet and toes. Both files
    ship that text verbatim, because paraphrasing it is how this went wrong.
 2. **Base 9B is not the better cut for this group.** c2 (base, CFG 1.3, the
@@ -185,16 +185,16 @@ Two conclusions, both measured rather than argued:
 ### LoRA weights: what the sweep found
 
 One render per weight is not evidence, so the weights in the research's ranges
-were swept twice — once at the recipe seed (`target/klein_ab/sweep.py`) and
+were swept twice, once at the recipe seed (`target/klein_ab/sweep.py`) and
 then across two fresh seeds (`target/klein_ab/seeds.py`), changing one weight
 at a time.
 
 | Knob | Range swept | Finding |
 |---|---|---|
-| Anatomy fixer | 1.5 / **2.0** / 3.0 | Every weight held at every seed. The fixer's effect here is *preventive*, not visible: at these seeds the prompt already prevented the failures it repairs. Keep 2.0; reach for 3.0 when a plate actually shows an artifact — and then expect a slightly smoother, less painted surface |
+| Anatomy fixer | 1.5 / **2.0** / 3.0 | Every weight held at every seed. The fixer's effect here is *preventive*, not visible: at these seeds the prompt already prevented the failures it repairs. Keep 2.0; reach for 3.0 when a plate actually shows an artifact, and then expect a slightly smoother, less painted surface |
 | Male LoRA | 0.6 / **0.8** / 1.0 | All three render clean genitals. 0.8 is the middle of the trained range and the shipped default; 1.0 is a fine alternative, not an overdrive |
 | Detail slider | **-1.5** | Negative weight is deliberate: it is what keeps the surface off the 3D-render look |
-| SNOFS LoKr | absent / 0.3 / 0.6 | At 0.3 on top of the SNOFS-distilled unet the render is fine (subtly different texture), so it is **safe but redundant** — the unet already is SNOFS. The LoKr belongs to the *plain* Klein unet route above |
+| SNOFS LoKr | absent / 0.3 / 0.6 | At 0.3 on top of the SNOFS-distilled unet the render is fine (subtly different texture), so it is **safe but redundant**. The unet already is SNOFS. The LoKr belongs to the *plain* Klein unet route above |
 
 Honest limit: the sweep tests a favourable pose at three seeds, so it establishes
 "these weights do not break the plate", not "2.0 measures better than 1.5".
@@ -205,7 +205,7 @@ is to rerun a bad plate's seed with the fixer at 3.0.
 
 `WOMAN:` / `MAN:` / `INTIMACY:` are one block: the pose. The shipped text is the
 missionary plate that rendered the reference images, so the file works pasted
-as-is. For another position, rewrite those three sections — and name the
+as-is. For another position, rewrite those three sections, and name the
 position in SNOFS's own vocabulary (**missionary / doggystyle / cowgirl /
 spooning / prone**), because that is what it was trained on. "She lies on her
 back with her left thigh lifted over his right hip" is a description; the
@@ -223,7 +223,7 @@ this reason.
 `civitai:2335408@2627022` (`1A_Back_Pose_Enhancer.safetensors`) is the cowgirl
 weak spot: sitting with a back to the camera. **1A** is the author's general
 default, 1C is `2627093`, the MLX builds are for Mac. Splice it in at **~1.0**
-at the tail — new node `84`, and rewire `63.model` to `["84", 0]`:
+at the tail. New node `84`, and rewire `63.model` to `["84", 0]`:
 
 ```json
 "84": {
@@ -243,17 +243,17 @@ It is **not** in the shipped files: the template is pose-agnostic.
 
 Keep the `_meta.title` / `_meta.base` blocks when you edit these files. They are
 not decoration: `request_json.lora_is_klein_clip` decides where the two
-`CLIPTextEncode` nodes run — after the **last Klein-native** loader, or on the
-base Qwen loader — and it matches Klein tokens in `_meta` *or* in `lora_name`.
+`CLIPTextEncode` nodes run, after the **last Klein-native** loader, or on the
+base Qwen loader, and it matches Klein tokens in `_meta` *or* in `lora_name`.
 A bare `https://civitai.com/api/download/models/<id>` URL matches neither, so
 without `_meta` the POST copy moves both encodes back to the Qwen loader at
 `["71", 0]`.
 
 What that is worth, measured: the house plates have always been made that way
-(four bare-URL LoRAs, no `_meta`), and the control render is one of them — so
+(four bare-URL LoRAs, no `_meta`), and the control render is one of them, so
 the dropped CLIP-side weights are **not** what made the bad plates. It is a
-latent correctness issue — the LoRAs' text-side contribution silently does not
-apply — not a proven regression. `_meta` costs nothing and makes the intent
+latent correctness issue. The LoRAs' text-side contribution silently does not
+apply, not a proven regression. `_meta` costs nothing and makes the intent
 explicit, so it stays.
 
 ### Pose control is not available on the replica
@@ -262,7 +262,7 @@ explicit, so it stays.
 omitted, and there is no OpenPose / DWPose / ControlNet in the repo or the
 image, so the `refcontrol-FLUX.2-Klein-9B-reference-pose` route cannot run
 here. Pose is controlled by the prompt block above and by regenerating at a new
-seed — not by a pose graph. Hard insertion plates are still Lustify/SDXL work,
+seed, not by a pose graph. Hard insertion plates are still Lustify/SDXL work,
 not Klein.
 
 `python -m unittest test_klein_recipes` from `salad_studio` drives
@@ -273,7 +273,7 @@ both files through the Studio Validate gate and the POST copy (24 tests).
 ## Image prefetch (keep the Docker image small)
 
 Do **not** `COPY` the ~17 GB Klein weights and do **not** `RUN unzip`
-in the Dockerfile — that bakes uncompressed tensors into a ~30 GB
+in the Dockerfile. That bakes uncompressed tensors into a ~30 GB
 layer. fp8 `.safetensors` barely shrink when zipped.
 
 **Image (12 GB):** Salad Comfy runtime + `prefetch.py` + empty
@@ -281,7 +281,7 @@ layer. fp8 `.safetensors` barely shrink when zipped.
 `rgthree-comfy` (cloned **locally**, pin
 `2c5342a8cb0eaecaabf61435a5f37dd594c510ba`; not a Salad `git clone`).
 
-**First boot (ENTRYPOINT, not a build step) — weights only, no custom-node clone:**
+**First boot (ENTRYPOINT, not a build step). Weights only, no custom-node clone:**
 
 1. If a sidecar `.zip` exists, or a zip was misnamed `*.safetensors`,
    inflate to the real Comfy filename (`weights_zip.ensure_safetensors`).
@@ -296,7 +296,7 @@ layer. fp8 `.safetensors` barely shrink when zipped.
    - `flux2-vae.safetensors` → `vae/`
 3. `exec` `./comfyui-api`. `/health` stays down until this finishes.
 
-Salad’s old sequential `before_start` list is what the **25-minute**
+Salad's old sequential `before_start` list is what the **25-minute**
 startup probe was killing (unet 19 min at 8 MB/s, then CLIP, then
 interrupt). Parallel is about **max(unet, CLIP)** on that node. The
 live startup window is **~50 min** (delay 600 + 20×120).
@@ -336,7 +336,7 @@ Windows helper `python -m salad_studio` from the repo root (not
 | Tab | Role |
 |---|---|
 | Config | Gateway, graph, LoRA checkboxes. Salad status badge (one word; **only Ready is green**; poll ~15 s; instance pull/create beats a stale `/ready` 200) |
-| Policy | Load live Salad probes (including portal edits); Apply PATCHes probes only — not the Docker image. Right-side blurbs inject delay/period/fail/~total seconds |
+| Policy | Load live Salad probes (including portal edits); Apply PATCHes probes only, not the Docker image. Right-side blurbs inject delay/period/fail/~total seconds |
 | Tokens | `studio-tokens.json` (gitignored). Generate appends Civitai `?token=` on LoRA URLs |
 | LoRAs | Catalog + extras; wrapping checkboxes |
 | Prompt Editor | Exact `/prompt` JSON. Graph pane: **JointJS HTML** in WebView2 ([`16-salad-studio-prompt-graph.md`](16-salad-studio-prompt-graph.md)). Validate. Rebuild from JSON. Do **not** Rebuild from Config if you pasted a custom graph |
@@ -357,7 +357,7 @@ On a slow node the unet alone took **~19 min at 8 MB/s**. Sequential
 `before_start` then started Qwen CLIP (~8 GB). The old window was
 **300 + 20×60 = 25 min**. Salad **Instance Interrupted (Startup Probe
 Failure)** at ~25 min, then `Cache populated with 0 files` and the
-same three downloads started again — even on the **same** machine.
+same three downloads started again, even on the **same** machine.
 
 `failure_threshold` max is **20**, `period_seconds` max is **120**.
 Live startup: delay **600**, period **120**, fail 20 → **~50 min**.
@@ -366,7 +366,7 @@ Do not raise `timeout_seconds` expecting a longer boot.
 ### First-boot logs (CSV + container stdout)
 
 Downloaded system events:
-`Downloads/flux2-klein-logs-9_18_2026, 8_12_34 PM.csv` — **instance
+`Downloads/flux2-klein-logs-9_18_2026, 8_12_34 PM.csv`. **Instance
 controller only** (`Text Log` empty). Timeline on machine
 `40624151-…` (RTX 4090):
 
@@ -380,16 +380,16 @@ controller only** (`Text Log` empty). Timeline on machine
 | 00:11:42 | **Instance Exited:1 (Error)** (~16 s after Running) |
 | 00:11:49–00:14:28 | crash loop: Exited:1, then Starting again |
 
-Portal “dying in Starting” is that loop. It **did** reach Running;
-Salad then respawns. `/ready` stayed 503 (gateway: “Your Container /
-Error”).
+Portal "dying in Starting" is that loop. It **did** reach Running;
+Salad then respawns. `/ready` stayed 503 (gateway: "Your Container /
+Error").
 
 Container stdout (Salad log-entries, not in the CSV):
 
 1. `hf` CLI traceback (`huggingface_hub` 1.16.1, `click.exceptions.Exit: 0`).
 2. Wrapper fell back to **HTTPStorageProvider** for
    `https://huggingface.co/black-forest-labs/FLUX.2-klein-base-9b-fp8/resolve/main/flux-2-klein-base-9b-fp8.safetensors`.
-3. **`Failed to start server: Download failed (401)`** — gated BFL unet;
+3. **`Failed to start server: Download failed (401)`**. Gated BFL unet;
    HTTP fetch did not send `HF_TOKEN` (token was on the group env, but
    HTTP provider does not use it; CDN redirects also strip `Authorization`).
 
@@ -417,7 +417,7 @@ repro: wrapper **exits 1 whenever Comfy exits**. Likely
 
 ## Why a custom group
 
-Salad’s official Comfy recipes are Dreamshaper 8, FLUX.1-Dev,
+Salad's official Comfy recipes are Dreamshaper 8, FLUX.1-Dev,
 FLUX.1-Schnell, SDXL, SD 3.5 Medium. **Klein is not on that list.**
 
 The live Flux.1 graph is `CheckpointLoaderSimple` + `FluxGuidance` +
@@ -441,14 +441,14 @@ Do **not** POST a Klein graph at loganberry. Do **not** `FROM` a
 | Salad org / project | `life-sim` / `default` |
 | Group name | `flux2-klein` (gateway file `~/.config/salad/gateway-klein`) |
 | Comfy | **0.35.0** (has `EmptyFlux2LatentImage` / `Flux2Scheduler`) |
-| API wrapper | **1.19.2** (same family as loganberry’s `/docs`) |
+| API wrapper | **1.19.2** (same family as loganberry's `/docs`) |
 | Unet | `flux-2-klein-base-9b-fp8.safetensors` **and** `flux-2-klein-9b-fp8.safetensors` (BFL, gated) into `diffusion_models/` |
 | CLIP | `qwen_3_8b_fp8mixed.safetensors`, type `flux2` |
 | VAE | `flux2-vae.safetensors` |
 | LoRAs | **Not** baked. Job JSON `LoraLoader` Civitai URLs (Aged Art **2795018**, etc.) |
 | GPU | **1× RTX 4090 24 GB**, 30 GB RAM. Not shared with Flux.1 |
 | Access | Container Gateway port **3000**, `Salad-Api-Key` |
-| First replica | **1** (smoke). Salad’s 3-replica advice is for uptime, not the first boot |
+| First replica | **1** (smoke). Salad's 3-replica advice is for uptime, not the first boot |
 
 This machine has **Docker Desktop 29.8** (~47 GB RAM, nvidia runtime
 registered) but **no `nvidia-smi`**. Use Docker to **build and push**.
@@ -465,7 +465,7 @@ Build files: `salad_klein/` (`Dockerfile`, `manifest.yaml`,
 
 Executed on the Windows box (Docker Desktop **29.8**, logged in as
 Docker Hub **`vkozyrev0`**). No local NVIDIA GPU (`nvidia-smi`
-missing) — Docker was **build + push only**.
+missing). Docker was **build + push only**.
 
 1. **Recipe files** in `salad_klein/`: `Dockerfile` (FROM the
    Salad **runtime** tag, not `flux1dev`), `manifest.yaml` (HF Klein
@@ -531,11 +531,11 @@ docker build -t YOURUSER/eldermark-klein:comfy0.35-api1.19.2-prefetch4 .
 ```
 
 The image stays small: Klein **weights are not baked**. `rgthree-comfy`
-**is** `COPY`’d at this local build (pin
+**is** `COPY`'d at this local build (pin
 `2c5342a8cb0eaecaabf61435a5f37dd594c510ba`). `prefetch.py` (ENTRYPOINT)
 downloads unet + CLIP + VAE **in parallel** when the replica starts
-(`HF_TOKEN` in the group env) — **no** `git clone` on Salad. Empty
-`before_start` — Salad’s sequential manifest download is what the
+(`HF_TOKEN` in the group env). **No** `git clone` on Salad. Empty
+`before_start`. Salad's sequential manifest download is what the
 startup probe was killing.
 
 Do not `COPY` or `RUN unzip` the tensors in the Dockerfile. Zip is
@@ -544,7 +544,7 @@ transport only; inflate at start to the real `.safetensors` path.
 ### 2. Optional local API check (no GPU)
 
 Without a local NVIDIA GPU you can still confirm the image starts far
-enough to print Comfy’s boot log:
+enough to print Comfy's boot log:
 
 ```powershell
 docker run --rm -p 3000:3000 `
@@ -575,7 +575,7 @@ docker push YOURUSER/eldermark-klein:comfy0.35-api1.19.2-prefetch4
 
 ### 4. Create the Salad container group (Portal)
 
-https://portal.salad.com — **new** group, not an edit of loganberry.
+https://portal.salad.com. **New** group, not an edit of loganberry.
 
 | Field | Set |
 |---|---|
@@ -597,7 +597,7 @@ Two groups = two GPU-hour bills.
 First replica will pull the **12 GB image**, then `prefetch.py` (~17 GB
 HF in **parallel**). That can take tens of minutes on a residential
 node. `/ready` stays 503 until Comfy listens. Do not POST until Ready
-is green. Studio’s badge follows instance state (Downloading N%), not
+is green. Studio's badge follows instance state (Downloading N%), not
 a leftover `/ready` 200.
 
 If the replica loops 503 / never Ready: Salad logs. Typical failures:
@@ -627,12 +627,12 @@ curl.exe -sS -X POST "$gw/prompt" `
 
 Decode `.images[0]` to a JPEG. Trigger words in the positive prompt:
 `ArsMJStyle, Impressionism`. Sampler Euler, 832×1216. Public CivitAI
-meta on 135504982 is hidden — this stack is the public resource list,
+meta on 135504982 is hidden. This stack is the public resource list,
 not a pixel clone.
 
 Cloudflare gateway timeout is still **~100 s**. 20-step 832×1216 Klein
 on a 4090 should fit; if it 524s, drop steps on the first smoke or use
-the Job Queue pattern in Salad’s Comfy deploy guide.
+the Job Queue pattern in Salad's Comfy deploy guide.
 
 ### 7. After it works
 

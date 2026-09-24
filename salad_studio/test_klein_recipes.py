@@ -4,7 +4,7 @@
 6/12-step, 5,049-char sectioned-prompt stack and to state that "the prompt
 architecture is the quality lever". Both were superseded: the only recipe a human
 has judged is the one ``prompt_ledger.json`` records under ``verdicts``, and the
-measured finding is the opposite of that claim — the **seed** dominates (2 of 7
+measured finding is the opposite of that claim, the **seed** dominates (2 of 7
 seeds acceptable), and the winning prompt is 779 chars, not 5,049.
 
 So the operating point is no longer written down here. It is read from the
@@ -12,7 +12,7 @@ ledger, and the ledger's ``verdicts[0].provenance.recipe`` names the file under
 test. Editing the recipe without re-judging it fails these tests, which is the
 point: a prompt is only "good" because a human said so.
 
-The tests still drive both files through the same gates Generate uses —
+The tests still drive both files through the same gates Generate uses,
 ``json_highlight.verify_request_json`` (editor) and
 ``comfy_import.prompt_for_salad_replica`` (the POST copy).
 """
@@ -83,7 +83,7 @@ def _node(prompt: dict, class_type: str) -> dict:
 
 
 class LedgerAnchor(unittest.TestCase):
-    """The recipe under test is the one the ledger verified — not a copy of it."""
+    """The recipe under test is the one the ledger verified, not a copy of it."""
 
     def test_the_ledger_names_a_recipe_that_exists(self) -> None:
         self.assertTrue(LEDGER_PATH.is_file(), f"missing {LEDGER_PATH}")

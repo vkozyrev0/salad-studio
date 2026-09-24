@@ -3,7 +3,7 @@
 
 Uses ~/.config/salad/gateway-klein (not loganberry). Face prompts come from
 face_prompt.py. Body prompts are Klein full-figure (painted face, cream
-paper) — not catalog compose_body_prompt, which is headless. Mass catalog
+paper), not catalog compose_body_prompt, which is headless. Mass catalog
 freeze is unchanged.
 """
 from __future__ import annotations
@@ -80,7 +80,7 @@ def _klein_body_prompt(
     ang: str,
     pregnancy: str = "none",
 ) -> str:
-    """Full-figure Klein body — painted face, cream paper, not catalog-headless."""
+    """Full-figure Klein body, painted face, cream paper, not catalog-headless."""
     pack = face_prompt.load_pack()
     key, entry = face_prompt._stage_entry(pack, stage)
     noun = face_prompt._noun(pack, key, entry, sex)
@@ -399,7 +399,7 @@ def main() -> int:
     ap.add_argument(
         "--bodies-lora",
         action="store_true",
-        help="Impressionism LoRA on bodies (default off — melts full figures)",
+        help="Impressionism LoRA on bodies (default off, melts full figures)",
     )
     ap.add_argument("--only", default="", help="substring filter on output filename")
     ap.add_argument("--force", action="store_true", help="overwrite existing plates")

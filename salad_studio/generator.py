@@ -33,7 +33,7 @@ from studio_log import (  # noqa: E402
 _RETRY_CODES = (502, 503, 504, 521, 522, 523, 524)
 # One attempt: no client-side retry loop. A 524 means Cloudflare gave up at 100 s
 # but the container is still running the job, so a retry submits a *duplicate*
-# rather than resuming — each attempt costs up to _PROMPT_TIMEOUT_S and piles more
+# rather than resuming. Each attempt costs up to _PROMPT_TIMEOUT_S and piles more
 # onto the replica's queue. Clicking Generate again is faster and clearer. (2026-09-22)
 _RETRY_TRIES = 1
 _RETRY_SLEEP_S = 8
@@ -44,10 +44,10 @@ _READY_TIMEOUT_S = 20
 # LoRA URL pre-flight: one quick HEAD per URL, before the render is POSTed.
 _LORA_CHECK_TIMEOUT_S = 20
 # Definitive "this URL is not usable" answers. Anything else (timeout, 5xx) is
-# reported and the render proceeds — the replica may reach a host we cannot.
+# reported and the render proceeds. The replica may reach a host we cannot.
 _LORA_GONE_CODES = (401, 403, 404, 410)
 # A reachability probe's success codes. 206 is the normal answer to the ranged
-# GET below when the CDN honours `Range` — Civitai's does, so a plain 200 test
+# GET below when the CDN honours `Range`. Civitai's does, so a plain 200 test
 # called every live LoRA "unconfirmed". (2026-09-22)
 _LORA_OK_CODES = (200, 206)
 
@@ -68,7 +68,7 @@ def wait_gateway_ready(
     *,
     on_log: Any | None = None,
 ) -> None:
-    """GET /ready until 200. 404 means no probe endpoint — continue to /prompt."""
+    """GET /ready until 200. 404 means no probe endpoint. Continue to /prompt."""
     def _log(level: str, message: str) -> None:
         if on_log is not None:
             on_log(level, message)
@@ -80,11 +80,11 @@ def wait_gateway_ready(
         _log("http", f"GET {url}  probe {attempt + 1}/{_READY_TRIES}")
         last_code, last_body = salad_gen._req(url, key, timeout=_READY_TIMEOUT_S)
         if last_code == 200:
-            _log("ok", f"GET {url} HTTP 200 — replica ready")
+            _log("ok", f"GET {url} HTTP 200, replica ready")
             return
         msg = explain_http(int(last_code), last_body, url, method="GET")
         if last_code == 404:
-            _log("warn", "GET /ready HTTP 404 — no probe endpoint; will POST /prompt")
+            _log("warn", "GET /ready HTTP 404, no probe endpoint; will POST /prompt")
             return
         if last_code in _RETRY_CODES and attempt + 1 < _READY_TRIES:
             _log("warn", msg + f"  retry in {_READY_SLEEP_S}s")
@@ -189,14 +189,14 @@ def _probe_url(url: str, opener: Any | None = None) -> tuple[int, str]:
         except urllib.error.HTTPError as exc:
             code = int(exc.code)
             exc.close()  # release the response; we only wanted the status
-            # Some CDNs refuse HEAD outright — Civitai's does, with a Cloudflare
-            # 403 (error 1010) — while a GET of the same URL returns 200. 403 is
+            # Some CDNs refuse HEAD outright. Civitai's does, with a Cloudflare
+            # 403 (error 1010), while a GET of the same URL returns 200. 403 is
             # therefore only definitive *after* a GET has also said so, otherwise
             # a live LoRA would be reported dead and the render refused.
             if method == "HEAD" and code in (400, 403, 405, 501):
                 continue
             return code, method
-        except Exception as exc:  # noqa: BLE001 — any transport failure is inconclusive
+        except Exception as exc:  # noqa: BLE001, any transport failure is inconclusive
             return 0, type(exc).__name__
     return 0, "no probe worked"
 
@@ -210,7 +210,7 @@ def check_lora_urls(
 ) -> list[str]:
     """Confirm the graph's Civitai LoRA URLs resolve, before the render is POSTed.
 
-    Nothing is downloaded — the replica loads each LoRA from its URL when the
+    Nothing is downloaded. The replica loads each LoRA from its URL when the
     Comfy graph runs. The point is only to catch a wrong or expired URL while it
     is still cheap: otherwise a dead URL surfaces as an opaque HTTP 524 after the
     GPU has been asked to do the work.
@@ -237,10 +237,10 @@ def check_lora_urls(
             _log("ok", f"LoRA {label} OK")
             continue
         if code in _LORA_GONE_CODES:
-            _log("error", f"LoRA {label} HTTP {code} — the URL is wrong or expired")
+            _log("error", f"LoRA {label} HTTP {code}. The URL is wrong or expired")
             dead.append(label)
             continue
-        _log("warn", f"LoRA {label} unconfirmed ({note or code}) — rendering anyway")
+        _log("warn", f"LoRA {label} unconfirmed ({note or code}), rendering anyway")
         unconfirmed.append(url)
     if dead:
         raise RuntimeError(
@@ -296,7 +296,7 @@ def generate_from_payload(
     wait_gateway_ready(gateway, key, on_log=_log)
     if isinstance(body_obj.get("prompt"), dict):
         # Check the URLs on the compat-stripped prompt: never probe a LoRA the
-        # replica will not be asked for. Nothing is downloaded here — the replica
+        # replica will not be asked for. Nothing is downloaded here. The replica
         # fetches each LoRA itself when the Comfy graph runs, using the ?token=
         # that authorize_civitai_urls put on the node's lora_name.
         check_lora_urls(body_obj["prompt"], on_log=_log)

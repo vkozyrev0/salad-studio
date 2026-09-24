@@ -510,7 +510,7 @@ class RoutingTest(unittest.TestCase):
         self.assertFalse(same_gateway("", base))
 
     def test_profile_for_gateway_finds_the_group_a_form_would_post_to(self) -> None:
-        """The routing guard asks this, not the form's unet — see app._on_generate."""
+        """The routing guard asks this, not the form's unet, see app._on_generate."""
         allp = self._all()
         klein, snofs = allp["klein"], allp["klein5090"]
         self.assertEqual(profile_for_gateway(klein.gateway, allp).name, "klein")

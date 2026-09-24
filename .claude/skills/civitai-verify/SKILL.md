@@ -74,7 +74,7 @@ That journals `similar` / `significantly_different` from the local files. **Any 
 
 If they differ, identify the culprit **in the JSON request**:
 
-1. **`audit-clip`** — positive/negative `CLIPTextEncode` vs Civitai generation-data. Empty CLIP + no generation-data prompt often means the **author omitted the prompt on purpose**. Default: do not invent CLIP. With **`--allow-prompt-edit`**, re-run and set CLIP from the **site-plate caption** (and optional negative):
+1. **`audit-clip`**. Positive/negative `CLIPTextEncode` vs Civitai generation-data. Empty CLIP + no generation-data prompt often means the **author omitted the prompt on purpose**. Default: do not invent CLIP. With **`--allow-prompt-edit`**, re-run and set CLIP from the **site-plate caption** (and optional negative):
 
 ```bash
 python .claude/skills/civitai-verify/verify.py "URL" --journal <same-journal> \
@@ -84,8 +84,8 @@ python .claude/skills/civitai-verify/verify.py "URL" --journal <same-journal> \
 ```
 
 That overlays CLIP on the converted graph for this run only. It does **not** change `comfy_import.py`. Journal `prompt-edit`. Then compare the new JPEG to the site plate.
-2. **`audit-loras`** — each `LoraLoader` vs Studio extras. Flag local filenames not in extras, and families that are not Flux.2 Klein.
-3. **Node ablation** — `--ablate` (same journal). Drop **one** node at a time (LoRAs, CLIP encodes, then the rest; SaveImage stays). If dropping a node makes the gen closer to the site, that node is the culprit. Graph wiring only unless `--allow-prompt-edit` is on.
+2. **`audit-loras`**. Each `LoraLoader` vs Studio extras. Flag local filenames not in extras, and families that are not Flux.2 Klein.
+3. **Node ablation**. `--ablate` (same journal). Drop **one** node at a time (LoRAs, CLIP encodes, then the rest; SaveImage stays). If dropping a node makes the gen closer to the site, that node is the culprit. Graph wiring only unless `--allow-prompt-edit` is on.
 
 Other JSON checks (no extra POSTs): empty CLIP, local LoadImage omitted (img2img → txt2img), UNET mapped to replica Klein file, seed/size vs metadata.
 5. If JSON is not runnable or POST/Comfy fails, the driver diagnoses the error. With **`--edit-import`**, mechanical `missing_node_type` failures may omit/stub **node types** and retry; without it the run journals `skipped: "edit_import is off; conversion code was not modified"` and halts. That path does not rewrite CLIP unless `--allow-prompt-edit` is set. If the journal has `skipped: "no mechanical import-code fix for these issues"`, you may edit conversion **structure** only.

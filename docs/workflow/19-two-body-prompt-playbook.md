@@ -1,8 +1,8 @@
-# 19 — Two-body prompt playbook (what produces a usable plate)
+# 19. Two-body prompt playbook (what produces a usable plate)
 
 **Started 2026-09-22.** Companion to doc 17 (why Klein failed for two-body acts) and doc 18 (the
-SDXL question). The machine-readable form is **`salad_klein/prompt_ledger.json`** —
-that file is canonical for the prompt text; this doc explains what the entries have in common.
+SDXL question). The machine-readable form is **`salad_klein/prompt_ledger.json`**.
+That file is canonical for the prompt text; this doc explains what the entries have in common.
 
 **Scope:** 18+ adults only, two adults, no minors, nothing illegal.
 
@@ -10,7 +10,7 @@ that file is canonical for the prompt text; this doc explains what the entries h
 
 ## 1. Why this exists
 
-Everything before tonight produced **zero** acceptable two-body plates — 22 judged, none good — and
+Everything before tonight produced **zero** acceptable two-body plates, 22 judged, none good, and
 the cause was misdiagnosed four times (LoRA stack, LoRA download, prompt enumeration, prompt
 length). Two things were actually wrong, and neither was the wording:
 
@@ -20,7 +20,7 @@ length). Two things were actually wrong, and neither was the wording:
    `REPLACE_THIS_PROMPT`, so a "successful" 0.9 s render was a picture of that word.
 
 With both fixed, renders are **1–4 s** and acceptable plates arrive at roughly **2 in 7 seeds**.
-So the work now is not "find a working prompt" — it is **collecting which prompts work and
+So the work now is not "find a working prompt". It is **collecting which prompts work and
 knowing that selection, not wording, is what you spend effort on.**
 
 ## 2. The verified configuration
@@ -43,14 +43,14 @@ knowing that selection, not wording, is what you spend effort on.**
 ### The replacement, stated explicitly
 
 `prompt_snofs_distilled_v12.json` node **74** previously contained the literal string
-**`REPLACE_THIS_PROMPT`** — so every render of that recipe drew the word, not a scene. Node 74 now
+**`REPLACE_THIS_PROMPT`**. So every render of that recipe drew the word, not a scene. Node 74 now
 contains the prompt quoted below, and node **67** (previously empty) holds the negative below. That
 text produced these two user-approved plates:
 
 | plate | seed | user's verdict |
 | --- | --- | --- |
-| `target/snofs_variants/V1_knees/studio_1790112819749.jpg` | `323175253610296` | *"v1_knees is the best — all other are bed"* |
-| `target/snofs_v1_seeds/s882331/studio_1790113204549.jpg` | `610044882331` | *"s882331 — is the best; all others are bed"* |
+| `target/snofs_variants/V1_knees/studio_1790112819749.jpg` | `323175253610296` | *"v1_knees is the best, all other are bed"* |
+| `target/snofs_v1_seeds/s882331/studio_1790113204549.jpg` | `610044882331` | *"s882331 is the best; all others are bed"* |
 
 Both are recorded under `replacements` in `prompt_ledger.json`, where the `now` field is copied
 from the recipe so it cannot drift from what was actually run.
@@ -74,22 +74,22 @@ behind him.
 INTIMACY: penis inside her vagina, his hips against hers, joined at the pelvis.
 ```
 
-Negative (short, style-only — inert at CFG 1, and that is fine):
+Negative (short, style-only, inert at CFG 1, and that is fine):
 
 ```
 NEGATIVE: blurry, low detail, distorted anatomy, fused bodies, censored, watermark, text,
 signature, 3d render.
 ```
 
-## 3. What leads to a prompt like this — each rule and the evidence for it
+## 3. What leads to a prompt like this, each rule and the evidence for it
 
 **State the act directly.** `INTIMACY: penis inside her vagina, his hips against hers`. The plate
-audit found **`ACT0` — act not depicted — in 11 of 16** earlier plates. That was the *dominant*
+audit found **`ACT0`, act not depicted, in 11 of 16** earlier plates. That was the *dominant*
 failure all along, not limbs, and it is a wording problem: nothing in those 5,049-char prompts said
 what the bodies were doing together.
 
 **Name the canonical position rather than describing geometry.** `missionary position, clean side
-view in profile` — the model has these compositions; prose geometry does not substitute. SNOFS's
+view in profile`. The model has these compositions; prose geometry does not substitute. SNOFS's
 own model page lists the position terms that work (`missionary` / `doggystyle` / `cowgirl` /
 `prone` / `reverse cowgirl` / `spooning position`), which is why naming the position is worth doing.
 
@@ -101,20 +101,20 @@ own model page lists the position terms that work (`missionary` / `doggystyle` /
 
 **Describe BOTH bodies' limbs, each with a specific posture.**
 This is where the one measurable prompt win came from. The control described her legs in three
-clauses and said **nothing** about his; his left leg split at the knee. Adding one clause —
-*"His knees rest on the mattress between her thighs, his shins flat behind him."* — was judged
+clauses and said **nothing** about his; his left leg split at the knee. Adding one clause,
+*"His knees rest on the mattress between her thighs, his shins flat behind him."*, was judged
 **"the best"** of five variants at a fixed seed.
 
 **But the posture wording matters, not merely "mention his legs."** The first attempt at the same
-idea — *"His legs stretch back behind him along the mattress, knees and shins resting flat, one leg
-to either side of her hips."* — **broke her legs** at both seeds. Stripping both leg descriptions
+idea, *"His legs stretch back behind him along the mattress, knees and shins resting flat, one leg
+to either side of her hips."*, **broke her legs** at both seeds. Stripping both leg descriptions
 broke her too. So: a specific, physically coherent posture per body; not a generic "his legs are
 also there", and not less description.
 
 **Keep it short and affirmative, and never enumerate.** No limb counts, no defect words, in either
 polarity. Caveat on the evidence: our own plate audit found limb counting in 16/16 plates and the
 strongest counting language in the *only four that worked*, so this rule is **not** proven to fix
-anything — it is cheap, it follows the vendor's guidance, and it removes a confound. Treat it as
+anything. It is cheap, it follows the vendor's guidance, and it removes a confound. Treat it as
 hygiene, not as the cure.
 
 **Always carry the style block.** `ArsMJStyle, Impressionism, oil painting on canvas…` was held
@@ -122,24 +122,24 @@ constant across every good plate; it costs nothing and it is what makes the outp
 
 **Negative prompt: short, style-only.** At CFG 1 the negative is mathematically inert
 (`pred = uncond + cfg·(cond − uncond)` collapses to `pred = cond`), so the old 3,649-char defect
-list did nothing — while listing `cowgirl, doggy style, rear entry, spooning` as *suppressed*,
+list did nothing, while listing `cowgirl, doggy style, rear entry, spooning` as *suppressed*,
 i.e. forbidding the positions that render. Keep it short; revisit only if CFG is ever raised.
 
-**Expect the seed to dominate — roughly 2 in 7.** This is the most important practical finding.
+**Expect the seed to dominate. Roughly 2 in 7.** This is the most important practical finding.
 The winning prompt produced acceptable plates at 2 of 7 seeds, and the *same* prompt at seed
 `455233` failed differently (her leg plus crossed palms). **Do not iterate wording looking for a
 cure.** Batch seeds and select.
 
-## 4. What does NOT work — do not retry
+## 4. What does NOT work. Do not retry
 
 | Approach | Result |
 | --- | --- |
 | Enumerating defects in the positive prompt (`four legs and four feet … no more and no fewer`) | Present in **16/16** plates, good and bad alike; strongest form appeared only in the plates that *worked*. Not the cause. |
-| Enumerating defects in the negative | **Proven inert** at CFG 1, with a natural control (one plate without a defect list, the next with a long one — structurally identical). |
+| Enumerating defects in the negative | **Proven inert** at CFG 1, with a natural control (one plate without a defect list, the next with a long one, structurally identical). |
 | Raising CFG to 1.2 / 1.3 / 1.5 to make the negative bite | Artifact survived. (Note those runs carried the position blacklist, so they are not evidence about negatives in general.) |
 | Anatomy fixer LoRA at 2.0 and 3.0 | Artifact survived. |
 | Stripping the LoRA stack (author's own advice: "try SNOFS by itself") | `full` (4 LoRAs) vs `alone` (none): **both bad**. Not the cause. |
-| Longer / more detailed prompts (5,049 chars, bullet sections) | The bullet-format, scene-heavy rewrite is where the failures clustered (7/7), collinear with a castle setting block (6/6) and with shot scale — the plates that rendered put the figures at 40–53 % of frame, the failing ones at 25–30 %. |
+| Longer / more detailed prompts (5,049 chars, bullet sections) | The bullet-format, scene-heavy rewrite is where the failures clustered (7/7), collinear with a castle setting block (6/6) and with shot scale. The plates that rendered put the figures at 40–53 % of frame, the failing ones at 25–30 %. |
 | Changing wording to chase a clean plate | Prompt fixed after one controlled win; 5 of 7 seeds still bad. Selection beats iteration. |
 
 ## 5. The workflow
@@ -154,17 +154,17 @@ cure.** Batch seeds and select.
 4. **Watch the operational preconditions** (§2 graph, one unet family per group, routing in Studio).
    Without them plates 524 and the prompt question is moot.
 
-**Known hazard:** `comfyui-api` (the HTTP wrapper) **wedges on `/prompt` after a run of renders**
+**Known hazard:** `comfyui-api` (the HTTP wrapper) **hangs on `/prompt` after a run of renders**
 while still answering `/ready` 200. Observed after ~8 sequential renders: Comfy logged nothing for
 the new requests and the client timed out. Recovery is an instance reallocate. So keep batches
 modest, and never trust `/ready` alone as "can serve a prompt".
 
-## 6. The researched recipe — CANDIDATE, not yet verified
+## 6. The researched recipe. CANDIDATE, not yet verified
 
 **Source: the user's own research, 2026-09-22** (model cards, working gallery metas, MyAIForce,
 MatchingPose/RefControl, Ashen3's notes, depth-training notes, cinematography framing). Recorded
 here verbatim where the wording matters, because the prompts are paste-ready. **Status: being
-tested — no plate from this recipe has been judged by a human yet, so it is NOT in the
+tested. No plate from this recipe has been judged by a human yet, so it is NOT in the
 `verdicts` list of `prompt_ledger.json` (it sits under `candidates`).**
 
 ### 6.1 The framework
@@ -174,7 +174,7 @@ tested — no plate from this recipe has been judged by a human yet, so it is NO
 > genitals** (`penis` / `vagina`) → **light/setting**.
 
 **This directly contradicts our verified operating point**: it says run **Klein 9B Base** for sex
-T2I, *not* the distilled 4-step cut — *"distilled is for edits; author and testers both say Base has
+T2I, *not* the distilled 4-step cut, *"distilled is for edits; author and testers both say Base has
 far fewer anatomy horrors."* Our verified plates are the SNOFS-merged **distilled v1.2** unet at
 CFG 1 / 4 steps. That is the contradiction the test run resolves. Note the routing consequence:
 Base is family `klein`, so these plates belong on the **klein** group, not the SNOFS group.
@@ -198,8 +198,8 @@ A [CAMERA: side-view / high-angle / low-angle POV / three-quarter] photograph of
 [WHO_B], both clearly separate adult bodies,
 having sex in the [POSITION: missionary position | doggystyle position | cowgirl position |
 spooning | blowjob].
-[LIMBS: her L/R hand does X; his L/R hand does Y; knees/feet — one action per limb].
-[ACT: his erect penis inserted into her vagina / in her mouth — clinical words].
+[LIMBS: her L/R hand does X; his L/R hand does Y; knees/feet, one action per limb].
+[ACT: his erect penis inserted into her vagina / in her mouth, clinical words].
 [OCCLUSION: far-side limbs partially occluded but readable; one clear figure plane].
 [FRAMING: medium / three-quarter / head-to-knees].
 [SETTING + LIGHT]. Sharp focus, anatomically correct, no extra limbs.
@@ -218,7 +218,7 @@ their torsos so both bodies stay on one clear plane, natural window light, sharp
 legs, no extra limbs.
 ```
 
-**Doggy (side — safer than overhead)**
+**Doggy (side, safer than overhead)**
 
 ```
 A side-view photograph of two adults having sex in the doggystyle position. The woman leans
@@ -237,7 +237,7 @@ Her hands rest on his chest. His hands grip her buttocks. His erect penis is vis
 her vagina. Paneled ceiling above her, sweat on her skin, sharp anatomy, no fused bodies.
 ```
 
-**Blowjob (pause — fewer limbs)**
+**Blowjob (pause, fewer limbs)**
 
 ```
 A close-up photograph of a topless adult woman pausing during a blowjob. She kneels on a bed,
@@ -262,12 +262,12 @@ arm verbs; ultra-tight crops; starting above ~2 MP before anatomy locks.
 ### 6.6 Three finds worth keeping
 
 - **Depth training.** SNOFS v1.4 was trained against depth *because two similar-skinned bodies
-  blend* — which is exactly our "fused bodies" failure. (Consistent with doc 17 §2.6, where the
+  blend*, which is exactly our "fused bodies" failure. (Consistent with doc 17 §2.6, where the
   author says v1.4's depth training "rapidly helped" with two people intermingled.)
 - **Lock the pose first.** Mannequin → `matchingpose9b`: fix the pose, then describe sex/clothes in
   text and *do not re-describe the pose*. Add SNOFS on Base, or as an edit.
 - **Film/photo language beats tag soup.** Pull the camera back, side or three-quarter, "one clear
-  silhouette", **one verb per limb**. Same discipline as cinematography blocking — and it matches
+  silhouette", **one verb per limb**. Same discipline as cinematography blocking, and it matches
   our own audit finding that shot scale was the best-supported correlate of failure.
 
 ### 6.7 Stack order for our plates
@@ -280,10 +280,10 @@ Base + SNOFS alone
   → then upscale
 ```
 
-### 6.8 Comfy recipe cards — `docs/workflow/20-comfy-klein-snofs-recipe-cards.md`
+### 6.8 Comfy recipe cards. `docs/workflow/20-comfy-klein-snofs-recipe-cards.md`
 
-The full write-up (21 KB, **copied verbatim into the repo**) adds four position cards — missionary,
-doggy side, cowgirl low-POV, blowjob pause — plus an optional standing-doggy / prone mini-card.
+The full write-up (21 KB, **copied verbatim into the repo**) adds four position cards, missionary,
+doggy side, cowgirl low-POV, blowjob pause, plus an optional standing-doggy / prone mini-card.
 Each carries its positive prompt, negative additions, LoRA weights, an *"if limbs broke"* fallback
 ladder and a wiring checklist. It also has a ROCm/AMD section, a download table, and an explicit
 uncertainties list.
@@ -300,7 +300,7 @@ plumbing:**
 | distilled 4-step for everything | **BASE** for complex sex T2I; distilled for edits/previews | ← the one real divergence |
 
 Four of the five corrections describe the graph we already run. **So none of this session's four
-wrong diagnoses was a plumbing error** — the divergence is purely the operating point (Base vs the
+wrong diagnoses was a plumbing error**. The divergence is purely the operating point (Base vs the
 SNOFS-merged distilled cut, CFG 4.5 vs 1, 40 steps vs 4). That is what the test run resolves.
 
 **Shared defaults:** steps **40**, CFG **4.5**, SNOFS **0.9** alone (or **0.45** when stacking
@@ -323,7 +323,7 @@ document marks *"verify in your build"* has **not** been checked against our Sal
 Append to `prompt_ledger.json`, never overwrite: put the working prompt in a recipe file first and
 let the ledger copy it, so the recorded text cannot drift from what was run. An entry needs the
 graph, the verbatim prompt and negative, the seeds judged, and the **user's own verdict words**.
-Prompts judged bad go in the same ledger — the rejected list is what stops a future session
+Prompts judged bad go in the same ledger. The rejected list is what stops a future session
 retrying a dead end.
 
 An entry I add must say who judged it. If nobody has looked at the plate, it is not an entry.

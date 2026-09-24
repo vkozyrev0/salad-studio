@@ -65,7 +65,7 @@ def _rows(events: list[dict], step: str) -> list[dict]:
 class Diagnose(unittest.TestCase):
     def test_extracts_text_multiline_from_salad_500(self) -> None:
         err = (
-            "POST https://example.salad.cloud/prompt — HTTP 500 — "
+            "POST https://example.salad.cloud/prompt, HTTP 500, "
             'Failed to queue prompt: {"error": {"type": "missing_node_type", '
             "\"message\": \"Node 'Text Multiline' not found. The custom node "
             'may not be installed.", "details": "Node ID \'#106\'", '
@@ -443,7 +443,7 @@ class EditImportOptIn(unittest.TestCase):
 
     def _boom(self, **_kwargs):
         raise RuntimeError(
-            "POST https://klein.example/prompt — HTTP 500 — Failed to queue "
+            "POST https://klein.example/prompt, HTTP 500, Failed to queue "
             'prompt: {"error": {"type": "missing_node_type", "message": '
             f"\"Node '{self.MISSING}' not found.\", \"extra_info\": "
             f'{{"class_type": "{self.MISSING}"}}}}'

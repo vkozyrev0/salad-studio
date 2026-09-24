@@ -24,13 +24,13 @@ LEVEL_COLORS: dict[str, str] = {
 _HTTP_HINTS: dict[int, str] = {
     401: "Unauthorized (Salad-Api-Key or Civitai token).",
     400: "Salad rejected the graph (node/model/download).",
-    404: "Gateway path not found — check Config gateway URL ends at the replica, then /prompt is appended.",
-    502: "Bad gateway — replica or Cloudflare proxy glitch.",
+    404: "Gateway path not found. Check Config gateway URL ends at the replica, then /prompt is appended.",
+    502: "Bad gateway, replica or Cloudflare proxy glitch.",
     503: "Salad replica unavailable.",
     504: "Gateway timeout.",
     520: "Cloudflare 520: Comfy origin returned an empty or invalid response (process crash or restart mid-job, often while downloading a Civitai LoRA). Not a bad graph JSON. Wait for GET /ready 200; do not re-POST until then.",
-    521: "Cloudflare 521: origin (Salad Comfy) is down or still starting — not a malformed request URL.",
-    522: "Cloudflare 522: TCP to origin timed out — replica unreachable or still booting, not a bad request URL.",
+    521: "Cloudflare 521: origin (Salad Comfy) is down or still starting, not a malformed request URL.",
+    522: "Cloudflare 522: TCP to origin timed out, replica unreachable or still booting, not a bad request URL.",
     523: "Cloudflare 523: origin unreachable.",
     524: "Cloudflare 524: origin timed out (job too long or replica asleep).",
 }
@@ -96,7 +96,7 @@ def explain_http(
         parts.append(title)
     if detail and detail not in (title, hint):
         parts.append(detail)
-    return " — ".join(parts)
+    return ", ".join(parts)
 
 
 def _snippet(body: bytes | str, n: int = 1200) -> str:

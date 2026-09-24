@@ -367,7 +367,7 @@ def has_comfy_nodes(
     """True when a paste or Civitai blob has at least one Comfy node.
 
     Tools: ComfyUI with an empty ``nodes`` list (or ``workflow: undefined``
-    and no parseable prompt) is not Comfy — Convert uses the metadata path.
+    and no parseable prompt) is not Comfy. Convert uses the metadata path.
     """
     wf = (workflow_text or "").strip()
     if wf:
@@ -1117,7 +1117,7 @@ def _widget_inputs(node: dict[str, Any]) -> dict[str, Any]:
         if name in ("unet_name", "clip_name", "vae_name", "ckpt_name"):
             val = salad_filename(str(val))
         elif name == "lora_name":
-            # A LoraLoader widget may already hold a Civitai download URL — that is
+            # A LoraLoader widget may already hold a Civitai download URL. That is
             # what Studio writes, and what a saved Comfy graph of ours contains.
             # salad_filename keeps only the text after the last "/", which reduces
             # ".../download/models/2625692" to "2625692": not a URL, so nothing
@@ -1142,7 +1142,7 @@ def _widget_inputs(node: dict[str, Any]) -> dict[str, Any]:
 
 
 def _node_muted(node: dict[str, Any]) -> bool:
-    """Comfy mode 2 = never, 4 = bypass — not part of the live graph."""
+    """Comfy mode 2 = never, 4 = bypass, not part of the live graph."""
     try:
         return int(node.get("mode") or 0) in MUTED_MODES
     except (TypeError, ValueError):
@@ -1391,7 +1391,7 @@ def _parse_json_blob(text: str) -> Any:
     """Parse the first Comfy workflow / Salad prompt object in *text*.
 
     Civitai copies often have a valid ``{nodes:…}`` object followed by
-    another JSON blob or trailing junk — ``json.loads`` then raises
+    another JSON blob or trailing junk. ``json.loads`` then raises
     ``Extra data``. Prefix lines (``Sampler: Euler, Seed: …``) are skipped.
     """
     raw = _js_to_json((text or "").strip())
@@ -2937,7 +2937,7 @@ def _int_from_graph(prompt: dict[str, Any], val: Any, default: Any = None) -> An
 def knobs_from_sources(metadata_text: str = "", workflow_text: str = "") -> dict[str, Any]:
     """CFG / seed / size / scheduler extracted from paste (workflow wins, then metadata).
 
-    Only keys actually found are returned — do not default CFG 5 / 40 steps /
+    Only keys actually found are returned. Do not default CFG 5 / 40 steps /
     1024² here or a distilled Klein graph (CFG 1, 4 steps, 1280×1920) gets
     clobbered on Convert.
     """

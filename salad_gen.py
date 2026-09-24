@@ -70,7 +70,7 @@ def flux_payload(
     lora_name: str | None = None,
     lora_strength: float = 0.7,
 ) -> dict:
-    # Graph matches Salad's Flux.1-dev recipe. No webhook — that would hang on example.com.
+    # Graph matches Salad's Flux.1-dev recipe. No webhook. That would hang on example.com.
     prompt = {
             "6": {
                 "inputs": {"text": text, "clip": ["30", 1]},

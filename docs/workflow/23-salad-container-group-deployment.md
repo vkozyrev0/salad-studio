@@ -1,4 +1,4 @@
-# 23 — Salad container groups: build the image, call the container
+# 23. Salad container groups: build the image, call the container
 
 The single reference for **creating a Salad container image** and **calling into
 a Salad container** (and its control-plane API). Everything operational that used
@@ -19,7 +19,7 @@ Plan D and this repo's `docs/workflow/15` now lands here.
 
 ---
 
-## 0. Two different "Salad APIs" — do not confuse them
+## 0. Two different "Salad APIs". Do not confuse them.
 
 | | Control plane | The running container |
 |---|---|---|
@@ -93,7 +93,7 @@ python model_catalog.py fetch-klein --stage
 ```
 
 `--stage` targets `$SALAD_STUDIO_HOME/salad_klein/weights/` (this repo by
-default). Salad never sees that cache — the container URL-loads on a new replica
+default). Salad never sees that cache. The container URL-loads on a new replica
 instead, and the LoRA URLs carry the Civitai token at POST time.
 
 > **Known duplication:** `model_catalog.py` exists in **both** repos. The game
@@ -108,12 +108,12 @@ instead, and the LoRA URLs carry the Civitai token at POST time.
 
 ### 2.1 What a Salad group is (the host-side mechanics)
 
-- **Product shape — Salad Container Engine.** You push a Docker image, set a GPU
+- **Product shape, Salad Container Engine.** You push a Docker image, set a GPU
   class + priority and N replicas. Interruptible community nodes; **Salad
   Dedicated** is reserved DC hardware. Container-first, not SSH-first.
 - **GPU classes.** RTX 3060 up to **RTX 4090 24 GB** and **RTX 5090 32 GB** on
   Community. No H100/A100 there; a 48 GB+ card means Dedicated or another host.
-  A class is identified by a UUID — the docs example for a 4090 is
+  A class is identified by a UUID. The docs example for a 4090 is
   `ed563892-aacd-40f5-80b7-90c9be6c759b`. `salad_status.list_gpu_classes()` reads
   the live list.
 - **Priority.** `high` or `batch`/lowest. Preemption hurts a one-shot catalog, so
@@ -125,14 +125,14 @@ instead, and the LoRA URLs carry the Civitai token at POST time.
   cold start are not billed, but a huge pull still costs wall-clock.
 - **No per-image safety classifier** on the container path: your image runs
   Comfy. The residual filter is the ToS (CSAM/illegal-content clause, any-reason
-  refusal) plus chef/node disconnects — not a Google `IMAGE_SAFETY` 422.
+  refusal) plus chef/node disconnects, not a Google `IMAGE_SAFETY` 422.
 - **Adult workloads are a chef preference**, not an "anything goes" promise.
   Chefs in anti-porn jurisdictions are excluded from those jobs.
 - ToS: <https://salad.com/terms/saladcloud>.
 
 ### 2.2 Portal fields
 
-https://portal.salad.com — create a **new** group; never edit an unrelated one.
+https://portal.salad.com, create a **new** group; never edit an unrelated one.
 
 | Field | Set |
 |---|---|
@@ -157,7 +157,7 @@ https://portal.salad.com — create a **new** group; never edit an unrelated one
 
 ### 2.4 Risks
 
-- Home GPUs: variable actual VRAM, driver oddities, random disconnects — High
+- Home GPUs: variable actual VRAM, driver oddities, random disconnects. High
   priority is still "subject to node disconnection".
 - The image must be self-contained; the first replica pays wall-clock for a huge
   pull even when Salad does not bill it.
@@ -173,7 +173,7 @@ The gateway is `<group>-<hash>.salad.cloud`, saved to a per-group file
 | Purpose | Request |
 |---|---|
 | Liveness | `GET /health` on port 3000 |
-| Readiness | `GET /ready` on port 3000 — 503 until Comfy listens |
+| Readiness | `GET /ready` on port 3000. 503 until Comfy listens |
 | Run a graph | `POST /prompt` with the Comfy API body (the `prompt_*.json` files) |
 | Result | `GET /history/<prompt_id>` then `/view` for the image |
 
@@ -183,7 +183,7 @@ working callers. Studio's **Ready** badge and Generate's `/ready` pre-probe use
 the same path, and Studio skips the `/ready` probe while a replica is still
 pulling so a stale 200 cannot be trusted.
 
-Do not POST a Klein graph at the Flux.1 group — it OOMs or 524s on 24 GB.
+Do not POST a Klein graph at the Flux.1 group. It OOMs or 524s on 24 GB.
 
 ---
 
@@ -206,7 +206,7 @@ PROJECT = default
 
 Auth is the `Salad-Api-Key` header on every call. The PATCH body carries
 `startup_probe` and `readiness_probe`, optionally `country_codes`, and
-`container` — where an image change is
+`container`, where an image change is
 `{"container": {"image": "…"}}` and a GPU-class change rewrites
 `container.resources.gpu_classes` while preserving the existing `cpu`, `memory`,
 `shm_size` and `storage_amount`.

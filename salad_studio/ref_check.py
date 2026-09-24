@@ -1,6 +1,6 @@
 """Resolve the weights a request JSON references, for the Prompt Assist.
 
-Local knowledge first — the LoRA catalog / user extras, the replica's own
+Local knowledge first, the LoRA catalog / user extras, the replica's own
 prefetched files, then the filename family heuristic. A name the local sources
 miss gets one online Civitai lookup. A name that resolves nowhere is reported
 as ``unresolved`` rather than dropped, so the AI is told what is missing.

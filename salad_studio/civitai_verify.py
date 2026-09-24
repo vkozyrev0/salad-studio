@@ -443,7 +443,7 @@ def is_multipanel_description(text: str) -> bool:
 
 
 def composition_signature(text: str) -> tuple[str, str, str]:
-    """(layout, people, frame) — unknown means that axis was not mentioned."""
+    """(layout, people, frame). Unknown means that axis was not mentioned."""
     raw = text or ""
     layout = "multi" if is_multipanel_description(raw) else "single"
     if _PLURAL_PEOPLE.search(raw):
@@ -1096,7 +1096,7 @@ def _pending_local_describe(
         url=url,
         body=body,
         inspect=inspect,
-        reason="remote vision failed; local JPEGs saved — describe those files then --record-compare",
+        reason="remote vision failed; local JPEGs saved. Describe those files then --record-compare",
     )
     _save_prompt_snapshot(journal, body, inspect)
     return event

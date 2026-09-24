@@ -61,7 +61,7 @@ class UiStateOnTempPaths(unittest.TestCase):
             "tab": "Prompt Editor",
             "nested": {"loras": [1, 2, 3], "flag": True},
             "count": 3,
-            "label": "café — ✓",
+            "label": "café, ✓",
         }
 
         ui_state.save_state(state, self.path)

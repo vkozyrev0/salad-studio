@@ -233,7 +233,7 @@ def probe_token(
 
     ``state`` is VALID only when the provider answered 200; a rejected key is
     INVALID, and anything else (no key, transport failure, an unexpected
-    status) is UNKNOWN — never a false green.
+    status) is UNKNOWN, never a false green.
     """
     secret = (read_token(kind) if key is None else key) or ""
     if not secret.strip():

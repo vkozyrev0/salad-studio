@@ -1,4 +1,4 @@
-# Salad Studio audit — 2026-09
+# Salad Studio audit, 2026-09
 
 > **Scope:** `salad_studio/` (the Windows Tk helper, *not*
 > `eldermark` / `lifesim_core`) in its working-tree state on 2026-09-21.
@@ -14,12 +14,12 @@
 Every claim below is anchored to a file and function/line. Three evidence
 classes are kept distinct:
 
-- **Proven** — the code path was executed (the suite, a repro script driving
+- **Proven.** The code path was executed (the suite, a repro script driving
   the shipped function, or a live Salad POST) and the output is quoted.
-- **Read from source** — the defect is a static property of the code
+- **Read from source.** The defect is a static property of the code
   (unreachable statement, unassigned attribute, unused constant, dead call
   graph). No run can reach it, so no run is needed.
-- **Suspicion** — plausible but not demonstrated; listed separately in §6.
+- **Suspicion.** Plausible but not demonstrated; listed separately in §6.
 
 Two notes on the working tree. First, the app was **already mid-change** when
 the audit began: `git status` showed 12 modified files plus the untracked
@@ -29,7 +29,7 @@ none of them. Second, `AGENTS.md` §0 (metadata-only, no literals in `.rs`,
 theme-in-CSS) governs `lifesim_core` and `lifesim_ui_dioxus`. Salad Studio is
 a developer tool under ``, so hardcoded node-type lists, sampler
 names, and hex colors in `salad_studio/*.py` are ordinary tool constants, not
-Rule 0.1/0.5 violations — this report treats them as such.
+Rule 0.1/0.5 violations. This report treats them as such.
 
 Raw evidence captured in the audit scratch dir:
 
@@ -52,22 +52,22 @@ the highest-severity finding recorded for that module.
 
 | Module | Lines | Verdict | Worst finding |
 |---|---|---|---|
-| `__init__.py` | 1 | Clean — a one-line docstring, no behavior | — |
+| `__init__.py` | 1 | Clean. A one-line docstring, no behavior |  |
 | `__main__.py` | 4 | Clean but untested | M19 |
-| `app.py` | 2723 | **Needs work** — one live crash, render-path I/O, dead tab reference | **H2** |
+| `app.py` | 2723 | **Needs work**. One live crash, render-path I/O, dead tab reference | **H2** |
 | `comfy_import.py` | 3016 | Sound, best-tested; one duplicated hardcoded list | M6 |
 | `civitai_verify.py` | 2040 | Sound; writes shipped source by default | M16 |
 | `generator.py` | 312 | Sound | L1 |
-| `graph_view.py` | 1845 | **Needs work** — dead Graphviz stack, unreachable fallback selection | M7, M8 |
+| `graph_view.py` | 1845 | **Needs work**. Dead Graphviz stack, unreachable fallback selection | M7, M8 |
 | `history_strip.py` | 194 | Sound but has **no behavioral test at all** | M17 |
-| `json_highlight.py` | 113 | Clean | — |
-| `lora_store.py` | 1769 | **Needs work** — silent persistence failure on Add | **H1** |
+| `json_highlight.py` | 113 | Clean |  |
+| `lora_store.py` | 1769 | **Needs work**. Silent persistence failure on Add | **H1** |
 | `profiles.py` | 241 | Sound; unguarded field coercion crashes boot | L5 |
-| `prompt_history.py` | 323 | Sound | — |
+| `prompt_history.py` | 323 | Sound |  |
 | `request_json.py` | 865 | Sound; its CLIP rule is what the docs and one test disagree with | M14 |
 | `salad_status.py` | 664 | Sound; one unreachable duplicate function body | M3 |
 | `studio_log.py` | 155 | Clean | L3 |
-| `theme.py` | 439 | Clean — the only module with a dedicated live-window test | — |
+| `theme.py` | 439 | Clean. The only module with a dedicated live-window test |  |
 | `tokens.py` | 130 | Sound; `read_token` writes on read | L9 |
 | `ui_state.py` | 28 | Sound; new/untracked, no dedicated test | M18 |
 
@@ -81,7 +81,7 @@ Test modules present: 15 (`test_app_layout`, `test_civitai_verify`,
 
 ## 2. Defects proven from code or a reproduced run
 
-### H1 — `lora_store.add_lora` silently discards the row for local / HF / URL / bare-filename refs (High)
+### H1. `lora_store.add_lora` silently discards the row for local / HF / URL / bare-filename refs (High)
 
 **Where.** `lora_store.py:1621` `add_lora`, specifically the tail at
 `lora_store.py:1677-1681`:
@@ -95,7 +95,7 @@ Test modules present: 15 (`test_app_layout`, `test_civitai_verify`,
 ```
 
 `ensure_civitai_version_name` (`lora_store.py:739`) returns the item
-**without persisting** whenever it cannot resolve a Civitai version id — see
+**without persisting** whenever it cannot resolve a Civitai version id. See
 the early returns at `lora_store.py:749-750` (a version name is already set)
 and `lora_store.py:754-755`:
 
@@ -119,8 +119,8 @@ list_loras has the row    : False
 verify=False -> file?     : True
 ```
 
-**Impact.** In the LoRAs tab, Add reports success — `app.py:1739-1746`
-appends the id to the pending selection, sets `Added LoRA <id>`, logs `ok` —
+**Impact.** In the LoRAs tab, Add reports success. `app.py:1739-1746`
+appends the id to the pending selection, sets `Added LoRA <id>`, logs `ok`,
 and the row is listed until the next `_refresh_lora_lists`
 (`app.py:1620-1673`). On the next launch the row is gone, because nothing was
 written. `edit_lora` (`lora_store.py:1726`) then raises
@@ -138,10 +138,10 @@ return write_extra(item, extras_path)
 **Blast radius in the suite.** 7 of the 11 non-passing tests trace here
 (§4). Three sibling tests (`test_add_huggingface_url`,
 `test_add_direct_download_url`, `test_add_civitai_short_ref`) pass only
-because they assert on the returned dict and never check the file — the bug
+because they assert on the returned dict and never check the file. The bug
 is masked, not absent.
 
-### H2 — `_reuse_prompt_history` dereferences the removed Prompt tab (High, live crash)
+### H2. `_reuse_prompt_history` dereferences the removed Prompt tab (High, live crash)
 
 **Where.** `app.py:1483`, inside `SaladStudio._reuse_prompt_history`
 (`app.py:1463`): `self.nb.select(self._prompt)`.
@@ -165,7 +165,7 @@ request-JSON branch returns earlier (`app.py:1471-1478`) and is unaffected.
 
 **Remediation.** `self.nb.select(self._editor)`, or delete the line.
 
-### M3 — `salad_status._api_get` is dead after its first statement (Medium)
+### M3. `salad_status._api_get` is dead after its first statement (Medium)
 
 **Where.** `salad_status.py:73-94`. Line 74 is
 `return _api_request("GET", url, key)`; lines 75-94 are a second, hand-rolled
@@ -176,7 +176,7 @@ GET implementation that can never execute (the next `def` is at
 
 **Remediation.** Delete `salad_status.py:75-94`.
 
-### M6 — Two overlapping hardcoded lists of replica-missing node types (Medium)
+### M6. Two overlapping hardcoded lists of replica-missing node types (Medium)
 
 **Where.** `comfy_import.py:26-36` `SALAD_MISSING_TYPES` versus the inline
 tuple at `comfy_import.py:2694-2704` inside `prompt_for_salad_replica`
@@ -185,7 +185,7 @@ tuple at `comfy_import.py:2694-2704` inside `prompt_for_salad_replica`
 - only in the inline tuple: `POWER_LORA` (also `comfy_import.py:37`),
   `Fast Groups Bypasser (rgthree)`, `easy cleanGpuUsed`, `ColorNoiseComfy`;
 - only in `SALAD_MISSING_TYPES`: `ReferenceLatent`, `ConditioningZeroOut`,
-  `Color Correct GPU (mtb)` — handled by a *third* block
+  `Color Correct GPU (mtb)`, handled by a *third* block
   (`comfy_import.py:2726-2745`) that rewires instead of dropping.
 
 **Corroborated by the tool that has to patch both.**
@@ -198,14 +198,14 @@ edited.
 **Remediation.** Build the omit tuple from `SALAD_MISSING_TYPES` plus the
 explicit pass-through set, so there is one list.
 
-### M7 — Graphviz/grandalf layout stack is dead on the live path, and one docstring asserts the opposite (Medium)
+### M7. Graphviz/grandalf layout stack is dead on the live path, and one docstring asserts the opposite (Medium)
 
 **Where.** `graph_view.py`:
 - module docstring, `graph_view.py:5`: "Graphviz helpers remain unused on the
   live path";
 - `resolve_layout` (`graph_view.py:1250`) whose docstring at
   `graph_view.py:1260` says "Live layout is Graphviz. Never silently fall back
-  to `layout_xy`." — **false**: the live pane renders through
+  to `layout_xy`.". **false**: the live pane renders through
   `prompt_to_joint` (`graph_view.py:479`) → `_place_joint_columns`
   (`graph_view.py:426`);
 - `prompt_to_dot` (`graph_view.py:1315`), `run_dot` (`1436`),
@@ -213,22 +213,22 @@ explicit pass-through set, so there is one list.
   (`1397`), `grandalf_resolve` (`1120`).
 
 **Read from source.** Call-graph check over the whole package: these
-functions are referenced only from tests — `test_graph_view.py:89`
+functions are referenced only from tests, `test_graph_view.py:89`
 (`grandalf_resolve`), `:96` (`resolve_layout`), `:219` (`prompt_to_dot`),
-`:234` (`graphviz_layout`) — and `test_app_layout.py:62-65` asserts their
+`:234` (`graphviz_layout`), and `test_app_layout.py:62-65` asserts their
 source strings. `GraphPane` (`graph_view.py:1621-1807`) never calls
 `resolve_layout` or `graphviz_layout`.
 
 **Remediation.** Delete the stack with its tests, or retag the
 `resolve_layout` docstring and the `workflow/16` claim (§3.2, W8/W9).
 
-### M8 — The Tk fallback canvas cannot select a card; Swap is unreachable without WebView2 (Medium)
+### M8. The Tk fallback canvas cannot select a card; Swap is unreachable without WebView2 (Medium)
 
 **Where.** `graph_view.py:1629` creates `self._boxes`;
 `graph_view.py:1772` resets it to `{}` inside `_redraw` and nothing ever fills
 it; the only reader is `_on_click` (`graph_view.py:1715-1728`). When the embed
 fails (`_on_web_fail`, `graph_view.py:1687-1693`) the canvas fallback draws
-only a text hint (`graph_view.py:1797-1807`) — no boxes, no hit targets.
+only a text hint (`graph_view.py:1797-1807`), no boxes, no hit targets.
 
 **Read from source.** `_do_swap` (`graph_view.py:1746-1760`) requires
 `len(self._selected) == 2`, which the fallback cannot produce.
@@ -237,12 +237,12 @@ only a text hint (`graph_view.py:1797-1807`) — no boxes, no hit targets.
 `_boxes`), or remove the canvas click path and disable "Swap selected" when
 the embed is down.
 
-### M9 — `app.log()` re-reads every token file on every log line (Medium)
+### M9. `app.log()` re-reads every token file on every log line (Medium)
 
 **Where.** `app.py:1578` `log()` calls `self._log_secrets()`;
 `app.py:1566-1576` `_log_secrets` calls `tokens.read_token(kind)` for all four
 `TOKEN_SPECS`; `tokens.py:92` `read_token` calls `seed_from_defaults()` first
-(`tokens.py:93`), which loads — and can write — `studio-tokens.json`
+(`tokens.py:93`), which loads, and can write, `studio-tokens.json`
 (`tokens.py:76-88`).
 
 **Read from source.** Every `log()` call therefore performs ≥4 file reads and
@@ -253,7 +253,7 @@ diagnostic sink; `_tick_gen` is re-armed every 2 s while generating
 **Remediation.** Cache the redaction list on the instance and invalidate it in
 `_save_token` (`app.py:812`).
 
-### M14 — The CLIP-encoding rule the docs state is not the rule the code implements (Medium)
+### M14. The CLIP-encoding rule the docs state is not the rule the code implements (Medium)
 
 **Where.** `request_json.wire_clip_encodes` (`request_json.py:280`): when any
 Klein-native LoRA is present (`lora_is_klein_clip`, `request_json.py:224`,
@@ -263,7 +263,7 @@ encodes are rewired onto the **last Klein-native `LoraLoader`**
 for foreign stacks, via `encode_prompts_before_loras`
 (`request_json.py:156-178`).
 
-`README.md:49-51` states the opposite for the general case — "Positive and
+`README.md:49-51` states the opposite for the general case. "Positive and
 Negative text that CLIP encodes on the **CLIPLoader** (Qwen) *before* LoRAs
 patch the UNET. Rebuild/Convert keep `CLIPTextEncode.clip` on the loader, not
 the last `LoraLoader`". The same README later states the correct Klein rule
@@ -272,12 +272,12 @@ the last `LoraLoader`". The same README later states the correct Klein rule
 
 **Corroborated by the stale test.** `test_watercolor_import.py:488-489`
 asserts `prompt["74"]["inputs"]["clip"] == ["71", 0]` (the CLIPLoader); the run
-produced `["89", 1]` (the last LoRA) — the code's actual Klein behaviour.
+produced `["89", 1]` (the last LoRA). The code's actual Klein behaviour.
 
 **Remediation.** Rewrite the README bullet to state the split rule
 (Klein-native → last LoRA; IL/Anima/SDXL → CLIPLoader) and update the test.
 
-### M16 — `civitai_verify` rewrites shipped app source by default (Medium, design risk)
+### M16. `civitai_verify` rewrites shipped app source by default (Medium, design risk)
 
 **Where.** `civitai_verify.apply_known_import_fix` (`civitai_verify.py:1269`)
 writes `comfy_import.py` to disk at `civitai_verify.py:1325`
@@ -297,9 +297,9 @@ or an unrelated commit must not have happen. It also understands only
 **Remediation.** Require an explicit `--edit-import` (invert the default), or
 refuse to write when the working tree is dirty.
 
-### M17 — `history_strip.py` has no behavioral test (Medium)
+### M17. `history_strip.py` has no behavioral test (Medium)
 
-**Where.** `history_strip.py` — `set_paths` (`:82`), `_rebuild` (`:87`),
+**Where.** `history_strip.py`, `set_paths` (`:82`), `_rebuild` (`:87`),
 `_photo_for` (`:111`), `_load_thumb` (`:119`), `_layout_thumbs` (`:134`),
 `_scroll_left` (`:148`), `_scroll_right` (`:151`), `_scroll_pixels` (`:157`),
 `_on_mousewheel` (`:167`), `_emit_open` (`:192`).
@@ -314,7 +314,7 @@ The only test contact is construction plus palette assertions:
 real JPEG, a missing file (placeholder), the scroll region, and the `on_open`
 callback.
 
-### M18 — `ui_state.py` has no dedicated test module (Medium-low)
+### M18. `ui_state.py` has no dedicated test module (Medium-low)
 
 **Where.** `ui_state.load_state` (`ui_state.py:14`), `ui_state.save_state`
 (`ui_state.py:25`).
@@ -329,7 +329,7 @@ probed manually and behaves (`{SCRATCH}/repro_profiles_ui_state.log`:
 **Remediation.** Add `test_ui_state.py` for corrupt JSON, a non-dict payload,
 and the round trip.
 
-### M19 — `__main__.py` is untested (Medium-low)
+### M19. `__main__.py` is untested (Medium-low)
 
 **Where.** `__main__.py:1-4`. The README's primary invocation is
 `python -m salad_studio` (`README.md:6-8`), and no test imports
@@ -338,7 +338,7 @@ and the round trip.
 **Remediation.** One import-level test that `salad_studio.__main__` resolves
 `salad_studio.app.main`.
 
-### L1 — Modules mutate `sys.path` at import time (Low)
+### L1. Modules mutate `sys.path` at import time (Low)
 
 **Where.** `generator.py:10-15`, `request_json.py:13`, `lora_store.py:18-21`,
 `comfy_import.py:12-16`, `app.py:15-19` each insert `salad_studio/` and
@@ -350,17 +350,17 @@ mixed `from salad_studio import …` / `import lora_store` styles coexist
 **Remediation.** Optional: normalise on package-relative imports and drop the
 `sys.path` edits; at minimum keep them out of any new module.
 
-### L3 — `studio_log.LEVELS` is unused (Low)
+### L3. `studio_log.LEVELS` is unused (Low)
 
 **Where.** `studio_log.py:12` defines
 `LEVELS = ("debug", "info", "ok", "warn", "error", "http")`; a package-wide
 grep finds no other reference (`app.py:1546` iterates `LEVEL_COLORS` instead).
 
-### L5 — `profiles.load_all` raises on a non-numeric stored field (Low)
+### L5. `profiles.load_all` raises on a non-numeric stored field (Low)
 
 **Where.** `profiles._profile_from_dict` (`profiles.py:103`) calls
 `int(data.get("width", 1024))` at `profiles.py:117`, plus `height`, `steps`,
-`cfg`, and `seed` at `:118-121`, with no guard — while `_load_doc`
+`cfg`, and `seed` at `:118-121`, with no guard, while `_load_doc`
 (`profiles.py:74`) *does* guard JSON errors.
 
 **Proven.** `{SCRATCH}/repro_profiles_ui_state.log`:
@@ -376,14 +376,14 @@ non-numeric width -> ValueError: invalid literal for int() with base 10: 'wide'
 
 **Remediation.** Coerce with a default on `(TypeError, ValueError)` per field.
 
-### L9 — `tokens.read_token` writes on read (Low)
+### L9. `tokens.read_token` writes on read (Low)
 
 **Where.** `tokens.read_token` (`tokens.py:92`) calls `seed_from_defaults()`
 at `tokens.py:93`; `seed_from_defaults` (`tokens.py:76-88`) writes
 `studio-tokens.json` when it copies a slot from `~/.config`. This is the
 amplifier behind M9.
 
-### L10 — `app.py:428` sets "Down" for an empty gateway and then probes anyway (Low)
+### L10. `app.py:428` sets "Down" for an empty gateway and then probes anyway (Low)
 
 **Where.** `app.py:428-431`:
 
@@ -397,10 +397,10 @@ amplifier behind M9.
 There is no `return` after the empty-gateway branch, so execution continues
 into the threaded probe with `active_gw = ""`. Either the branch is intended
 to fall through (the dual replica badges are filled from the profile gateways,
-`app.py:412-423`) — in which case it is a no-op worth a comment — or the
+`app.py:412-423`), in which case it is a no-op worth a comment, or the
 `return` is missing.
 
-### L11 — Latent `IndexError` on an empty status word (Low)
+### L11. Latent `IndexError` on an empty status word (Low)
 
 **Where.** `app.py:402` `ready = (word or "").split()[0] == "Ready"` and
 `app.py:2655` `if word.split()[0] != "Ready":` both index `[0]` of a possibly
@@ -410,7 +410,7 @@ empty list. Today `var_salad_status` is seeded to `"…"` (`app.py:243`) and
 
 **Remediation.** `(word or "").split()[:1] == ["Ready"]`.
 
-### L12 — `Clean gallery` also deletes the Klein probe rasters (Low)
+### L12. `Clean gallery` also deletes the Klein probe rasters (Low)
 
 **Where.** `_history_paths` (`app.py:2578`) appends `ART/salad_probe_klein_*.jpg`
 (`app.py:25-27`) after the Studio plates; `_on_clean_gallery`
@@ -420,25 +420,25 @@ only says "Delete N image(s) from disk and clear the gallery?".
 **Remediation.** Either exclude the probe glob from the destructive path or
 name both sets in the dialog.
 
-### L13 — `graph_view.lora_symbolic_name` re-reads the LoRA store per rendered card (Low)
+### L13. `graph_view.lora_symbolic_name` re-reads the LoRA store per rendered card (Low)
 
 **Where.** `graph_view.lora_symbolic_name` (`graph_view.py:539`) calls
 `ls.find_by_loader_name(...)` twice with no `extras_path`, which resolves to
 `lora_store.EXTRAS_PATH` (`lora_store.py:24`, `_resolve_extras` at `:80`,
-`list_loras` at `:224`, `find_lora` at `:238`) — a file read plus catalog
+`list_loras` at `:224`, `find_lora` at `:238`), a file read plus catalog
 build. It is reached from `node_rows` (`graph_view.py:571`), which
 `_joint_prepare` (`graph_view.py:385`) calls via `joint_fields`
-(`graph_view.py:326`) and `joint_card_title` (`graph_view.py:311`) — several
+(`graph_view.py:326`) and `joint_card_title` (`graph_view.py:311`), several
 times per LoRA node per `prompt_to_joint`, and `prompt_to_joint` runs on every
 `_redraw`.
 
-### L14 — `_redraw` rewrites the HTML page even when the in-place JS path is taken (Low)
+### L14. `_redraw` rewrites the HTML page even when the in-place JS path is taken (Low)
 
 **Where.** `graph_view.py:1770-1781`: `write_graph_page(prompt)` runs at
 `graph_view.py:1774` before the `eval_js` branch returns at `:1781`; in that
 branch the written `graph_html/_current.html` is unused.
 
-### L15 — `test_app_layout` pins implementation strings, including the dead Graphviz stack (Low)
+### L15. `test_app_layout` pins implementation strings, including the dead Graphviz stack (Low)
 
 **Where.** `test_app_layout.py:40`
 (`test_tab_order_config_loras_prompt_editor_prompt`) asserts source
@@ -463,11 +463,11 @@ already exist (`test_graph_view.LivePaneExport`, `test_theme`).
 | # | Claim in README | Verdict | Anchor |
 |---|---|---|---|
 | R1 | `python -m salad_studio` from the repo root | **Holds** | `__main__.py:1-4`, `app.py:2717-2719` |
-| R2 | Tab list includes **Prompt** | **DIVERGED** — 8 tabs, no Prompt; prompts live on Prompt Editor | `app.py:28-37` vs `README.md:18`; `app.py:946-971` |
+| R2 | Tab list includes **Prompt** | **DIVERGED**. 8 tabs, no Prompt; prompts live on Prompt Editor | `app.py:28-37` vs `README.md:18`; `app.py:946-971` |
 | R3 | Config: profiles `klein`/`klein5090`, dual replica badges, Flux2 vs Simple | **Holds** | `profiles.py:182`, `app.py:253-273`, `app.py:301-312` |
 | R4 | Generate disabled until the active gateway is Ready | **Holds** | `app.py:401-410` |
 | R5 | Policy Apply PATCHes Salad, not a Docker rebuild | **Holds** | `salad_status.py:267` |
-| R6 | Tokens in `studio-tokens.json` (gitignored) | **Holds** — `.gitignore:111`, file untracked | `git check-ignore -v` |
+| R6 | Tokens in `studio-tokens.json` (gitignored) | **Holds**. `.gitignore:111`, file untracked | `git check-ignore -v` |
 | R7 | Empty token slots copy from `~/.config` | **Holds** | `tokens.py:76-88` |
 | R8 | Logs redact secrets | **Holds** | `studio_log.py:39`, `app.py:1579` |
 | R9 | JointJS in a WebView2 pane; cache under `%LOCALAPPDATA%\SaladStudio\WebView2` | **Holds** | `graph_view.py:1669`, `graph_view.py:521` |
@@ -475,7 +475,7 @@ already exist (`test_graph_view.LivePaneExport`, `test_theme`).
 | R11 | Selecting LoRAs on Config rebuilds the LoraLoader chain | **Holds** | `app.py:1703-1722` |
 | R12 | Rebuild from JSON restores prompt, size, graph, selected LoRAs | **Holds** | `app.py:2076` |
 | R13 | Validate = the same `parse_request_json` gate plus Civitai-token check | **Holds** | `app.py:2437-2469` |
-| R14 | Prompt text "CLIP encodes on the CLIPLoader (Qwen) before LoRAs" | **DIVERGED** — Klein-native LoRAs encode after the last LoRA | `README.md:49-51` vs `request_json.py:280` — see M14 |
+| R14 | Prompt text "CLIP encodes on the CLIPLoader (Qwen) before LoRAs" | **DIVERGED**. Klein-native LoRAs encode after the last LoRA | `README.md:49-51` vs `request_json.py:280`. See M14 |
 | R15 | "Rebuild/Convert keep `CLIPTextEncode.clip` on the loader" | **DIVERGED** for Klein-native stacks | same anchors; failing `test_watercolor_import.py:488` |
 | R16 | Convert routes on graph presence, then tooling | **Holds** | `comfy_import.py:395`, `comfy_import.py:2237` |
 | R17 | UUID subgraph flatten assigns unique link ids, skips muted (mode 4) | **Holds** | `comfy_import.py:24`, `comfy_import.py:1127`, `comfy_import.py:1775` |
@@ -487,9 +487,9 @@ already exist (`test_graph_view.LivePaneExport`, `test_theme`).
 | R23 | No `LoraLoader` but Resources list a LoRA → Convert inserts it | **Holds** | `comfy_import.py:721` |
 | R24 | Local `LoadImage` names stay in the editor; Generate omits them | **Holds** | `comfy_import.py:2472`, `comfy_import.py:2714-2721` |
 | R25 | Fetch from Civitai loads Copy All plus Resources-used | **Holds** | `comfy_import.py:2008`, `app.py:1228` |
-| R26 | Draw Things posts build a Klein `/prompt`; `DPM++ SDE` → euler + Flux2Scheduler | **Holds** — live-verified | `comfy_import.py:2169`, `comfy_import.py:411`; `civitai-verify-live/journal.jsonl` |
+| R26 | Draw Things posts build a Klein `/prompt`; `DPM++ SDE` → euler + Flux2Scheduler | **Holds**. Live-verified | `comfy_import.py:2169`, `comfy_import.py:411`; `civitai-verify-live/journal.jsonl` |
 | R27 | Workflow JSON stashed in memory so a long graph does not freeze Tk | **Holds** | `app.py:1145` |
-| R28 | "Distilled Klein graphs … are **blocked** on Convert; the pane lists why" | **DIVERGED** — noted, never blocked | `README.md:104`; `comfy_import.py:2544` returns `blocking=[]`; `app.py:1198`; live journal line 6: `"blocking": [], "runnable": true` |
+| R28 | "Distilled Klein graphs … are **blocked** on Convert; the pane lists why" | **DIVERGED**. Noted, never blocked | `README.md:104`; `comfy_import.py:2544` returns `blocking=[]`; `app.py:1198`; live journal line 6: `"blocking": [], "runnable": true` |
 | R29 | Generate writes a 48×48 thumbnail; double-click restores JSON + prompt | **Holds for the JSON branch**; the text-only branch throws (H2) | `prompt_history.py:270`, `app.py:2704-2709`, `app.py:1463-1485` |
 
 ### 3.2 `docs/workflow/16-salad-studio-prompt-graph.md`
@@ -503,19 +503,19 @@ already exist (`test_graph_view.LivePaneExport`, `test_theme`).
 | W5 | Pane = `GraphPane` → tkwry `WebView` (`app=_current.html`, user-data dir) | **Holds** | `graph_view.py:1669-1687`, `graph_view.py:521-529` |
 | W6 | Fallback: Open in browser; Open as Comfy = LiteGraph | **Holds**, except the canvas *selection* fallback (M8) | `graph_view.py:1687-1704`, `graph_view.py:1715-1728` |
 | W7 | Tests live in `test_graph_view.py` class `JointGraphExport` | **Holds** | `test_graph_view.py:175` |
-| W8 | Graphviz remains as unused helpers (`prompt_to_dot`, `graphviz_layout`) | **Holds** — and `resolve_layout`'s docstring contradicts it | `graph_view.py:5` vs `graph_view.py:1260` — M7 |
-| W9 | "If `dot` is missing, the pane shows an install message. It does not fall back to `layout_xy`." | **DIVERGED** — no such message exists; the pane has no `dot` path at all | `graph_view.py:1436-1440` raises; no caller in `GraphPane` or `app.py` |
+| W8 | Graphviz remains as unused helpers (`prompt_to_dot`, `graphviz_layout`) | **Holds**. And `resolve_layout`'s docstring contradicts it | `graph_view.py:5` vs `graph_view.py:1260`. M7 |
+| W9 | "If `dot` is missing, the pane shows an install message. It does not fall back to `layout_xy`." | **DIVERGED**. No such message exists; the pane has no `dot` path at all | `graph_view.py:1436-1440` raises; no caller in `GraphPane` or `app.py` |
 | W10 | `grandalf_resolve` remains as an unused helper | **Holds** | `graph_view.py:1120`; only `test_graph_view.py:89` calls it |
 | W11 | LiteGraph.js is vendored; its splines do not pathfind around nodes | **Holds** | `VENDOR.txt:9-12` |
-| W12 | Graphviz "ports" are record/HTML fields or compass points; the visual match is approximate | **Moot** — a statement about the abandoned path; accurate as written | `graph_view.py:1315-1365` |
+| W12 | Graphviz "ports" are record/HTML fields or compass points; the visual match is approximate | **Moot**. A statement about the abandoned path; accurate as written | `graph_view.py:1315-1365` |
 
 ### 3.3 The three further caveats the audit brief named
 
 | Caveat | Verdict | Anchor |
 |---|---|---|
-| Port / socket-row mismatch (JointJS ports not aligned with card rows) | **Addressed in the working tree** — per-port `y` is emitted from `joint_row_center` and asserted | `graph_view.py:296`, `graph_view.py:397`, `graph_view.py:408`; `test_graph_view.py:419-423` |
-| Lost card drag / zoom | **Still present, by design** — a `position` message is accepted and discarded, so drags are never written back to the prompt JSON; pan/zoom live only inside the page | `graph_view.py:1582-1604`; `graph_html/viewer.html:293-309` |
-| Editor focus vs WebView2 | **Still present** — handled explicitly by `_lift_editor_over_webview` / `_release_graph_keyboard` / the `_graph_stale` deferral | `app.py:2268-2353`, `graph_view.py:1770-1781` |
+| Port / socket-row mismatch (JointJS ports not aligned with card rows) | **Addressed in the working tree**. Per-port `y` is emitted from `joint_row_center` and asserted | `graph_view.py:296`, `graph_view.py:397`, `graph_view.py:408`; `test_graph_view.py:419-423` |
+| Lost card drag / zoom | **Still present, by design**. A `position` message is accepted and discarded, so drags are never written back to the prompt JSON; pan/zoom live only inside the page | `graph_view.py:1582-1604`; `graph_html/viewer.html:293-309` |
+| Editor focus vs WebView2 | **Still present**. Handled explicitly by `_lift_editor_over_webview` / `_release_graph_keyboard` / the `_graph_stale` deferral | `app.py:2268-2353`, `graph_view.py:1770-1781` |
 
 ---
 
@@ -538,7 +538,7 @@ FAILED (failures=8, errors=3)
 ```
 
 The suite is **red**. This matches the baseline the plan recorded (297 tests,
-8 failures + 3 errors) — no drift.
+8 failures + 3 errors), no drift.
 
 **The prescribed subset is green.** `.claude/skills/civitai-verify/SKILL.md`
 step 7 prescribes, from the repo root with `PYTHONPATH=src/tools`:
@@ -547,8 +547,8 @@ step 7 prescribes, from the repo root with `PYTHONPATH=src/tools`:
 python -m unittest salad_studio.test_comfy_import salad_studio.test_salad_status salad_studio.test_generator
 ```
 
-`{SCRATCH}/salad_studio_skill_prescribed_tests.log`: `Ran 99 tests in 1.867s`
-— `OK`. So the modules the conversion workflow leans on pass; the failures are
+`{SCRATCH}/salad_studio_skill_prescribed_tests.log`: `Ran 99 tests in 1.867s`.
+`OK`. So the modules the conversion workflow leans on pass; the failures are
 concentrated in the LoRA store, the prompt-history live tests, and two stale
 assertions.
 
@@ -556,17 +556,17 @@ assertions.
 
 | Test | Kind | Root cause | Class |
 |---|---|---|---|
-| `test_lora_store.AddFromSources.test_add_local_path` | FAIL | **H1** — `add_lora` never persisted | Real code defect |
+| `test_lora_store.AddFromSources.test_add_local_path` | FAIL | **H1**. `add_lora` never persisted | Real code defect |
 | `test_lora_store.AddFromSources.test_add_bare_safetensors_filename` | FAIL | **H1** | Real code defect |
 | `test_lora_store.AddFromSources.test_remove_only_extras` | FAIL | **H1** (nothing to remove) | Real code defect |
 | `test_lora_store.AddFromSources.test_never_writes_real_extras` | FAIL | **H1** | Real code defect |
-| `test_lora_store.AddFromSources.test_add_civitai_url` | ERROR | **H1** — reads a file that was never written | Real code defect |
-| `test_lora_store.AddFromSources.test_add_and_edit_family_name_filename_strength` | ERROR | **H1** — `edit_lora` raises `unknown LoRA civitai:111@222` | Real code defect |
-| `test_prompt_history.LivePromptHistory.test_reuse_fills_prompt_tab` | ERROR | **H2** — `app.py:1483` `self._prompt` | Real code defect |
-| `test_prompt_history.LivePromptHistory.test_reuse_restores_request_json` | FAIL | Test bug — asserts the prompt text in the *profile* column | Test harness defect |
-| `test_request_json.BuildRequest.test_klein_selected_loras_appear_in_json` | FAIL | Test bug — not hermetic; reads the developer's real extras file | Test harness defect |
-| `test_app_layout.LiveFieldSync.test_import_issues_panel_flags_distilled_klein` | FAIL | Stale expectation — the panel now *does* name `ReferenceLatent` | Stale test |
-| `test_watercolor_import.WatercolorConvert.test_whole_graph` | FAIL | Stale expectation — Klein-native LoRAs encode on the last LoRA | Stale test (see M14) |
+| `test_lora_store.AddFromSources.test_add_civitai_url` | ERROR | **H1**. Reads a file that was never written | Real code defect |
+| `test_lora_store.AddFromSources.test_add_and_edit_family_name_filename_strength` | ERROR | **H1**. `edit_lora` raises `unknown LoRA civitai:111@222` | Real code defect |
+| `test_prompt_history.LivePromptHistory.test_reuse_fills_prompt_tab` | ERROR | **H2**. `app.py:1483` `self._prompt` | Real code defect |
+| `test_prompt_history.LivePromptHistory.test_reuse_restores_request_json` | FAIL | Test bug. Asserts the prompt text in the *profile* column | Test harness defect |
+| `test_request_json.BuildRequest.test_klein_selected_loras_appear_in_json` | FAIL | Test bug. Not hermetic; reads the developer's real extras file | Test harness defect |
+| `test_app_layout.LiveFieldSync.test_import_issues_panel_flags_distilled_klein` | FAIL | Stale expectation. The panel now *does* name `ReferenceLatent` | Stale test |
+| `test_watercolor_import.WatercolorConvert.test_whole_graph` | FAIL | Stale expectation. Klein-native LoRAs encode on the last LoRA | Stale test (see M14) |
 
 Detail on the three non-code failures:
 
@@ -612,7 +612,7 @@ Because the app's own suite is partly red, the Import → Convert → Generate
 path was exercised end to end through `.claude/skills/civitai-verify/verify.py`
 (which drives the shipped `comfy_import.import_to_request` and
 `generator.generate_from_payload`), against
-`https://civitai.com/images/135440425` — the **Draw Things** example the
+`https://civitai.com/images/135440425`, the **Draw Things** example the
 README documents (`README.md:80-89`).
 
 **Read-only run** (`--no-post --no-edit-import`), journal
@@ -681,30 +681,30 @@ afterwards showed exactly the dirty set that existed before the audit began.
 5. **The uncommitted `app.py` growth (+502 lines).** The diff adds the
    geometry-hold, sash placement, prompt-box layout, and WebView2 focus
    handling. I read all of it and found H2 inside it, but I did not review it
-   line by line against its own intent — the tree is mid-change by design and
+   line by line against its own intent. The tree is mid-change by design and
    this audit treats it as the current state, not a proposal.
 
 ---
 
 ## 7. Remediation queue (suggested order)
 
-1. **H1** — make `add_lora` persist on the `ensure_civitai_version_name`
+1. **H1**. Make `add_lora` persist on the `ensure_civitai_version_name`
    branch. One-line fix; clears 7 of the 11 red tests.
-2. **H2** — `app.py:1483` → `self.nb.select(self._editor)`. One-line fix.
-3. **M14 / R14 / R15** — fix the README CLIP bullet and the
+2. **H2**. `app.py:1483` → `self.nb.select(self._editor)`. One-line fix.
+3. **M14 / R14 / R15**. Fix the README CLIP bullet and the
    `test_watercolor_import.py:488-489` expectation together.
-4. **Test-hermeticity** — `test_request_json.py:89` must pass an isolated
+4. **Test-hermeticity**. `test_request_json.py:89` must pass an isolated
    `extras_path`; `test_prompt_history.py:257` must assert `vals[2]`.
-5. **Stale assertion** — `test_app_layout.py:784-786` should assert the
+5. **Stale assertion**. `test_app_layout.py:784-786` should assert the
    warning *is* present, or assert on the blocking list only.
-6. **M3, M7, M8, M19** — delete dead code and its pinning tests; add the
+6. **M3, M7, M8, M19**. Delete dead code and its pinning tests; add the
    missing entry-point and `history_strip` tests.
-7. **M6** — collapse the two replica-missing-type lists into one.
-8. **M9, L9, L13, L14** — hoist the token/redaction and LoRA-store reads out of
+7. **M6**. Collapse the two replica-missing-type lists into one.
+8. **M9, L9, L13, L14**. Hoist the token/redaction and LoRA-store reads out of
    the render and log paths.
-9. **L5** — guard profile field coercion so a corrupt profiles file cannot stop
+9. **L5**. Guard profile field coercion so a corrupt profiles file cannot stop
    the app from starting.
-10. **M16** — invert the `--edit-import` default in `civitai_verify`.
+10. **M16**. Invert the `--edit-import` default in `civitai_verify`.
 
 ## 8. Out of scope (as the plan set it)
 
@@ -717,7 +717,7 @@ security beyond confirming `studio-tokens.json` is gitignored
 
 ---
 
-## 9. Status — what was fixed (2026-09-21)
+## 9. Status. What was fixed (2026-09-21)
 
 A follow-up session worked §7. The findings above stand as written (they
 describe the pre-fix tree); this section records the resolution of each.
@@ -737,9 +737,9 @@ errors), with the prescribed `civitai-verify` subset still `OK`.
 | **M9** | The redaction list is instance-cached (invalidated by `_save_token`). A call-count test patches the shipped `tokens.read_token` and asserts zero reads with a warm cache. |
 | **M14** | README now states the split rule (Klein-native → last such `LoraLoader`; foreign stacks → base CLIPLoader), and `test_watercolor_import` asserts both halves, with the §5 live run named as the basis. |
 | **M16** | `--edit-import` is an opt-in flag on the CLI *and* on `run_verify`; the bare invocation journals `skipped: "edit_import is off; conversion code was not modified"` and halts. `SKILL.md` was updated in the same change. A test drives a fabricated `missing_node_type` failure against an isolated copy of the sources and asserts the copy is byte-identical without the opt-in. |
-| **M17** | New `test_history_strip.py` — 12 tests driving `set_paths`, placeholder/letterbox rendering, the scroll region and chevrons, the wheel/button handlers, and the `on_open` callback. A mutation check (6 injected regressions, all caught) shows the tests have teeth. |
-| **M18** | New `test_ui_state.py` — 10 tests: missing file, directory, corrupt JSON, empty file, five non-object payloads, round trip, parent-dir creation, overwrite, and the default-path branch. |
-| **M19** | New `test_entrypoint.py` — `salad_studio.__main__.main is salad_studio.app.main`. |
+| **M17** | New `test_history_strip.py`. 12 tests driving `set_paths`, placeholder/letterbox rendering, the scroll region and chevrons, the wheel/button handlers, and the `on_open` callback. A mutation check (6 injected regressions, all caught) shows the tests have teeth. |
+| **M18** | New `test_ui_state.py`. 10 tests: missing file, directory, corrupt JSON, empty file, five non-object payloads, round trip, parent-dir creation, overwrite, and the default-path branch. |
+| **M19** | New `test_entrypoint.py`. `salad_studio.__main__.main is salad_studio.app.main`. |
 | **L3** | The unused `studio_log.LEVELS` constant is deleted. |
 | **L5** | `profiles._profile_from_dict` routes `width`/`height`/`steps`/`cfg`/`seed` through a `_coerce` guard; a corrupt profiles file no longer stops the app from starting. |
 | **L10** | The empty-gateway branch keeps its deliberate fall-through into the probe, now stated in code rather than left looking like a missing `return`. |
@@ -760,16 +760,16 @@ errors), with the prescribed `civitai-verify` subset still `OK`.
   history and saved UI state, so the live-window tests no longer read the
   developer's real config.
 
-### Follow-up (2026-09-22) — Prompt Assist waits for the whole reply
+### Follow-up (2026-09-22). Prompt Assist waits for the whole reply
 
 Reported live: **Help (DeepSeek)** / **Help (local)** filled the boxes with a few
 chunks of the reply as if they were the whole answer. Four causes, all the same
-shape — a piece of the body taken for the reply: the parser took the first
+shape, a piece of the body taken for the reply: the parser took the first
 balanced `{...}` (both backends reason, and a trace quotes this module's own
 schema plus a first draft, so a fragment won); the schema's `"..."` placeholders
 and a loose `"prompt"` alias counted as answers; `finish_reason: "length"` was
 never inspected, so a reply cut at the token limit was parsed as complete; and a
-streamed body — or one short of its own `Content-Length` — was read as final.
+streamed body, or one short of its own `Content-Length`, was read as final.
 
 `ai_helper.py` now reads the whole body before answering, reports
 `finish_reason`/`truncated`, continues a `length`-cut reply
@@ -780,7 +780,7 @@ recovers an object a model restarts from the top behind a cut-off head
 (Ministral does). `app.py` keeps what the artist typed in a box when the reply
 arrives missing that prompt. Tests: `test_ai_helper.py` (parser, continuation,
 streaming, short body) and `test_app_layout.py`. Repro: with `max_tokens=1000`
-the local model returns `finish_reason: "length"` mid-JSON — the pre-fix code
+the local model returns `finish_reason: "length"` mid-JSON. The pre-fix code
 parsed that head as the answer.
 
 **Suite after: `Ran 496 tests … OK`** (125 s), `salad_klein` `Ran 11 tests … OK`.
@@ -790,11 +790,11 @@ the issue named in the negative.
 
 ### Not addressed (and why)
 
-- **L1** (`sys.path` mutation at import time) — an explicit plan non-goal.
+- **L1** (`sys.path` mutation at import time), an explicit plan non-goal.
 - **L12** (`Clean gallery` also deletes the `art/salad_probe_klein_*.jpg`
-  probe rasters) — outside the plan's enumerated criteria; behaviour
+  probe rasters), outside the plan's enumerated criteria; behaviour
   unchanged, so the finding still stands.
-- **§6 suspicions** — all still open, as scoped.
+- **§6 suspicions**, all still open, as scoped.
 - **Residual dead-ish code** noted while resolving M7: the in-house Tk canvas
   router family (`layout_xy`, `node_boxes`, `route_wire`,
   `separate_parallel_wires`, `chamfer_polyline`, …) and the unreferenced

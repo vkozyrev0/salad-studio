@@ -1,7 +1,7 @@
 """Salad Studio LoRA library: known catalog rows plus user extras.
 
 User extras live in ``~/.config/salad/studio-loras.json`` (override with a
-path argument in tests — never write the real file from tests).
+path argument in tests, never write the real file from tests).
 """
 from __future__ import annotations
 
@@ -488,7 +488,7 @@ def prefer_civitai_hit(
     """Prefer a later same-model version whose filename is the tag plus a suffix.
 
     Exact filename still wins across different models (Cass vs Aruhshura). On the
-    same model — or when V3's filename is ``<tag> V3 Refined`` vs V1 ``<tag>`` —
+    same model, or when V3's filename is ``<tag> V3 Refined`` vs V1 ``<tag>``,
     the higher Civitai version id wins among strong filename matches.
     """
     if not a:
@@ -1046,7 +1046,7 @@ def merge_image_resources(
 def fetch_civitai_generation_data(
     image_id: str, timeout: int = 20
 ) -> list[dict[str, Any]] | None:
-    """tRPC ``image.getGenerationData`` — Resources-used for External Generator posts."""
+    """tRPC ``image.getGenerationData``, Resources-used for External Generator posts."""
     iid = str(image_id or "").strip()
     if not iid.isdigit():
         return None

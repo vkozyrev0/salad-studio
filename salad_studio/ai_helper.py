@@ -2,19 +2,19 @@
 
 Window-free. Three pieces, each testable on its own:
 
-- :func:`build_payload` — the request body sent to DeepSeek, carrying the five
+- :func:`build_payload`, the request body sent to DeepSeek, carrying the five
   context inputs (editor positive/negative, adjusted positive/negative, the
   request JSON) plus the resolved weight findings.
-- :func:`parse_reply` — a tolerant parser for the reply's adjusted prompts,
+- :func:`parse_reply`, a tolerant parser for the reply's adjusted prompts,
   raising :class:`ReplyError` when the reply has no usable prompts so the
   caller can surface the raw text instead of blanking the boxes.
-- :func:`ask_deepseek` — the transport, with the HTTP send injectable at the
+- :func:`ask_deepseek`, the transport, with the HTTP send injectable at the
   boundary so tests assert the real request the app builds.
 
 Three rules keep a *piece* of a reply from being taken for the whole reply.
 They exist because a reasoning model (LM Studio's Ministral, DeepSeek's
 reasoning ids) writes a trace before its answer, and the trace quotes things
-that parse as JSON — this system prompt's own schema, a first draft:
+that parse as JSON, this system prompt's own schema, a first draft:
 
 1. **The transport waits for the whole body.** :func:`_http_send` reads to EOF
    and refuses a body shorter than the ``Content-Length`` the server promised;
@@ -25,7 +25,7 @@ that parse as JSON — this system prompt's own schema, a first draft:
    then is the text parsed. An exhausted budget raises :class:`AiError`.
 3. **The last complete object wins.** :func:`parse_reply_full` scores every
    complete ``{...}`` in the reply and prefers one that carries the prompts
-   explicitly over a quoted draft — and treats the schema's ``"..."``
+   explicitly over a quoted draft, and treats the schema's ``"..."``
    placeholders as no answer at all.
 """
 from __future__ import annotations
@@ -58,7 +58,7 @@ CONTINUE_PROMPT = (
 # at all; there is nothing to continue in that case, only an answer to demand.
 ANSWER_NOW_PROMPT = (
     "Your reasoning used the entire output-token budget and no answer was "
-    "written. Answer now, briefly, with ONLY the JSON object asked for — no "
+    "written. Answer now, briefly, with ONLY the JSON object asked for, no "
     "further reasoning."
 )
 # Long context + a reasoning trace takes minutes, and a continued reply is sent
@@ -113,8 +113,8 @@ _PRIMARY_ALIASES = {
 }
 _LOOSE_ALIASES = {"positive": ("prompt",)}
 
-# A model that reasons first often quotes this module's own system prompt back
-# — including its ellipsis placeholders — before it writes its answer. Those
+# A model that reasons first often quotes this module's own system prompt back,
+# including its ellipsis placeholders, before it writes its answer. Those
 # must read as "no answer", not as the prompts "...".
 _PLACEHOLDER_WORDS = frozenset(
     {
@@ -162,7 +162,7 @@ def context_block(
 ) -> str:
     """The user message: the reported issue first, then all five inputs."""
     return (
-        "=== IMAGE ISSUE REPORTED BY THE ARTIST (HIGHEST PRIORITY — fix this "
+        "=== IMAGE ISSUE REPORTED BY THE ARTIST (HIGHEST PRIORITY, fix this "
         "first, and never reproduce it) ===\n"
         f"{issue.strip() or '(none reported)'}\n\n"
         f"=== ATTACHED IMAGE ===\n{image_note.strip() or '(none attached)'}\n\n"
@@ -200,7 +200,7 @@ def build_payload(
     the OpenAI-style content list the DeepSeek API accepts.
     """
     note = (
-        "The last generated image is attached below — inspect it and name the "
+        "The last generated image is attached below, inspect it and name the "
         "defect you actually see."
         if image_data_url
         else ""
@@ -472,7 +472,7 @@ def parse_reply_full(reply: str) -> dict[str, str]:
     """Pull (positive, negative, issue) out of a DeepSeek reply.
 
     A reasoning model writes a trace before its answer, and the trace quotes
-    JSON — this module's own schema, a first draft. So every complete object in
+    JSON, this module's own schema, a first draft. So every complete object in
     the reply is scored and the best one wins: the object that fills the most
     prompts, and that names them outright rather than through a bare ``prompt``
     key. Ties go to the candidate that appears later, because the answer comes
@@ -549,7 +549,7 @@ def _read_body(resp: Any) -> bytes:
     if expected is not None and len(body) < expected:
         raise AiError(
             f"the reply was cut off in transit: {len(body)} of {expected} bytes "
-            "arrived, so the answer would have been incomplete — press Help "
+            "arrived, so the answer would have been incomplete, press Help "
             "again"
         )
     return body
@@ -627,7 +627,7 @@ def reply_info(body: bytes | str) -> dict[str, Any]:
 
     ``content`` is the assistant text, ``reasoning`` the trace a reasoning model
     emits before it, ``finish_reason`` the API's stop reason, and ``truncated``
-    True when the answer was cut off by the token limit — the difference between
+    True when the answer was cut off by the token limit, the difference between
     a complete reply and its first chunk, which is what the caller must not
     confuse.
     """
@@ -688,7 +688,7 @@ def _error_detail(body: bytes | str) -> str:
 def _continuation_payload(payload: dict[str, Any], partial: str) -> dict[str, Any]:
     """The follow-up body that asks the model to finish what it was saying.
 
-    With nothing written yet — a reasoning trace that ate the whole budget —
+    With nothing written yet, a reasoning trace that ate the whole budget,
     there is no half-answer to continue, so the follow-up demands the answer
     instead of appending an empty assistant turn.
     """
@@ -754,7 +754,7 @@ def _collect(
 
 
 def _empty_content_error(who: str, body: bytes, info: dict[str, Any]) -> AiError:
-    """Why a 200 carried no answer — a reasoning trace that ate the budget, or
+    """Why a 200 carried no answer, a reasoning trace that ate the budget, or
     a body that is not a reply at all."""
     if info.get("reasoning"):
         return AiError(
@@ -780,7 +780,7 @@ def _ask_deepseek_full(
     """One DeepSeek call, continued to completion: (text, continuations, info)."""
     key = (api_key or "").strip()
     if not key:
-        raise AiError("DeepSeek key is empty — save it on the Tokens tab.")
+        raise AiError("DeepSeek key is empty, save it on the Tokens tab.")
     sender = send or _http_send
     text, continuations, info = _collect(
         payload,
@@ -850,11 +850,11 @@ def help_with_prompts(
 def local_base(url: str) -> str:
     """Normalise a user-entered local URL to the OpenAI-compatible base.
 
-    LM Studio serves several surfaces on one server: the native REST API at
+    LM Studio serves two APIs on one server: the native REST API at
     ``/api/v1/*`` (``/api/v1/models``, ``/api/v1/chat``) and the
     OpenAI-compatible one at ``/v1/*`` (``/v1/models``,
     ``/v1/chat/completions``). This client speaks the OpenAI-compatible
-    surface, so a pasted native base is mapped onto it and a pasted inference
+    API, so a pasted native base is mapped onto it and a pasted inference
     URL is reduced to its base.
     """
     raw = (url or "").strip().rstrip("/")
@@ -926,7 +926,7 @@ def request_for_local(base: str, payload: dict[str, Any]) -> urllib.request.Requ
 
 def _offline_hint(message: str, base: str) -> str:
     return (
-        f"{message} — is the local model server running? In LM Studio open "
+        f"{message}, is the local model server running? In LM Studio open "
         f"Developer → Start Server (or enable the local server), then check the "
         f"URL ({base})."
     )
@@ -1045,7 +1045,7 @@ def _ask_local_full(
             f"local server HTTP {status}: {_error_detail(body)}"
             + ("" if status != 404 else f" (is a model loaded at {base}?)")
         ),
-        # The "is the server running?" hint is for a transport failure only —
+        # The "is the server running?" hint is for a transport failure only,
         # not for a reply that hit the token limit.
         transport_error=lambda e: AiError(_offline_hint(str(e), base)),
     )

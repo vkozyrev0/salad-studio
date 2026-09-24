@@ -35,7 +35,7 @@ class FormatStatus(unittest.TestCase):
                 }
             ],
             "ready_ok": False,
-            "ready_explain": "GET https://host/ready — HTTP 522 — origin TCP timeout",
+            "ready_explain": "GET https://host/ready, HTTP 522, origin TCP timeout",
         }
         line = salad_status.format_status(info)
         self.assertIn("Flux2 Klein", line)
@@ -94,7 +94,7 @@ class FormatStatus(unittest.TestCase):
         return {
             "ready_ok": False,
             "ready_code": ready_code,
-            "ready_explain": f"GET /ready — HTTP {ready_code}",
+            "ready_explain": f"GET /ready, HTTP {ready_code}",
             "instances": [
                 {"state": "running", "ready": True, "pulling_progress": 1.0, "gpu": "RTX 5090"}
             ],

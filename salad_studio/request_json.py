@@ -22,7 +22,7 @@ import lora_store as ls  # noqa: E402
 UNET_BASE = "flux-2-klein-base-9b-fp8.safetensors"
 UNET_DISTILLED = "flux-2-klein-9b-fp8.safetensors"
 # The SNOFS merged cut. Its filename contains BOTH "snofs" and "distilled", so the
-# "snofs" test must come first in normalize_unet — otherwise it lands on the plain
+# "snofs" test must come first in normalize_unet, otherwise it lands on the plain
 # distilled cut and the request goes to the wrong container group.
 UNET_SNOFS = "snofsSexNudesAndOther_distilledV12KleinFp8.safetensors"
 UNET_LABELS = ("Base 9B", "Distilled 9B", "SNOFS 9B")
@@ -694,7 +694,7 @@ def lora_name_inputs(prompt: dict[str, Any] | None) -> list[tuple[dict[str, Any]
 
     Keyed on the *input*, not the node class. ``LoraLoaderModelOnly`` carries
     ``lora_name`` too, and a ``class_type == "LoraLoader"`` filter silently
-    skipped it — so a gated Civitai file reached the replica unauthenticated and
+    skipped it, so a gated Civitai file reached the replica unauthenticated and
     the LoRA never loaded. (2026-09-22)
     """
     out: list[tuple[dict[str, Any], str]] = []
@@ -723,7 +723,7 @@ def civitai_lora_urls(prompt: dict[str, Any]) -> list[str]:
     """Civitai download URLs the graph's LoRA nodes reference, deduped in order.
 
     Used by ``generator.check_lora_urls`` to confirm each one resolves *before*
-    the render is POSTed — a wrong or expired URL is otherwise reported as an
+    the render is POSTed. A wrong or expired URL is otherwise reported as an
     opaque HTTP 524 from the gateway. Nothing is downloaded.
     """
     urls: list[str] = []
@@ -734,7 +734,7 @@ def civitai_lora_urls(prompt: dict[str, Any]) -> list[str]:
 
 
 def lora_url_label(url: str) -> str:
-    """A log-safe name for a LoRA URL — never the URL, which carries ``?token=``."""
+    """A log-safe name for a LoRA URL, never the URL, which carries ``?token=``."""
     m = re.search(r"/download/models/(\d+)", url or "")
     if m:
         return f"civitai:{m.group(1)}"

@@ -1230,7 +1230,7 @@ class NewPagesAndPlacement(unittest.TestCase):
         app._on_prompt_commit()
         app.update_idletasks()
         # _patch_editor_from_prompt falls back to rebuilding from Prompt Settings,
-        # so the text still lands in the JSON — and the page says the JSON was rebuilt.
+        # so the text still lands in the JSON, and the page says the JSON was rebuilt.
         dumped = app.editor_text.get("1.0", "end")
         self.assertIn("REBUILT POSITIVE", dumped)
         self.assertEqual(
@@ -1711,7 +1711,7 @@ class NewPagesAndPlacement(unittest.TestCase):
 
         Loading a JSON into the editor rewrites var_unet from the graph, so
         comparing the graph's family to the form's unet compares the graph with
-        itself and never fires — which is how a SNOFS graph was rendered on the
+        itself and never fires, which is how a SNOFS graph was rendered on the
         klein group.
         """
         from salad_studio import profiles

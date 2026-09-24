@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Salad Studio visual chrome — one apply path the live app and tests share.
+"""Salad Studio visual chrome, one apply path the live app and tests share.
 
 Uses stock ttk (clam) plus explicit tk widget options so Text, Canvas, and
 the history-strip buttons match the ttk surfaces. No third-party theme pkg.
@@ -35,7 +35,7 @@ PALETTE: dict[str, str] = {
 }
 
 # ttk class → option → palette key. Tests assert Style.lookup against this
-# after calling apply_theme — it is the same mapping apply_theme writes.
+# after calling apply_theme, it is the same mapping apply_theme writes.
 STYLE_LOOKUPS: tuple[tuple[str, str, str], ...] = (
     ("TFrame", "background", "bg"),
     ("TLabel", "background", "bg"),

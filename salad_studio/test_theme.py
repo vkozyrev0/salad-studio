@@ -209,7 +209,7 @@ class LiveSaladStudioWindow(unittest.TestCase):
         from salad_studio.app import SaladStudio
         from salad_studio.theme import PALETTE, STYLE_LOOKUPS, apply_theme
 
-        # apply_theme is the live function — constructing SaladStudio must call it.
+        # apply_theme is the live function, constructing SaladStudio must call it.
         self.assertTrue(callable(apply_theme))
         app = SaladStudio(show=False)
         app.withdraw()

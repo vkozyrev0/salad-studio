@@ -3,7 +3,7 @@
 
 Color spans and the valid/invalid result are pure functions over a string so
 tests can call them without a window. Verification is ``parse_request_json``
-— the same gate Generate uses.
+, the same gate Generate uses.
 """
 from __future__ import annotations
 

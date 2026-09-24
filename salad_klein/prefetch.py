@@ -38,7 +38,7 @@ PROGRESS_EVERY_S = 60.0
 # One unet per image, selected at build/deploy time via KLEIN_UNET_SET.
 #
 # Why the split exists: a 4090/3090 has 24 GB of VRAM and the Qwen text encoder
-# alone is 8.66 GB, so ONE ~9 GB unet plus the encoder is ~17.7 GB — most of the
+# alone is 8.66 GB, so ONE ~9 GB unet plus the encoder is ~17.7 GB, most of the
 # card. Two unets is ~27 GB and cannot fit, at which point Comfy streams weights
 # from host memory instead of holding them resident:
 #
@@ -53,7 +53,7 @@ PROGRESS_EVERY_S = 60.0
 #   KLEIN_UNET_SET=distilled  flux-2-klein-9b-fp8           (4-step cut)
 #   KLEIN_UNET_SET=snofs      SNOFS distilled v1.2          (two-body plates)
 #   KLEIN_UNET_SET=snofs,base both, for a group that must serve both
-#   unset / "all"             all three — the historical behaviour, the default
+#   unset / "all"             all three, the historical behaviour, the default
 #
 # The text encoder and VAE are needed by every graph, so they are always fetched.
 UNET_JOBS = {
@@ -103,7 +103,7 @@ def selected_unets(raw: str | None = None) -> tuple[str, ...]:
         return tuple(UNET_JOBS)
     wanted = tuple(name for name in (p.strip() for p in text.split(",")) if name in UNET_JOBS)
     if not wanted:
-        print(f"prefetch: KLEIN_UNET_SET={text!r} names no known unet — fetching all", flush=True)
+        print(f"prefetch: KLEIN_UNET_SET={text!r} names no known unet, fetching all", flush=True)
         return tuple(UNET_JOBS)
     return wanted
 
@@ -258,7 +258,7 @@ def main(argv: list[str]) -> int:
                 failed.append(name)
     if failed:
         print(
-            "prefetch aborted — missing "
+            "prefetch aborted, missing "
             + ", ".join(failed)
             + " (will not start Comfy)",
             flush=True,

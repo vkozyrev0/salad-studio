@@ -336,7 +336,7 @@ def check_container(gateway: str, key: str) -> dict[str, Any]:
             for it in (idata.get("instances") or [])
             if isinstance(it, dict)
         ]
-    # Skip /ready while the replica is pulling — a stale 200 from the
+    # Skip /ready while the replica is pulling, a stale 200 from the
     # previous instance (or a 20s 522 hang) must not freeze the badge.
     if not any(_instance_pulling(it) for it in out["instances"]):
         try:
@@ -497,7 +497,7 @@ def format_status(info: dict[str, Any]) -> str:
         parts.append(str(info["ready_explain"]))
     if info.get("error"):
         parts.append(str(info["error"]))
-    return " — ".join(p for p in parts if p)
+    return ", ".join(p for p in parts if p)
 
 
 def list_gpu_classes(key: str) -> list[dict[str, Any]]:
@@ -590,7 +590,7 @@ def replica_detail(info: dict[str, Any]) -> str:
             bits.append(gs)
         bits.append("no instance")
     if not info.get("ready_ok") and info.get("ready_explain"):
-        # Say *why* the replica is not answering — a bare "Down" left the user
+        # Say *why* the replica is not answering, a bare "Down" left the user
         # guessing between a restart, a bad gateway URL and a dead origin.
         first = str(info["ready_explain"]).split("\n")[0].strip()
         if first:

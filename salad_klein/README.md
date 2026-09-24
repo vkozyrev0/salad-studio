@@ -10,19 +10,19 @@ Read it first; this file is the build-context short form.
 
 Full steps: [`docs/workflow/15-salad-flux2-klein-group.md`](../docs/workflow/15-salad-flux2-klein-group.md)
 
-**The verified plate recipe is `prompt_snofs_distilled_v12.json`** — the
+**The verified plate recipe is `prompt_snofs_distilled_v12.json`**. The
 **SNOFS distilled v1.2** unet (SNOFS is the unet on this group, not a LoRA),
 Qwen fp8 CLIP, flux2 VAE, euler, **4 steps**, **CFG 1**, 832×1216, **no LoRAs**,
 and a **779-char** four-section prompt. It is the only recipe a human has judged
 (`prompt_ledger.json` → `verdicts`), and it produced an acceptable plate at
-**2 of 7 seeds** — so batch seeds and select, rather than rewording.
+**2 of 7 seeds**, so batch seeds and select, rather than rewording.
 **Start with [`docs/workflow/21-klein-image-handoff.md`](../docs/workflow/21-klein-image-handoff.md)**;
 it is the single entry point for this work and it supersedes what this paragraph
 used to say.
 
 Superseded (kept as the record of what was tried, no human verdict covers them):
 `prompt_snofs_distilled_anatomy.json` (euler) and
-`prompt_snofs_distilled_anatomy_resms.json` (res_multistep) — the older 4-LoRA
+`prompt_snofs_distilled_anatomy_resms.json` (res_multistep). The older 4-LoRA
 stack with 5,049-char sectioned prompts. The claim that "the prompt architecture
 is the quality lever" came from that era and is **not** what the measurements
 show: a short prompt on the same graph was one confounded A/B, while the
@@ -44,14 +44,14 @@ docker push vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch4
 **prefetch4**: clone rgthree locally, `COPY` into
 `/opt/ComfyUI/custom_nodes/rgthree-comfy` at `docker build` (pin
 `2c5342a8cb0eaecaabf61435a5f37dd594c510ba`). Prefetch stays weights-only
-— do not `git clone` on Salad. On prefetch4, `/prompt` can instantiate
+Do not `git clone` on Salad. On prefetch4, `/prompt` can instantiate
 `Image Comparer (rgthree)` and `Power Lora Loader (rgthree)`. Studio
 **Convert still expands** Power Lora → stock `LoraLoader` so LIVE
 prefetch3 can run the graph. Studio has no comparer slider; `SaveImage`
 is the plate.
 
 The image stays the Salad runtime (~12 GB). Do **not** COPY the unet/CLIP/VAE
-and do **not** `RUN unzip` in the Dockerfile — that writes uncompressed
+and do **not** `RUN unzip` in the Dockerfile. That writes uncompressed
 tensors into an image layer (~30 GB). Zip is transport only.
 
 First boot `prefetch.py` (ENTRYPOINT, not a build step):
@@ -72,4 +72,4 @@ Salad never sees that cache. Zip/unzip is only useful here for *local* disk,
 not for shrinking the Docker image.
 
 Do not `FROM` a `flux1dev` Salad tag. Do not POST this graph at loganberry.
-HF_TOKEN / Civitai token stay in `~/.config/` and Salad env — not in git.
+HF_TOKEN / Civitai token stay in `~/.config/` and Salad env, not in git.

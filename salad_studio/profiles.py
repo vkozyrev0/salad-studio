@@ -62,14 +62,14 @@ class SaladProfile:
 # Unet routing: SNOFS and non-SNOFS must never share a container.
 #
 # A 24 GB card (4090/3090) holds ONE ~9 GB unet plus the 8.66 GB Qwen text
-# encoder — about 17.7 GB. When a second unet is needed for a different graph,
+# encoder, about 17.7 GB. When a second unet is needed for a different graph,
 # the pair does not fit, so Comfy falls back to streaming weights from host
 # memory and a render that should take seconds takes minutes:
 #
 #   Model Flux2 prepared for dynamic VRAM loading. 8658MB Staged. 112 patches
 #   attached. Force pre-loaded 80 weights      (measured 2026-09-22)
 #
-# Two of our families exist — the SNOFS merged cut (two-body plates) and the
+# Two of our families exist, the SNOFS merged cut (two-body plates) and the
 # plain Klein unets (Civitai imports, the 4-step cut). Adding unets to the
 # *_disk_ costs nothing; loading two into VRAM is what breaks. So each container
 # group serves exactly one family, and a graph that asks for the wrong one is
@@ -118,7 +118,7 @@ def routing_conflict(payload: dict[str, Any] | None, profile: SaladProfile) -> s
     return (
         f"This graph loads {bad[0]}, which is a {unet_family(bad[0])} unet, but "
         f"profile {profile.name!r} serves {profile.unet} ({wanted}).\n\n"
-        "One container holds only one unet in VRAM — rendering both families on the "
+        "One container holds only one unet in VRAM. Rendering both families on the "
         "same group makes Comfy stream weights from host memory and turns a "
         "seconds-long render into minutes (and a gateway timeout).\n\n"
         "Switch to the profile for the other family and Generate again."
@@ -148,7 +148,7 @@ def route_payload(
 ) -> tuple[str, SaladProfile] | None:
     """Which group should render this graph, by the unet it loads.
 
-    None means "no group serves that family" — the caller should refuse rather
+    None means "no group serves that family". The caller should refuse rather
     than send it somewhere it would thrash.
     """
     unets = payload_unets(payload)
@@ -292,7 +292,7 @@ def _save_doc(
 
 def default_profile(name: str = "klein") -> SaladProfile:
     """A built-in profile. ``klein5090`` serves the SNOFS family, so its ``unet``
-    is the SNOFS cut — that field is what routing reads to pick a group."""
+    is the SNOFS cut. That field is what routing reads to pick a group."""
     key = (name or "klein").strip() or "klein"
     if key == "klein5090":
         gw = _read_optional_text(GATEWAY_KLEIN_5090_PATH) or KLEIN_5090_GATEWAY

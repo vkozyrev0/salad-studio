@@ -34,13 +34,13 @@ wires with **rounded** corners that **route around other cards**.
 | Tests | `test_graph_view.py` class `JointGraphExport` |
 
 LiteGraph.js (ComfyUI's editor) is also vendored. Spline links look
-like Comfy; they do **not** pathfind around nodes — that is why it is
+like Comfy; they do **not** pathfind around nodes. That is why it is
 not the live pane.
 
 Graphviz was the earlier approach. Its helpers (`prompt_to_dot`, `run_dot`,
 `graphviz_layout`, `find_dot`, `parse_dot_plain`) and the grandalf layout
 (`grandalf_resolve`, `resolve_layout`) have been **removed** from
-`graph_view.py` — nothing on the shipped path called them. Do not require
+`graph_view.py`. Nothing on the shipped path called them. Do not require
 `dot` to open Studio.
 
 ## HTML / JS libraries
@@ -49,16 +49,16 @@ These run in a **browser or WebView2**, not in Tk Canvas.
 
 | Library | Comfy-like? | Smooth wires | Avoid node overlap | Embed notes |
 |---|---|---|---|---|
-| **JointJS** (`manhattan` + `rounded`) | Dark cards + L/R ports if we style them | Orthogonal with circular fillets | **Yes** — manhattan treats other elements as obstacles | One UMD file. **Live pick.** |
-| **LiteGraph.js** | **Yes — ComfyUI's editor** | Bezier/spline | No; wires can cross cards (same as Comfy) | Vendored. **Open as Comfy** |
+| **JointJS** (`manhattan` + `rounded`) | Dark cards + L/R ports if we style them | Orthogonal with circular fillets | **Yes.** Manhattan treats other elements as obstacles | One UMD file. **Live pick.** |
+| **LiteGraph.js** | **Yes, ComfyUI's editor** | Bezier/spline | No; wires can cross cards (same as Comfy) | Vendored. **Open as Comfy** |
 | **Drawflow** | HTML nodes, not Comfy cards | Curved SVG | No | Vanilla JS |
 | **Rete.js** | Visual programming | Plugin renderers | No | Heavy, needs a renderer |
-| **xyflow + SmartBezier / avoid-nodes-edge** | Customizable cards | Bezier or orthogonal | **Best “no intersection”** (libavoid WASM) | React, not a drop-in in Tk |
+| **xyflow + SmartBezier / avoid-nodes-edge** | Customizable cards | Bezier or orthogonal | **Best "no intersection"** (libavoid WASM) | React, not a drop-in in Tk |
 | **ELK.js** (`edgeRouting: SPLINES`, conservative) | Layout engine, we paint | Splines that hug a layered graph | Conservative mode routes around nodes; sloppy can clip | Needs a real JS engine; worker-based bundle is awkward in file:// |
 | **nodegraph-js** | Dark cards, L/R slots | Bezier | Auto-arrange, not obstacle routing | Vanilla JS |
 | **@gravity-ui/graph** | Node editor | Bezier | Canvas+HTML | Needs a bundler |
-| **tkinterweb HtmlFrame** | Not a graph lib | — | — | HTML/CSS in Tk. JS is PythonMonkey — **cannot** run JointJS/LiteGraph |
-| **tkwry (WebView2)** | Host for any JS graph | — | — | Real Edge in a Tk frame. **Live host.** |
+| **tkinterweb HtmlFrame** | Not a graph lib | n/a | n/a | HTML/CSS in Tk. JS is PythonMonkey and **cannot** run JointJS/LiteGraph |
+| **tkwry (WebView2)** | Host for any JS graph | n/a | n/a | Real Edge in a Tk frame. **Live host.** |
 
 **Why not LiteGraph as the pane:** it *is* the Comfy look, including
 wires through boxes. The whole complaint was intersections.
@@ -84,7 +84,7 @@ Tk Salad Studio.
 | Stack | L→R cards + ports | Smooth ortho corners | Wires miss boxes | Text in box |
 |---|---|---|---|---|
 | **Graphviz `dot`** | Yes (`rankdir=LR`, record/HTML ports) | **Only stack with documented circular fillets**: `splines=ortho` + `radius>0` (Graphviz ≥14.1.0) | Hierarchical layout; `splines=true` routes around nodes. `splines=ortho` is **incomplete with ports** and can still clip shapes | Node **grows** to the label unless `fixedsize=true` (then it overflows). Wrap is manual (`<BR/>` / HTML table) |
-| **grandalf** | Coordinates only (Sugiyama). Does not paint | Bézier (`route_with_splines`) or extra polyline points (`route_with_rounded_corners`) — **not** circular fillets | Clips polylines to the **endpoint** bbox; not an obstacle-avoiding router | No labels at all |
+| **grandalf** | Coordinates only (Sugiyama). Does not paint | Bézier (`route_with_splines`) or extra polyline points (`route_with_rounded_corners`), **not** circular fillets | Clips polylines to the **endpoint** bbox; not an obstacle-avoiding router | No labels at all |
 | **NodeGraphQt** | Real Qt node editor, L/R ports | Angled = sharp 90°; curved = cubic Bézier | Qt pipes, not libavoid | Title grows the card; no wrap/clip on `NodeTextItem` |
 | **netext** | Terminal boxes + magnets | Orthogonal arrows | Sugiyama L→R | Terminal width |
 | **Tk Canvas** | We paint cards | Polyline / Bézier / `joinstyle`; no ortho fillet router | Whatever we code | `create_text(width=)` wraps; otherwise as wide as the line |
@@ -99,22 +99,22 @@ NodeGraphQt.
 
 ### Caveats (research)
 
-- Graphviz “ports” are record/HTML fields or compass points (`:e`/`:w`),
+- Graphviz "ports" are record/HTML fields or compass points (`:e`/`:w`),
   not Comfy circular sockets. Visual match is approximate.
 - `radius` needs Graphviz **≥14.1.0** (2025-12-06). Older `dot` keeps
   sharp ortho corners.
 - No engine is globally best at **both** node overlap and edge crossings;
   those are separate NP-hard stages.
-- yFiles “few crossings” is a vendor claim for medium sparse graphs, not
+- yFiles "few crossings" is a vendor claim for medium sparse graphs, not
   a zero-crossing guarantee.
 - Ordinary Graphviz string labels do **not** auto-wrap.
 
 ## What we tried in Studio before Graphviz
 
-1. **In-house Comfy columns + gutter polylines** — looked closest to
+1. **In-house Comfy columns + gutter polylines.** Looked closest to
    Comfy (loaders → LoRA → CLIP → sampler). Wires still crossed cards
    unless gaps grew a lot. Chamfered corners, not circular fillets.
-2. **grandalf Sugiyama as live placement** — scattered nodes (VAE to the
+2. **grandalf Sugiyama as live placement.** Scattered nodes (VAE to the
    top, decode to a far corner, huge loops). Rank-by-topology is not
    Comfy column order. Reverted; `grandalf_resolve` stayed in
    `graph_view.py` unused until the dead layout stack was deleted.
@@ -130,24 +130,24 @@ JointJS HTML, not Graphviz.
   `name` / `lora_name` / CLIP text (`<BR/>` wrap). Tk then draws the
   same fields into that box.
 - Compass `:e` → `:w` on edges (approximate side ports).
-- **No `dot` dependency today.** The pane never invokes Graphviz — the live
+- **No `dot` dependency today.** The pane never invokes Graphviz. The live
   pane is JointJS HTML in WebView2 and the fallback is **Open in browser**
   (the same HTML). There is no install message and no `layout_xy` fallback
   because there is no `dot` path at all.
 
 ## Sources (survey)
 
-- JointJS manhattan router + rounded connector — docs.jointjs.com
-- LiteGraph.js — github.com/jagenjo/litegraph.js (ComfyUI editor)
-- tkwry WebView2 embed — pypi.org/project/tkwry
-- Graphviz `rankdir`, shapes, `splines`, `radius`, `fixedsize`, `dot` layout
-  — graphviz.org docs
-- Python graphviz user guide — graphviz.readthedocs.io
+- JointJS manhattan router + rounded connector, docs.jointjs.com
+- LiteGraph.js, github.com/jagenjo/litegraph.js (ComfyUI editor)
+- tkwry WebView2 embed, pypi.org/project/tkwry
+- Graphviz `rankdir`, shapes, `splines`, `radius`, `fixedsize`, `dot` layout,
+  graphviz.org docs
+- Python graphviz user guide, graphviz.readthedocs.io
 - NodeGraphQt README + `node_base.py` / `pipe.py`
 - grandalf (`bdcht/grandalf`) `layouts.py` / `routing.py`
 - netext (`mahrz24/netext`)
-- ELK Layered — eclipse.dev/elk
-- libavoid — adaptagrams.org
+- ELK Layered, eclipse.dev/elk
+- libavoid, adaptagrams.org
 - yFiles Automatic Layouts
 - Tkinter / Tcl canvas manuals
 - This repo: `salad_studio/graph_view.py`

@@ -2,7 +2,7 @@
 """Structural checks for the live Salad Comfy findings doc.
 
 Drives the shipped markdown (docs/workflow/14-salad-comfy-live-findings.md)
-and freeze pointers — not a re-implementation of Salad HTTP.
+and freeze pointers, not a re-implementation of Salad HTTP.
 """
 from __future__ import annotations
 
@@ -163,7 +163,7 @@ def main() -> int:
     )
     assert "0.0.0.0" in dockerfile
     # The manifest stays weights-free on purpose (Salad's before_start pulls
-    # one file at a time and the startup probe killed it) — prefetch.py is what
+    # one file at a time and the startup probe killed it), prefetch.py is what
     # names the weights, in parallel, at first boot.
     manifest = (KLEIN_DIR / "manifest.yaml").read_text(encoding="utf-8")
     assert "before_start: []" in manifest
@@ -196,7 +196,7 @@ def main() -> int:
 
     ranking = RANKING.read_text(encoding="utf-8")
     assert "14-salad-comfy-live-findings.md" in ranking
-    assert "no longer “plans only”" in ranking or "no longer" in ranking.lower()
+    assert "no longer \u201cplans only\u201d" in ranking or "no longer" in ranking.lower()
 
     catalog = CATALOG.read_text(encoding="utf-8")
     assert "14-salad-comfy-live-findings.md" in catalog

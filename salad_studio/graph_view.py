@@ -3,7 +3,7 @@
 Live view is ``graph_html/viewer.html`` + vendored ``joint.min.js``, embedded
 with tkwry (WebView2). Python only emits node/link JSON (``prompt_to_joint``)
 and pushes it in place with ``graph_host_refresh``; the same JSON feeds the
-LiteGraph page ("Open as Comfy"). No Graphviz / grandalf path exists — the
+LiteGraph page ("Open as Comfy"). No Graphviz / grandalf path exists. The
 JointJS page owns the routing. Without the WebView2 embed the pane is a text
 hint pointing at "Open in browser" (selection needs the embed's IPC).
 """

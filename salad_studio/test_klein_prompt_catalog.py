@@ -4,15 +4,15 @@
 recipe files (and, for candidates, out of the ledger). This module re-reads both
 sides and enforces the three invariants the catalog rests on:
 
-1. **Text** — every catalogued prompt equals the text at the source it names: the
+1. **Text**, every catalogued prompt equals the text at the source it names: the
    named node of the named recipe file, or the ledger pointer for a candidate.
-2. **Well-formedness** — every catalogued recipe parses as a Comfy ``/prompt``
+2. **Well-formedness**, every catalogued recipe parses as a Comfy ``/prompt``
    payload and every node edge in it resolves to a node present in that graph.
-3. **Coverage** — every ledger entry a human judged ``good`` appears in the
+3. **Coverage**, every ledger entry a human judged ``good`` appears in the
    catalog, and nothing appears in the catalog without such a verdict. A
    candidate is recorded with an explicit "not a success" warning.
 
-**Not** ``test_prompt_catalog.py`` — that one covers the runtime Prompt Catalog
+**Not** ``test_prompt_catalog.py``, that one covers the runtime Prompt Catalog
 *store* (``salad_studio/prompt_catalog.py``, the user's named request JSONs under
 ``~/.config/salad/``). This module is about the in-repo Klein artifact.
 

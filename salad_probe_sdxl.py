@@ -121,7 +121,7 @@ def salad_sdxl_base_refiner(pos: str, neg: str, seed: int, w: int, h: int) -> di
 
 
 def lustify_graph(pos: str, neg: str, seed: int, w: int, h: int, ckpt: str) -> dict:
-    """Lustify is a full SDXL ckpt — no Stability refiner."""
+    """Lustify is a full SDXL ckpt, no Stability refiner."""
     return {
         "4": {"inputs": {"ckpt_name": ckpt}, "class_type": "CheckpointLoaderSimple"},
         "6": {"inputs": {"text": pos, "clip": ["4", 1]}, "class_type": "CLIPTextEncode"},

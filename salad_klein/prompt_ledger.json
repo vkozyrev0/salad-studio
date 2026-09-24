@@ -1,0 +1,317 @@
+{
+  "schema": 1,
+  "note": "Verified two-body prompt results. An entry exists only when a HUMAN judged the plate — never from my own read (my 'clean' calls missed a missing act, a third leg, an extra arm and a wrong leg during the 2026-09-22 session). Prompts are copied verbatim from the recipe named in `provenance.recipe`, so they cannot drift from what was actually run.",
+  "graph": {
+    "unet": "snofsSexNudesAndOther_distilledV12KleinFp8.safetensors",
+    "clip": "qwen_3_8b_fp8mixed.safetensors",
+    "vae": "flux2-vae.safetensors",
+    "sampler": "euler",
+    "steps": 4,
+    "cfg": 1,
+    "width": 832,
+    "height": 1216,
+    "loras": [],
+    "group": "flux2-klein-5090 (image ...prefetch6-snofs, the SNOFS group)"
+  },
+  "verdicts": [
+    {
+      "id": "snofs-missionary-v1",
+      "status": "good",
+      "kind": "two-body act",
+      "prompt": "STYLE: ArsMJStyle, Impressionism, oil painting on canvas, visible expressive brushstrokes, dappled natural light, soft impressionist colour, crisp readable painted detail, clean edges on the figures.\n\nSUBJECTS: exactly two nude figures, one woman and one man, two clearly separate bodies, both fully in frame.\n\nPOSE: missionary position, clean side view in profile. She lies on her back, head on a pillow, knees bent and drawn up, thighs open to either side of his hips, feet on the mattress. He lies over her between her thighs, chest low over hers, weight on his forearms beside her shoulders, hips between her thighs. His knees rest on the mattress between her thighs, his shins flat behind him.\n\nINTIMACY: penis inside her vagina, his hips against hers, joined at the pelvis.",
+      "negative": "NEGATIVE: blurry, low detail, distorted anatomy, fused bodies, censored, watermark, text, signature, 3d render.",
+      "good_seeds": [
+        323175253610296,
+        610044882331
+      ],
+      "bad_seeds": [
+        114772190455233,
+        924411309871006,
+        782300144559,
+        555100233771,
+        410299187654
+      ],
+      "hit_rate": "2 of 7 seeds judged acceptable",
+      "user_verdict": "\"v1_knees is the best - all other are bed\"; \"s882331 - is the best; all others are bed\"",
+      "judged_on": "2026-09-22",
+      "provenance": {
+        "recipe": "salad_klein/prompt_snofs_distilled_v12.json",
+        "sheets": [
+          "target/snofs_variants/sheet.jpg",
+          "target/snofs_v1_seeds/sheet.jpg"
+        ],
+        "chosen_over": "V0_control, V2_tucked, V3_straight, V4_shins at the same seed"
+      }
+    }
+  ],
+  "rejected": [
+    {
+      "id": "legs-enumerated-broken-her",
+      "status": "rejected",
+      "clause_added": "His legs stretch back behind him along the mattress, knees and shins resting flat, one leg to either side of her hips.",
+      "why": "broke HER legs at both seeds — describing his legs does not help by itself; the POSTURE wording matters",
+      "sheet": "target/snofs_legs/sheet.jpg"
+    },
+    {
+      "id": "no-leg-description",
+      "status": "rejected",
+      "clause_change": "both leg descriptions stripped; pose and act only",
+      "why": "broke HER legs (same as above)",
+      "sheet": "target/snofs_legs/sheet.jpg"
+    },
+    {
+      "id": "reworded-his-posture",
+      "status": "rejected",
+      "clause_added": "He kneels between her thighs with his weight on his forearms beside her shoulders, his hips against hers and his shins flat on the mattress behind him.",
+      "why": "one of the four rewrites beaten by V1_knees at seed 610296",
+      "sheet": "target/snofs_variants/sheet.jpg"
+    },
+    {
+      "id": "medieval-setting-clause",
+      "status": "rejected",
+      "clause_added": "SETTING: a medieval stone-walled bedchamber, a heavy tapestry on the wall, a lit hearth and candlelight, warm dim interior.",
+      "why": "user verdict: \"medievil is disterted - two knees on the left and missing part of the leg on the right\". Added LAST in the prompt, everything else held, same two seeds as the control which was not flagged.",
+      "corroborates": "the earlier plate audit, which found a castle/medieval setting block in 6/6 FAILING plates but could not isolate it (bullet format and shot scale changed at the same time). This run changed only the setting clause, so the setting is now implicated directly.",
+      "sheet": "target/snofs_medieval/sheet.jpg",
+      "date": "2026-09-22"
+    }
+  ],
+  "principles": [
+    "State the act directly ('penis inside her vagina, his hips against hers'). The audit of the earlier plates found 'act not depicted' in 11 of 16 images — the dominant failure was never limbs.",
+    "Name the canonical position (missionary, doggystyle, cowgirl, spooning) instead of describing geometry abstractly.",
+    "Describe BOTH bodies' limbs, and give a specific physically-coherent posture for each. The working clause for HIM is 'His knees rest on the mattress between her thighs, his shins flat behind him.'",
+    "Keep it short and affirmative; never enumerate limbs or list defect words in either polarity.",
+    "Always carry the style block; it was held constant across every good plate.",
+    "Negative: short and style-only. At CFG 1 it is inert, and the old 3649-char defect/position blacklist did nothing while forbidding the positions that render.",
+    "THE SEED DOMINATES. Expect roughly 2 in 7. Batch seeds and let a human pick; do not iterate wording looking for a cure."
+  ],
+  "preconditions": [
+    "One unet family per container group — mixing SNOFS and plain-Klein on one group thrashed VRAM and turned 3 s renders into 240-576 s (all 524-ing).",
+    "Routing is in Studio: base graphs -> klein, SNOFS graphs -> klein5090, keyed on UNETLoader.unet_name.",
+    "A render is 1-4 s when the model is resident, so a 12-seed sheet costs ~40 s."
+  ],
+  "replacements": [
+    {
+      "recipe": "salad_klein/prompt_snofs_distilled_v12.json",
+      "date": "2026-09-22",
+      "node": "74",
+      "had": "REPLACE_THIS_PROMPT",
+      "now": "STYLE: ArsMJStyle, Impressionism, oil painting on canvas, visible expressive brushstrokes, dappled natural light, soft impressionist colour, crisp readable painted detail, clean edges on the figures.\n\nSUBJECTS: exactly two nude figures, one woman and one man, two clearly separate bodies, both fully in frame.\n\nPOSE: missionary position, clean side view in profile. She lies on her back, head on a pillow, knees bent and drawn up, thighs open to either side of his hips, feet on the mattress. He lies over her between her thighs, chest low over hers, weight on his forearms beside her shoulders, hips between her thighs. His knees rest on the mattress between her thighs, his shins flat behind him.\n\nINTIMACY: penis inside her vagina, his hips against hers, joined at the pelvis.",
+      "negative_node": "67",
+      "negative_had": "",
+      "negative_now": "NEGATIVE: blurry, low detail, distorted anatomy, fused bodies, censored, watermark, text, signature, 3d render.",
+      "produced_these_good_plates": [
+        {
+          "plate": "target/snofs_variants/V1_knees/studio_1790112819749.jpg",
+          "seed": 323175253610296,
+          "user_verdict": "\"v1_knees is the best - all other are bed\""
+        },
+        {
+          "plate": "target/snofs_v1_seeds/s882331/studio_1790113204549.jpg",
+          "seed": 610044882331,
+          "user_verdict": "\"s882331 - is the best; all others are bed\""
+        }
+      ],
+      "note": "This text is what replaced the literal placeholder. It was found by a controlled A/B at a fixed seed (only node 74 changed) and then checked across 7 seeds, where 2 were acceptable. The `now` field is copied from the recipe, so it cannot drift."
+    }
+  ],
+  "candidates": [
+    {
+      "id": "base-snofs-researched",
+      "status": "CANDIDATE — no human verdict yet; must not be treated as verified",
+      "source": "the user's own research, 2026-09-22 (model cards, working gallery metas, MyAIForce, MatchingPose/RefControl, Ashen3's notes, depth-training notes, cinematography framing)",
+      "central_claim": "Run Klein 9B BASE for sex T2I, not the distilled 4-step cut: distilled is for edits, and the author and testers say Base has far fewer anatomy horrors. This CONTRADICTS the verified entry, which is the SNOFS-merged distilled v1.2 unet at CFG 1 / 4 steps.",
+      "routing_note": "Base is unet family 'klein', so these plates belong on the klein group — not the SNOFS group.",
+      "human_readable": "docs/workflow/19-two-body-prompt-playbook.md section 6",
+      "framework": "Full sentences, not tags. Camera -> who is who -> named position -> one limb action each with left/right ownership -> clinical genitals (penis/vagina) -> light/setting.",
+      "settings": {
+        "model": "Base 9B",
+        "snofs_weight": "0.8-1.0 alone; 0.3-0.5 if stacking realism/anatomy",
+        "steps": "30-50 (showcase often 50)",
+        "cfg": "~4-5 on Base",
+        "sampler": "Euler + Flux2 scheduler; if melt -> res_2s / res_multistep",
+        "resolution": "~1.0-1.5 MP first (e.g. 1024x1536), then upscale",
+        "helpers": "Anatomy Fixer 2-3; Male Anatomy + the word penis (never slang)"
+      },
+      "template": "A [CAMERA: side-view / high-angle / low-angle POV / three-quarter] photograph of [WHO_A] and [WHO_B], both clearly separate adult bodies,\nhaving sex in the [POSITION: missionary position | doggystyle position | cowgirl position | spooning | blowjob].\n[LIMBS: her L/R hand does X; his L/R hand does Y; knees/feet - one action per limb].\n[ACT: his erect penis inserted into her vagina / in her mouth - clinical words].\n[OCCLUSION: far-side limbs partially occluded but readable; one clear figure plane].\n[FRAMING: medium / three-quarter / head-to-knees].\n[SETTING + LIGHT]. Sharp focus, anatomically correct, no extra limbs.",
+      "prompts": {
+        "missionary": "A high-angle photograph of two adults having sex in the missionary position on a bed with white sheets. The woman lies on her back, holding her own knees apart so both of her legs are clearly visible and separate. The man is between her legs, his hips between her thighs, one hand on the bed beside her shoulder. His erect penis is inserted into her vagina. Camera looks down from above their torsos so both bodies stay on one clear plane, natural window light, sharp focus on hips and legs, no extra limbs.",
+        "doggystyle": "A side-view photograph of two adults having sex in the doggystyle position. The woman leans forward over the edge of a sofa, back arched, knees on the cushion, both of her legs clearly visible. The nude man kneels behind her, both hands gripping her hips, his erect penis penetrating her vagina from behind. Three-quarter profile so the far-side limbs are partially occluded but readable, one clear silhouette, soft daylight, full bodies from head to knees in frame.",
+        "cowgirl": "A low-angle photograph from the man's perspective of a woman having sex in the cowgirl position. She straddles him, knees planted on either side of his hips, both of her thighs clearly separate. Her hands rest on his chest. His hands grip her buttocks. His erect penis is visible penetrating her vagina. Paneled ceiling above her, sweat on her skin, sharp anatomy, no fused bodies.",
+        "blowjob": "A close-up photograph of a topless adult woman pausing during a blowjob. She kneels on a bed, mouth open, looking forward. Thick strands of saliva stretch from her extended tongue to the glans of the man's erect penis in the foreground. Only one penis and two of her hands are visible; her hands rest on his thighs. Soft bedroom light, sharp focus on mouth and penis."
+      },
+      "negative": "extra limbs, fused bodies, merged torsos, twisted joints, bad anatomy, malformed hands, duplicate limbs, intertwined bodies, body horror",
+      "snofs_quirks": [
+        "goosebumps if close-ups get weird texture (v1.4 depth-training artifact)",
+        "kissing if cunnilingus drifts"
+      ],
+      "avoid": [
+        "distilled 4-step for complex sex",
+        "slang-only tags",
+        "intertwined/tangled",
+        "conflicting arm verbs",
+        "ultra-tight crops",
+        "starting above ~2 MP before anatomy locks"
+      ],
+      "finds": [
+        "Depth training: SNOFS v1.4 was trained against depth BECAUSE two similar-skinned bodies blend - our 'fused bodies' failure.",
+        "Lock the pose first (mannequin -> matchingpose9b), then describe sex/clothes in text and do NOT re-describe the pose.",
+        "Film/photo language beats tag soup: pull the camera back, side or three-quarter, 'one clear silhouette', one verb per limb."
+      ],
+      "stack_order": [
+        "Base + SNOFS alone",
+        "if glitch: Fixer 2-3, or res_2s",
+        "male issues: Male Anatomy + the word penis",
+        "hard poses: mannequin/MatchingPose, or DWPose RefControl",
+        "then upscale"
+      ],
+      "test_in_progress": {
+        "script": "target/klein_base_snofs_test.py",
+        "group": "klein (base unet) — gated on /health",
+        "arms": [
+          "T1_research: base + SNOFS LoKr 2960556 @0.8, 40 steps, CFG 4.5, 1024x1536, euler, their prompt verbatim",
+          "T2_fixer: the same + klein_slider_anatomy 2615554 @2.5"
+        ],
+        "seeds": [
+          323175253610296,
+          610044882331
+        ],
+        "known_risk": "The first plate per arm also downloads the LoKr (~1.1 GB) at request time; with the container's readiness tolerance at 200 s a long first render could be replaced mid-flight, and a replacement loses the LoKr cache. Remedy if it bites: a pre-render POST /download with wait:true, or a temporarily looser tolerance."
+      },
+      "full_writeup": "docs/workflow/20-comfy-klein-snofs-recipe-cards.md (copied verbatim from the user's Desktop)",
+      "corrections_vs_flux1": {
+        "DualCLIPLoader (T5+CLIP-L)": "CLIPLoader with type=flux2 + Qwen3-8B",
+        "EmptyLatentImage": "EmptyFlux2LatentImage",
+        "FluxGuidance + KSampler CFG=1": "CFGGuider holds CFG; + Flux2Scheduler + SamplerCustomAdvanced",
+        "ModelSamplingFlux": "not used in the official Klein T2I template",
+        "distilled 4-step for everything": "BASE for complex sex T2I; distilled for edits/previews only",
+        "_note": "Four of these five describe the graph we ALREADY run, so none of the session's four wrong diagnoses was a plumbing error — the only divergence is the operating point."
+      },
+      "shared_defaults": {
+        "steps": 40,
+        "cfg": 4.5,
+        "batch": 1,
+        "snofs_alone": 0.9,
+        "snofs_when_stacking": 0.45,
+        "stacking_with": {
+          "anatomy_fixer": 2.5,
+          "male_anatomy": 0.8
+        },
+        "lora_order": [
+          "SNOFS (0.8-1.0 alone / 0.3-0.5 stacked)",
+          "Klein Anatomy Quality Fixer v1.5 (2.0-3.0, a concept slider)",
+          "Male Anatomy (0.6-1.0, clinical word 'penis', CLIP connected)"
+        ]
+      },
+      "latent_presets": {
+        "missionary": "1024x1536",
+        "cowgirl_low_pov": "1024x1536",
+        "doggy_side": "1280x960 or 1152x896",
+        "blowjob": "1024x1280 or 896x1152",
+        "safe_starter": "1024x1024"
+      },
+      "cards": [
+        {
+          "id": "A_missionary",
+          "latent": "1024x1536",
+          "snofs": 0.9,
+          "fixer": 2.5,
+          "male": "0.7-0.9 if penis collapses",
+          "neg_adds": [
+            "standing",
+            "doggy",
+            "cowgirl",
+            "side view only"
+          ],
+          "if_broken": [
+            "res_2s / res_multistep, steps 35-45",
+            "SNOFS 0.55, Fixer 3.0",
+            "camera: slight high angle looking down the torso",
+            "pose-lock MatchingPose with a missionary mannequin"
+          ]
+        },
+        {
+          "id": "B_doggy_side",
+          "latent": "1280x960",
+          "snofs": "0.85-0.95",
+          "fixer": "2.5-3.0 (rear angles melt hips)",
+          "male": 0.8,
+          "neg_adds": [
+            "front view",
+            "face-on camera",
+            "missionary",
+            "cowgirl",
+            "foreshortened mess"
+          ],
+          "if_broken": [
+            "res_2s, CFG 4.0",
+            "SNOFS 0.4, Fixer 3.0",
+            "widen framing: head to knees, more negative space",
+            "RefControl DWPose from a clean side skeleton"
+          ]
+        },
+        {
+          "id": "C_cowgirl_low_pov",
+          "latent": "1024x1536",
+          "snofs": 0.9,
+          "fixer": 2.5,
+          "male": "0.85 (critical; low POV foreshortens)",
+          "neg_adds": [
+            "standing",
+            "doggy",
+            "side profile only",
+            "floating bodies"
+          ],
+          "if_broken": [
+            "low three-quarter instead of extreme worm's-eye",
+            "SNOFS 0.45, Male 1.0, Fixer 3.0",
+            "res_multistep, steps 45",
+            "MatchingPose cowgirl mannequin, trigger matchingpose9b"
+          ]
+        },
+        {
+          "id": "D_blowjob_pause",
+          "latent": "1024x1280",
+          "snofs": 0.85,
+          "fixer": "2.0 (faces matter more here)",
+          "male": "0.9-1.0",
+          "neg_adds": [
+            "deepthroat motion blur",
+            "kissing",
+            "vagina",
+            "penetration",
+            "extra mouths"
+          ],
+          "if_broken": [
+            "pull back to a medium shot",
+            "Male up, SNOFS 0.4",
+            "res_2s, CFG 3.5-4.0",
+            "identity RefControl if the face drifts"
+          ]
+        },
+        {
+          "id": "E_optional_standing_or_prone",
+          "latent": "1280x960",
+          "note": "standing doggy and prone bone variants; same LoRAs/sampler as Doggy side, Fixer 3.0 recommended"
+        }
+      ],
+      "cheat_sheet_if_limbs_break": [
+        "euler -> res_2s / res_multistep",
+        "SNOFS down 0.35-0.5, Fixer up 3.0",
+        "CFG 4.0 (not 6+)",
+        "simpler camera / more body in frame",
+        "pose lock: MatchingPose or RefControl DWPose",
+        "Stage-A at ~1 MP, fix, then upscale"
+      ],
+      "blockers_not_assumed": [
+        "the official template ships 4B filenames; the 9B swap is manual",
+        "the res_2s class name varies by custom-node pack",
+        "MatchingPose's Mannequin companion HF page appeared renamed when fetched",
+        "Male Anatomy's primary host is PromptHero, not Civitai, and it is alpha",
+        "SNOFS on Civitai may require civitai.red for mature files",
+        "anything marked 'verify in your build' has NOT been checked against our Salad image (api1.19.2)"
+      ],
+      "stage_b_upscale": "VAEDecode -> ImageScaleBy (1.5-2x lanczos) -> VAEEncode -> second sampler at denoise 0.25-0.4 -> VAEDecode -> SaveImage; keep SNOFS <= 0.5 on refine if limbs drift"
+    }
+  ]
+}

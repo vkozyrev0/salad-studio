@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Salad Studio graph (LiteGraph)</title>
+<link rel="stylesheet" href="litegraph.css"/>
+<style>
+  html, body { margin: 0; height: 100%; background: #202020; overflow: hidden; }
+  #graph { width: 100%; height: 100%; display: block; }
+</style>
+</head>
+<body>
+<canvas id="graph"></canvas>
+<script src="litegraph.min.js"></script>
+<script>
+const GRAPH = window.STUDIO_GRAPH || {"nodes":[], "links":[]};
+
+(function () {
+  const types = {};
+  (GRAPH.nodes || []).forEach(function (n) {
+    types[n.type] = n;
+  });
+  Object.keys(types).forEach(function (type) {
+    const sample = types[type];
+    function NodeCtor() {
+      this.title = sample.title || type.split("/").pop();
+      (sample.inputs || []).forEach(function (inp) {
+        this.addInput(inp.name, inp.type || 0);
+      }, this);
+      (sample.outputs || []).forEach(function (out) {
+        this.addOutput(out.name, out.type || 0);
+      }, this);
+      this.properties = sample.properties || {};
+      this.shape = "card";
+    }
+    NodeCtor.title = sample.title || type.split("/").pop();
+    NodeCtor.prototype.onDrawForeground = function (ctx) {
+      if (!this.properties) return;
+      ctx.fillStyle = "#bbb";
+      ctx.font = "11px Arial";
+      let y = this.size[1] - 8;
+      const keys = Object.keys(this.properties);
+      for (let i = Math.max(0, keys.length - 4); i < keys.length; i++) {
+        const k = keys[i];
+        let v = String(this.properties[k]);
+        if (v.length > 42) v = v.slice(0, 40) + "…";
+        ctx.fillText(k + ": " + v, 10, y);
+        y -= 14;
+      }
+    };
+    LiteGraph.registerNodeType(type, NodeCtor);
+  });
+
+  const graph = new LGraph();
+  const canvas = new LGraphCanvas("#graph", graph);
+  canvas.background_image = null;
+  canvas.render_shadows = true;
+  canvas.render_connection_arrows = false;
+  canvas.links_render_mode = LiteGraph.SPLINE_LINK;
+  canvas.highquality_render = true;
+  canvas.ds.scale = 0.85;
+
+  const created = {};
+  (GRAPH.nodes || []).forEach(function (n) {
+    const node = LiteGraph.createNode(n.type);
+    if (!node) return;
+    node.id = n.id;
+    node.pos = n.pos || [40, 40];
+    if (n.size) node.size = n.size;
+    node.properties = Object.assign({}, node.properties, n.properties || {});
+    graph.add(node, true);
+    created[n.id] = node;
+  });
+  (GRAPH.links || []).forEach(function (L) {
+    const src = created[L[1]];
+    const dst = created[L[3]];
+    if (!src || !dst) return;
+    src.connect(L[2], dst, L[4]);
+  });
+  graph.updateExecutionOrder();
+  canvas.draw(true, true);
+  function fit() {
+    const c = document.getElementById("graph");
+    c.width = window.innerWidth;
+    c.height = window.innerHeight;
+    canvas.resize();
+    canvas.draw(true, true);
+  }
+  window.addEventListener("resize", fit);
+  fit();
+})();
+</script>
+</body>
+</html>

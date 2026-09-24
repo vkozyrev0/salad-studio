@@ -1,0 +1,6 @@
+**/__pycache__
+**/.git
+weights/
+*.pyc
+test_*.py
+check_hf_download.py

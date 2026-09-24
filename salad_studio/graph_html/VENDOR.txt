@@ -1,0 +1,13 @@
+Vendored JS for Salad Studio Prompt Editor (local HTML graph).
+
+joint.min.js
+  @joint/core 4.2.5  (MPL-2.0)
+  https://www.jointjs.com
+  https://cdn.jsdelivr.net/npm/@joint/core@4.2.5/dist/joint.min.js
+  Live viewer: manhattan router + rounded connector (wires go around cards).
+
+litegraph.min.js + litegraph.css
+  litegraph.js 0.7.18  (MIT)
+  https://github.com/jagenjo/litegraph.js
+  ComfyUI's editor engine. Kept as litegraph.html (Open in browser alternative).
+  Spline links look like Comfy; they do not pathfind around nodes.

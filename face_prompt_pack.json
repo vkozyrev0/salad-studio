@@ -1,0 +1,392 @@
+{
+  "_doc": "SINGLE source of truth for Eldermark citizen FACE and BODY prompts (v3 age-hard). Both /fal and /xai-image MUST compose through face_prompt.py. Body uses the same age_stages + house style so limbs match faces.",
+  "version": 3.8,
+  "style": {
+    "house_style_name": "eldermark_villager_portrait_v2",
+    "frame": "STRICTLY frontal head-and-shoulders, both ears equally visible, face centered filling roughly 70 percent of the frame, looking straight into the camera, chin level, shoulders square, no three-quarter turn, no profile, no looking aside, no head tilt, head fully inside the frame with a small even margin",
+    "expression": "neutral closed-mouth adult expression, lips fully together and still, no smile no smirk no grin no teeth, eyes open looking into the lens, each iris SMALL like a real human (iris height about equal to the nostril, lots of white sclera on the inner AND outer corners, eyelids covering the top of the iris), no sparkle stars in the eyes",
+    "lighting": "soft even studio key light from front-left, gentle fill from the right, very soft short contact shadow under the chin, no hard rim light, no dramatic chiaroscuro, no colored gels, no lens flare, exposure even across both cheeks",
+    "background": "solid pure flat chroma-key MAGENTA screen background #FF00FF only, uniform hot magenta wall filling every pixel behind the subject, no grey wall, no teal wall, no mint wall, no sage wall, no blue-grey studio, no beige studio, no gradients no shadows no texture no floor line, isolated subject with zero magenta spill on the subject, no props, no architecture, no landscape, no window, no bokeh, no green screen",
+    "medium": "unsigned painterly digital portrait of a REAL human adult Northern European medieval villager, adult skull and jaw, visible pores and lived-in skin, SMALL human irises with abundant sclera, soft brushwork, clean unmarked canvas, blank corners, not a signed gallery painting, not photoreal camera photo, not anime, not manga, not moe, not webtoon, not cartoon, not Pixar, not 3D render, not doll face",
+    "palette": "muted warm earthy color grade, natural skin saturation (not oversaturated), hair and eye colors true to the named trait without neon or dye sheen",
+    "wardrobe": "simple medieval European villager collar only at the bottom of the frame: plain undyed linen or wool neckline, muted brown russet cream or undyed grey cloth, no jewelry, no armor, no hood, no crown, no modern clothing, no logos, no turtleneck, no knit sweater, no denim, no jeans, no chambray, no blue work shirt, no collared modern blouse — never green, olive, or sage clothing",
+    "composition_lock": "symmetrical frontal portrait, single subject, unsigned image, clean blank corners, no UI chrome, no border frame",
+    "global_must": "one real human only, strictly frontal head-and-shoulders, age-accurate skull, SMALL irises with visible sclera, trait-accurate skin hair and eyes, chroma-key magenta screen #FF00FF, unsigned clean unmarked corners, no turtleneck, never green, olive, or sage clothing",
+    "global_negative": "text, watermark, logo, signature, UI, dual faces, split face, deformed face, extra limbs, extra eyes, asymmetrical eyes, cross-eyed, modern city, smartphone, neon lights, heavy makeup, glamourous fashion model, beauty filter, plastic skin, over-smoothed skin, airbrushed face, anime, manga, moe, webtoon, manhwa, stylized character illustration, cel shading, kawaii, anime eyes, huge saucer eyes occupying half the face, oversized iris, doll eyes, sparkle catchlights, manga lashes, Pixar, Disney, chibi, cartoon, 3D render, Unreal Engine, cinematic color grade teal-orange, dramatic rim light, profile view, three-quarter turn, looking aside, smiling teeth grin, open mouth, smile, smirk, hands in frame, jewelry, earrings, crown, armor, hoodie, turtleneck, modern knit sweater, denim, jeans, chambray, blue work shirt, collared blouse, t-shirt logo, modern zipper hoodie, blurry, low resolution, cropped skull, cut-off chin, de-aged face, ageless beauty filter, default twenties face, prematurely young features, young-looking elderly, ageless senior, lightly aged adult, de-aged grandmother, de-aged grandfather, beige studio backdrop, warm grey background, teal studio, mint studio, sage wall, grey-blue backdrop, scenery, interior room, architecture, landscape, window, floor line, props, green tunic, olive dress, sage garment, forest-green clothing, green screen backdrop"
+  },
+  "age_stages": {
+    "infants": {
+      "aliases": [
+        "infant"
+      ],
+      "years": "chronologically 9 to 14 months old (under 2 years)",
+      "year_band": [
+        0,
+        1
+      ],
+      "noun_male": "a baby boy",
+      "noun_female": "a baby girl",
+      "noun_neutral": "an infant",
+      "age_lock": "TRUE INFANT only — baby proportions, not toddler, not preschooler, not child",
+      "proportions": "cranial vault very large relative to the face, tiny short nose, full round apple cheeks, small soft undefined jaw, HUMAN infant eyes of natural scale (not oversized cartoon), eyes set slightly low, short neck, baby fat under the chin and at the jowls, ears small, forehead high and smooth",
+      "markers": "smooth baby skin, fine sparse baby hair, no adult cheekbones, no adult jaw, no permanent adult teeth, no thick adult brows, infant-scale features only, realistic small-to-medium irises",
+      "must_not": "adult face, teen face, school-age child, toddler standing portrait, muscular neck, square jaw, facial hair, makeup, deep wrinkles, cleavage, sexualized pose, aged skin, beauty-pageant baby, de-aged adult, anime baby, Pixar baby, huge saucer eyes, doll eyes, sparkle manga eyes"
+    },
+    "children": {
+      "aliases": [
+        "child"
+      ],
+      "years": "chronologically 7 to 9 years old (elementary school age)",
+      "year_band": [
+        6,
+        10
+      ],
+      "noun_male": "a young boy",
+      "noun_female": "a young girl",
+      "noun_neutral": "a young child",
+      "age_lock": "TRUE CHILD about eight years old — pre-pubescent, clearly under eleven, not a teen, semi-realistic European village child not a cartoon",
+      "proportions": "child bone structure: smaller nose and mouth than an adult, soft rounded jaw without adult angle, fuller cheeks, shorter wider face, smaller chin, brow ridge undeveloped. Eyes HUMAN-SIZED like a real eight-year-old — not bigger than an adult's relative to the skull, not anime",
+      "markers": "child skin with real pores, simple age-appropriate hair, no secondary sex characteristics, calm childlike expression, thin soft neck, missing-tooth-age optional, natural iris size matching the adult catalog portraits",
+      "must_not": "teen face, adult jaw, adult cheekbones, facial hair, makeup, cleavage, muscular adult neck, elderly wrinkles, glamour lighting, fashion model child, sexualized pose, twenty-year-old face, anime eyes, huge saucer eyes, oversized iris, doll eyes, Pixar, moe, manga lashes, hoodie, cartoon"
+    },
+    "minors": {
+      "aliases": [
+        "teen"
+      ],
+      "years": "chronologically 15 to 16 years old",
+      "year_band": [
+        14,
+        17
+      ],
+      "noun_male": "a teenage boy",
+      "noun_female": "a teenage girl",
+      "noun_neutral": "a teenager",
+      "age_lock": "TRUE TEENAGER mid-teens — not a child under 12, not a 30-year-old adult, semi-realistic European villager not anime",
+      "proportions": "adolescent face longer than a child's but still softer than a mature adult, jaw starting to define but not fully squared, nose nearly adult size, residual softness in cheeks, HUMAN-SIZED eyes like a real fifteen-year-old (same eye scale as the adult catalog, not oversized)",
+      "markers": "youthful teen skin with pores, period-simple hair, no heavy aging lines, brows soft, residual adolescent softness, natural iris size",
+      "must_not": "elementary-school child, middle-aged face, deep wrinkles, grey hair dominance, heavy makeup, hyper-sexualized pose, full adult beard, toddler features, de-aged adult model, anime eyes, huge saucer eyes, oversized iris, doll eyes, Pixar, moe, manga lashes, hoodie, cartoon"
+    },
+    "young_adult": {
+      "aliases": [],
+      "years": "chronologically 24 to 27 years old",
+      "year_band": [
+        22,
+        28
+      ],
+      "noun_male": "a young man",
+      "noun_female": "a young woman",
+      "noun_neutral": "a young adult",
+      "age_lock": "TRUE young adult mid-twenties — fully grown adult, not a teen, not middle-aged",
+      "proportions": "adult bone structure fully set, defined but still youthful jaw and cheeks, adult nose and brow, no childhood roundness",
+      "markers": "smooth adult skin with natural pores, no grey hair, no deep nasolabial folds, adult hair density, adult brow",
+      "must_not": "child face, 15-year-old teen softness, grey hair, deep wrinkles, sagging jowls, toddler proportions, elderly neck, de-aged supermodel filter"
+    },
+    "adults": {
+      "aliases": [
+        "adult"
+      ],
+      "years": "38 years old, late thirties",
+      "year_band": [
+        32,
+        42
+      ],
+      "noun_male": "a man",
+      "noun_female": "a woman",
+      "noun_neutral": "an adult",
+      "age_lock": "TRUE 38-year-old late-thirties adult — crow's feet and faint smile-to-nose folds MUST be visible, NOT a 20-to-25-year-old, NOT a beauty-filter twenty, NOT elderly",
+      "proportions": "fully mature adult face with settled bone structure, adult jaw and cheek volume, slight early maturity in soft tissue, SMALL human eyes like a real late-thirties villager: iris about nostril-sized, eyelids covering the top of the iris, abundant sclera, not saucer anime eyes",
+      "markers": "visible crow's feet at both outer eye corners, faint nasolabial folds, slight under-eye softness, mature cheek volume, lived-in pores, looks 38",
+      "must_not": "teen face, child face, 20-to-25 year old face, beauty-filter youth, de-aged skin, advanced elderly wrinkles, pure white hair, baby fat, glamour twenties model, anime, manga, moe, webtoon, cartoon, huge saucer anime eyes, oversized iris, doll eyes, Pixar, manga lashes, three-quarter view, turtleneck"
+    },
+    "middle_age": {
+      "aliases": [],
+      "years": "chronologically 52 to 58 years old",
+      "year_band": [
+        48,
+        58
+      ],
+      "noun_male": "a middle-aged man",
+      "noun_female": "a middle-aged woman",
+      "noun_neutral": "a middle-aged person",
+      "age_lock": "TRUE middle age mid-fifties — clearly older than 40, visible aging, NOT young adult twenties/thirties, NOT frail 80-year-old",
+      "proportions": "mature adult face with heavier soft tissue, slightly softer jawline than young adult, fuller under-eye or slight hollows, HUMAN-SIZED eyes like a real mid-fifties person",
+      "markers": "clear crow feet, defined nasolabial folds, greying at temples of the hair-color family, lived-in skin texture, mature neck lines, looks about 55 years old",
+      "must_not": "teen face, twenties face, early thirties youth filter, beauty-filter de-aging, smooth ageless skin, toddler proportions, extreme elderly frailty, pure white hair only, huge saucer anime eyes, oversized iris, doll eyes, Pixar, manga lashes"
+    },
+    "elderly": {
+      "aliases": [],
+      "years": "chronologically 74 to 80 years old — an old person at the end of a long life",
+      "year_band": [
+        68,
+        80
+      ],
+      "noun_male": "an elderly man",
+      "noun_female": "an elderly woman",
+      "noun_neutral": "an elderly person",
+      "age_lock": "CRITICAL AGE LOCK: this subject is ELDERLY mid-to-late seventies. The face MUST read as old at a glance. Deep aging is required. If the result could pass for under 50, it is WRONG.",
+      "proportions": "strongly aged skull and soft tissue: sunken or soft jowls, thinner cheeks, longer earlobes, deeper-set eyes, loose neck skin, stooped facial flesh — NOT a firm young adult face with light makeup wrinkles",
+      "markers": "mandatory deep forehead furrows; dense crow feet; heavy nasolabial folds; marionette lines; age spots; papery thin skin texture; greying/white hair must dominate (blonde→silver-white, brown→steel grey/white, black→mostly white salt-and-pepper, red/auburn→faded rose-grey white); sparse thin brows; wrinkled neck with multiple horizontal rings; looks approximately 76 years old; weathered medieval villager elder",
+      "must_not": "young adult, twenties, thirties, forties, early fifties, smooth skin, de-aged, beauty filter, fashion model, plump youthful cheeks without deep folds, full dark unaged hair, teen, child, middle-aged only mild lines, glamorous elder without deep wrinkles, ageless face"
+    },
+    "twenties": {
+      "aliases": [
+        "young_adult"
+      ],
+      "years": "chronologically 22 to 28 years old",
+      "year_band": [
+        22,
+        28
+      ],
+      "noun_male": "a young man",
+      "noun_female": "a young woman",
+      "noun_neutral": "a person in their twenties",
+      "age_lock": "TRUE mid-twenties adult — fully grown, not a teen, not middle-aged",
+      "proportions": "adult bone structure, youthful jaw and cheeks",
+      "markers": "smooth adult skin, natural pores, no grey hair, no deep folds",
+      "must_not": "child, teen, grey hair, deep wrinkles, elderly, de-aged supermodel filter"
+    },
+    "thirties": {
+      "aliases": [
+        "adult",
+        "adults"
+      ],
+      "years": "chronologically 32 to 38 years old",
+      "year_band": [
+        32,
+        38
+      ],
+      "noun_male": "a man",
+      "noun_female": "a woman",
+      "noun_neutral": "a person in their thirties",
+      "age_lock": "TRUE thirties adult — looks mid-thirties, NOT early twenties",
+      "proportions": "fully mature adult face, settled bone structure, SMALL human eyes like a real mid-thirties villager: iris about nostril-sized, abundant sclera, not saucer anime eyes",
+      "markers": "light expression lines beginning, lived-in adult skin, looks about 35",
+      "must_not": "teen, early twenties face, beauty-filter youth, elderly wrinkles, huge saucer anime eyes, oversized iris, doll eyes, Pixar, manga lashes"
+    },
+    "forties": {
+      "aliases": [],
+      "years": "chronologically 42 to 48 years old",
+      "year_band": [
+        42,
+        48
+      ],
+      "noun_male": "a man",
+      "noun_female": "a woman",
+      "noun_neutral": "a person in their forties",
+      "age_lock": "TRUE forties — looks mid-forties with clear early aging, NOT thirties youth, NOT 60",
+      "proportions": "mature adult face, slight soft-tissue maturity",
+      "markers": "visible crow feet starting, mild nasolabial folds, possible early temple grey, looks about 45",
+      "must_not": "twenties, early thirties youth filter, smooth de-aged skin, deep elderly folds, pure white hair, huge saucer anime eyes, oversized iris, doll eyes, Pixar"
+    },
+    "fifties": {
+      "aliases": [
+        "middle_age"
+      ],
+      "years": "chronologically 52 to 59 years old",
+      "year_band": [
+        50,
+        59
+      ],
+      "noun_male": "a man",
+      "noun_female": "a woman",
+      "noun_neutral": "a person in their fifties",
+      "age_lock": "TRUE fifties — looks mid-fifties. Age 59 belongs HERE. Clear aging required. NOT young adult, NOT frail 80",
+      "proportions": "mature face with heavier soft tissue, softer jawline than thirties, HUMAN-SIZED eyes like a real mid-fifties villager (not saucer anime eyes)",
+      "markers": "clear crow feet, defined nasolabial folds, greying temples of hair-color family, lived-in skin, mature neck lines, looks about 55–59",
+      "must_not": "twenties, thirties, forties-looking youth filter, de-aged, beauty filter, toddler, extreme elderly frailty only, huge saucer anime eyes, oversized iris, doll eyes, Pixar, manga lashes"
+    },
+    "sixties": {
+      "aliases": [],
+      "years": "chronologically 62 to 68 years old",
+      "year_band": [
+        62,
+        68
+      ],
+      "noun_male": "an older man",
+      "noun_female": "an older woman",
+      "noun_neutral": "a person in their sixties",
+      "age_lock": "TRUE sixties — looks mid-sixties with advanced aging, not fifties, not 80 frailty only",
+      "proportions": "aged face, softer jowls beginning, thinner skin",
+      "markers": "deep crow feet, strong nasolabial folds, substantial grey hair of color family, wrinkled neck, looks about 65",
+      "must_not": "young adult, thirties, forties, smooth skin, de-aged"
+    },
+    "seventies": {
+      "aliases": [],
+      "years": "chronologically 72 to 78 years old",
+      "year_band": [
+        72,
+        78
+      ],
+      "noun_male": "an elderly man",
+      "noun_female": "an elderly woman",
+      "noun_neutral": "a person in their seventies",
+      "age_lock": "TRUE seventies elderly — deep aging, MUST look old (~75)",
+      "proportions": "strongly aged skull and soft tissue: sunken or soft jowls, thinner cheeks, longer earlobes, deeper-set eyes, loose neck skin, stooped facial flesh — NOT a firm young adult face with light makeup wrinkles",
+      "markers": "mandatory deep forehead furrows; dense crow feet; heavy nasolabial folds; marionette lines; age spots; papery thin skin texture; greying/white hair must dominate (blonde→silver-white, brown→steel grey/white, black→mostly white salt-and-pepper, red/auburn→faded rose-grey white); sparse thin brows; wrinkled neck with multiple horizontal rings; looks approximately 76 years old; weathered medieval villager elder",
+      "must_not": "young adult, twenties, thirties, forties, early fifties, smooth skin, de-aged, beauty filter, fashion model, plump youthful cheeks without deep folds, full dark unaged hair, teen, child, middle-aged only mild lines, glamorous elder without deep wrinkles, ageless face"
+    },
+    "eighties": {
+      "aliases": [],
+      "years": "chronologically 82 to 90 years old",
+      "year_band": [
+        82,
+        90
+      ],
+      "noun_male": "a very elderly man",
+      "noun_female": "a very elderly woman",
+      "noun_neutral": "a person in their eighties",
+      "age_lock": "TRUE eighties — very old, advanced aging, not mid-sixties",
+      "proportions": "strongly aged face, hollows, loose neck, thin skin over bone",
+      "markers": "very deep wrinkles, white/grey dominant hair, age spots, thin brows, advanced elderly look ~85",
+      "must_not": "young, middle-aged only, de-aged, forties face"
+    }
+  },
+  "traits": {
+    "skinTone": {
+      "fair": "fair porcelain-to-light Northern European skin with cool-to-neutral undertone, visible natural skin texture and subtle pores, light flush optional on cheeks, not albino, not ghost-white makeup",
+      "tan": "warm sun-kissed tan skin with golden undertone, natural freckles optional across nose and cheeks, outdoor-lived tone without orange spray-tan, visible pores",
+      "olive": "olive Mediterranean-leaning skin with warm green-gold undertone, neither pale nor deep brown, even tone, natural pores, not ashy, not yellow cast"
+    },
+    "hairColor": {
+      "blonde": "natural blonde hair ranging light golden to ash blonde, rooted and textured individual strands, matte-to-soft sheen, not platinum bottle dye, not pure white unless elderly stage",
+      "red": "natural red hair ranging copper to ginger, textured strands, soft natural sheen, not neon dye, not pink, not orange cartoon; if age is elderly, desaturate toward grey/white while keeping the color family",
+      "auburn": "natural auburn hair, rich reddish-brown with warm depth, dimensional strands, soft sheen, not pure red dye; if age is elderly, desaturate toward grey/white while keeping the color family",
+      "brown": "natural brown hair medium to chestnut, subtle dimensional depth, soft sheen, not black, not dyed flat brown; if age is elderly, desaturate toward grey/white while keeping the color family",
+      "black": "natural black hair deep dark brown-black, soft natural sheen, not blue-black plastic dye, not pure ink silhouette without strand detail; if age is elderly, desaturate toward grey/white while keeping the color family"
+    },
+    "eyeColor": {
+      "blue": "SMALL clear blue human irises (iris no taller than the nostril), natural limbal ring and subtle radial texture, lots of white sclera on both inner and outer corners, pupils dark round centered, not oversized",
+      "green": "SMALL green human irises (iris no taller than the nostril) with natural depth and subtle radial texture, not neon, limbal ring present, lots of white sclera, not oversized",
+      "hazel": "SMALL hazel human irises (iris no taller than the nostril) with mixed brown-green flecks and natural depth, lots of white sclera, not oversized",
+      "brown": "SMALL brown human irises (iris no taller than the nostril) medium to dark with natural depth and a single catchlight, lots of white sclera, not oversized, not pure black voids"
+    }
+  },
+  "looks_tier": {
+    "plain": "ordinary everyday appearance, unremarkable features, slightly irregular but naturalistic face, not glamorous, not idealized",
+    "comely": "pleasant attractive features, gently appealing symmetry, still naturalistic not hyper-idealized, village comeliness not magazine cover",
+    "striking": "striking memorable features, strong presence and distinctive bone structure, still naturalistic not supermodel CGI, not uncanny beauty filter"
+  },
+  "sex_words": {
+    "male": {
+      "adult": "man",
+      "child": "boy"
+    },
+    "female": {
+      "adult": "woman",
+      "child": "girl"
+    }
+  },
+  "child_stages": [
+    "infants",
+    "infant",
+    "children",
+    "child",
+    "minors",
+    "teen"
+  ],
+  "templates": {
+    "face_system": "Generate one catalog portrait of a real human. Follow the user prompt for age, sex, hair, eyes, and skin. Human-sized irises with visible sclera, closed mouth, linen or wool villager collar, solid MAGENTA chroma-key #FF00FF background filling every pixel behind the subject, unsigned blank corners with no text or signature. Not anime, not manga, not Pixar, not cartoon.",
+    "face_t2i": "NOT anime, NOT manga, NOT moe, NOT Pixar, NOT cartoon, NOT webtoon. {noun}, {years}. Solid MAGENTA chroma-key #FF00FF, unsigned blank corners. {hair}. {eyes}. {age_lock}. {skin}. Age anatomy: {proportions}. Age markers: {markers}. Framing: {frame}. Expression: {expression}. Lighting: {lighting}. Background: {background}. Medium: {medium}. Wardrobe: {wardrobe}. {composition_lock}. {global_must}.",
+    "age_edit": "Transform this exact person into {years} ({age_lock}). Age anatomy: {proportions}. Age markers: {markers}. Keep the SAME facial identity, bone structure, eye colour, skin undertone, ethnicity, and hair-color family — recognisably the same individual only older or younger. Keep the same Eldermark villager painterly portrait style, frontal head-and-shoulders crop, solid chroma-key MAGENTA screen background #FF00FF, soft even studio lighting, neutral expression. Avoid: {must_not}. Also avoid: {global_negative}.",
+    "body_t2i": "Eldermark villager body plate (house style eldermark_villager_portrait_v2). Front-facing body of {noun}, {years} ({age_lock}). Body age: {body_markers}. Build: {build}. {frame}. {pose}. {wardrobe}. Background: {background}. {medium}. {global_must}. Avoid: {must_not}. Also avoid: {body_global_negative}.",
+    "age_edit_adults": "Age this exact person into a clearly 38-year-old late-thirties adult ({years}, {age_lock}). Age anatomy: {proportions}. REQUIRED visible aging: {markers}. Keep the SAME identity, bone structure, eye colour, and hair-color family — hair stays pigmented, not white or grey. Keep MAGENTA #FF00FF background and unsigned blank corners. Closed mouth. Do not make them twenty. Do not make them elderly.",
+    "age_edit_elderly": "Transform this exact person into chronologically 74-80 years old, a TRUE elderly senior. Add deep wrinkles, jowls, age spots, grey/white hair dominance, thin brows, wrinkled neck. Keep identity, bone structure, eye colour, skin undertone. MUST look elderly mid-seventies, not middle-aged. Photorealistic/painterly head-and-shoulders, neutral expression, solid chroma-key MAGENTA screen background #FF00FF. Avoid: young adult, thirties, forties, smooth de-aged skin, beauty filter.",
+    "body_t2i_dna": "Eldermark villager body plate (house style eldermark_villager_portrait_v2). Front-facing body of {noun}, {years} ({age_lock}). Body age: {body_markers}. Build: {build}. Skin on neck and arms: {skin}. Hair if visible at nape/shoulders: {hair}. {frame}. {pose}. {wardrobe}. Background: {background}. {medium}. {global_must}. Avoid: {must_not}. Also avoid: {body_global_negative}, mismatched hair color, wrong dye color.",
+    "body_t2i_pregnant": "Eldermark villager body plate (house style eldermark_villager_portrait_v2). Front-facing body of a pregnant {noun}, {years} ({age_lock}). Body age: {body_markers}. Build: {build}. Pregnancy: {pregnancy}. Skin on neck and arms: {skin}. Hair if visible at nape/shoulders: {hair}. {frame}. {pose}. Tunic stretched modestly over the belly, front lacing loosened if needed. {wardrobe}. Background: {background}. {medium}. {global_must}. Avoid: {must_not}. Also avoid: {body_global_negative}, non-pregnant flat stomach, sexualized pose, modern maternity wear, hospital gown.",
+    "young_deanime_edit": "Keep this exact person's identity: hair-color family, skin undertone, eye COLOR, age, and bone structure. Restyle to match Eldermark adult villager portraits: semi-realistic painterly medieval European, visible brushwork, realistic skin pores. CRITICAL: eyes must be HUMAN-SIZED like a real person of this age — small-to-medium irises, not huge saucer anime eyes, not doll eyes, not Pixar, not manga lashes, no star sparkles in the eyes. Replace any hoodie or modern zipper with a simple linen or wool villager neckline. Remove any artist signature, watermark, initials, or handwriting in the corners — leave those corners clean and unmarked. Frontal head-and-shoulders, solid chroma-key MAGENTA screen background #FF00FF, mouth closed, calm. Avoid: anime, cartoon, chibi, moe, Pixar, huge eyes, oversized iris, plastic skin, modern clothing, green or olive clothing, signature, watermark, text.",
+    "face_cleanup_edit": "Keep this person's bone structure and identity. They must look {years} ({age_lock}). Hair must be {hair} — pigmented, not white, not grey, not silver. Eyes stay {eyes}, HUMAN-sized irises about as tall as a nostril with lots of white sclera. Closed mouth. Replace turtleneck or modern knit with undyed linen or russet wool — never green, olive, or sage. Fill the entire background with solid flat MAGENTA chroma-key #FF00FF. Leave all four corners clean, blank, and unmarked — unsigned canvas, no letters, no word marks. Shrink oversized irises to real adult scale.",
+    "young_from_adult_edit": "Make this the same person as {years} ({age_lock}). Keep identity, hair-color family, skin undertone, and EYE SIZE exactly like this source. Do not enlarge the eyes. Semi-realistic painterly villager, visible brushwork, skin pores. Rounder younger cheeks, smaller jaw as appropriate to age. Simple linen or wool collar at the neckline. Frontal head-and-shoulders, solid chroma-key MAGENTA screen background #FF00FF. No signature, no watermark, no text. Avoid: anime, Pixar, 3D render, cartoon, doll, moe, huge saucer eyes, oversized iris, manga lashes, hoodie, zipper hoodie, modern jacket, jewelry, earrings, artist signature, green or olive clothing.",
+    "body_age_edit_pregnant": "Age this exact pregnant body into {years} ({age_lock}). Body age: {body_markers}. Pregnancy stays: {pregnancy}. Keep the SAME body identity: build, skin undertone, hair-color family, wardrobe, pose, crop, and belly stage. {frame}. {pose}. Head stays completely out of frame. Avoid: {must_not}. Also avoid: {body_global_negative}, face visible, flattening the bump, de-aged athletic youth."
+  },
+  "defaults": {
+    "anchor_stage_priority": [
+      "adults",
+      "adult",
+      "young_adult",
+      "middle_age",
+      "elderly",
+      "minors",
+      "teen",
+      "children",
+      "child",
+      "infants",
+      "infant"
+    ],
+    "catalog_age_stages": [
+      "infants",
+      "children",
+      "minors",
+      "young_adult",
+      "adults",
+      "forties",
+      "fifties",
+      "sixties",
+      "elderly"
+    ],
+    "identity_age_stages": [
+      "infant",
+      "child",
+      "teen",
+      "young_adult",
+      "adult",
+      "middle_age",
+      "elderly"
+    ],
+    "aspect_ratio": "1:1",
+    "fal_size": "square_hd",
+    "xai_size": "1:1",
+    "recommended_model_fal": "fal-ai/nano-banana-pro",
+    "recommended_model_xai": "grok-imagine-image",
+    "recommended_model_xai_quality": "grok-imagine-image-quality",
+    "recommended_model_age": "fal-ai/flux-pro/kontext",
+    "pilot_batch_size": 24,
+    "daily_budget_hint": 250,
+    "_DOC_daily_budget_hint": "xAI ~200–300 images per 24h (user note 2026-07). fal has separate billing. Plan sessions inside this envelope.",
+    "regen_orchestrator": "regen_faces.py",
+    "regen_policy": "face_regen_policy.json",
+    "regen_backend_order": [
+      "xai",
+      "fal"
+    ],
+    "cross_backend_note": "Send the identical face_t2i string to fal and xai. Do not shorten, restyle, or model-specific rewrite. Fold compose_negative into fal --negative and into xai Avoid: via generate.py --negative. Full-grid campaign: python src/tools/regen_faces.py --generate --limit N (resumes via art/catalog/face/regen_progress.json).",
+    "pack_version_note": "v3.8: face catalog T2I is fal-ai/nano-banana-pro (fal MCP recommended; Flux.1 T2I has no negative channel and ignored age/DNA/chroma). Bodies/events stay flux/dev. Banana payload uses aspect_ratio + optional system_prompt (templates.face_system).",
+    "decade_note": "Engine labels twenties…eighties; 59→fifties. Dedicated face (120) and DNA-grid body plates exist for every decade band. Identity aliases in image-catalog.json; do not map decades onto young_adult/adults/elderly."
+  },
+  "body_style": {
+    "frame": "tight crop from collarbone to mid-shin, head completely above the frame so face is not visible, front of body toward camera",
+    "pose": "standing facing the camera, chest and stomach visible, both hands at the sides, legs from the front, belt buckle toward viewer",
+    "wardrobe": "medieval European villager tunic with front-laced neckline and simple belt, muted undyed linen or wool in brown, russet, cream, or grey — never green, olive, or sage clothing, no modern clothing, no logos, no armor",
+    "background": "solid pure flat chroma-key MAGENTA screen background #FF00FF only, uniform pure magenta no gradients no shadows no texture no floor line, isolated subject with zero magenta spill on the subject, no props, no architecture, no landscape, no green screen",
+    "medium": "consistent painterly digital art matching Eldermark villager portraits, semi-realistic medieval fantasy RPG character art, soft even studio lighting",
+    "global_must": "headless or out-of-frame head, front view only, age-accurate body proportions, single subject, chroma-key magenta screen background #FF00FF, never green, olive, or sage clothing, no text, no watermark",
+    "global_negative": "face visible, back view, rear view, head in frame, modern clothing, armor, dual figures, text, watermark, anime, photoreal smartphone photo, sexualized pose, 3d render, beige studio backdrop, warm grey background, scenery, interior room, architecture, landscape, floor line, green tunic, olive dress, sage garment, forest-green clothing, green screen backdrop"
+  },
+  "body_build": {
+    "25": "lean slender build",
+    "50": "average natural build",
+    "80": "sturdy solid build"
+  },
+  "body_age_markers": {
+    "infants": "infant torso and limbs, baby proportions, soft baby belly, short limbs relative to torso",
+    "children": "child body proportions, shorter limbs than adult, no adult musculature, pre-pubescent frame",
+    "minors": "adolescent frame, still filling out, not fully mature adult bulk",
+    "young_adult": "fully grown adult body, youthful firmness, adult limb length",
+    "adults": "mature adult body late thirties, settled adult proportions",
+    "middle_age": "middle-aged adult body fifties, softer midsection optional, mature posture",
+    "elderly": "elderly body mid-seventies, thinner limbs or softer posture, age-appropriate frailty subtle, not a young athletic body",
+    "twenties": "young adult body twenties, firm",
+    "thirties": "adult body thirties",
+    "forties": "mature body forties",
+    "fifties": "body mid-fifties, softer midsection optional",
+    "sixties": "older adult body sixties",
+    "seventies": "elderly body mid-seventies",
+    "eighties": "very elderly body eighties"
+  },
+  "body_pregnancy": {
+    "_DOC": "Catalog param pregnancyStage. Engine maps trimester first→early, second→mid, third/late→late; non-pregnant → none.",
+    "none": "not pregnant, natural flat or soft midsection for build, no baby bump",
+    "early": "early pregnancy first trimester, subtle low belly fullness just beginning, chest slightly fuller, still mostly slender through the waist",
+    "mid": "mid pregnancy second trimester, clear rounded baby bump front and center, tunic fabric drapes over the belly, hips and chest fuller",
+    "late": "late pregnancy third trimester, large full round belly prominently pregnant, stretched tunic, lower stance, heavy with child"
+  }
+}

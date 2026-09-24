@@ -1,0 +1,5 @@
+custom_nodes/rgthree-comfy/
+!custom_nodes/rgthree-comfy/PINNED_COMMIT.txt
+__pycache__/
+weights/*.safetensors
+weights/*.zip

@@ -1,0 +1,15 @@
+# Secrets — provider keys live here, never in git.
+salad_studio/studio-tokens.json
+
+# Python caches
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+
+# Vendored ComfyUI trees: pulled at build time, not committed.
+# salad_klein/custom_nodes/rgthree-comfy/ carries a nested .git from its
+# shallow clone, so the whole tree is ignored to keep it from becoming an
+# embedded repo.
+salad_klein/custom_nodes/
+salad_klein/weights/

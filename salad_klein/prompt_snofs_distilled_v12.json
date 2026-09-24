@@ -1,0 +1,146 @@
+{
+  "prompt": {
+    "70": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "snofsSexNudesAndOther_distilledV12KleinFp8.safetensors",
+        "weight_dtype": "default"
+      }
+    },
+    "71": {
+      "class_type": "CLIPLoader",
+      "inputs": {
+        "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+        "type": "flux2",
+        "device": "default"
+      }
+    },
+    "72": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "flux2-vae.safetensors"
+      }
+    },
+    "66": {
+      "class_type": "EmptyFlux2LatentImage",
+      "inputs": {
+        "width": 832,
+        "height": 1216,
+        "batch_size": 1
+      }
+    },
+    "62": {
+      "class_type": "Flux2Scheduler",
+      "inputs": {
+        "steps": 4,
+        "width": 832,
+        "height": 1216
+      }
+    },
+    "61": {
+      "class_type": "KSamplerSelect",
+      "inputs": {
+        "sampler_name": "euler"
+      }
+    },
+    "73": {
+      "class_type": "RandomNoise",
+      "inputs": {
+        "noise_seed": 323175253610296
+      }
+    },
+    "74": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "STYLE: ArsMJStyle, Impressionism, oil painting on canvas, visible expressive brushstrokes, dappled natural light, soft impressionist colour, crisp readable painted detail, clean edges on the figures.\n\nSUBJECTS: exactly two nude figures, one woman and one man, two clearly separate bodies, both fully in frame.\n\nPOSE: missionary position, clean side view in profile. She lies on her back, head on a pillow, knees bent and drawn up, thighs open to either side of his hips, feet on the mattress. He lies over her between her thighs, chest low over hers, weight on his forearms beside her shoulders, hips between her thighs. His knees rest on the mattress between her thighs, his shins flat behind him.\n\nINTIMACY: penis inside her vagina, his hips against hers, joined at the pelvis.",
+        "clip": [
+          "71",
+          0
+        ]
+      }
+    },
+    "67": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "NEGATIVE: blurry, low detail, distorted anatomy, fused bodies, censored, watermark, text, signature, 3d render.",
+        "clip": [
+          "71",
+          0
+        ]
+      }
+    },
+    "63": {
+      "class_type": "CFGGuider",
+      "inputs": {
+        "model": [
+          "70",
+          0
+        ],
+        "positive": [
+          "74",
+          0
+        ],
+        "negative": [
+          "67",
+          0
+        ],
+        "cfg": 1
+      }
+    },
+    "64": {
+      "class_type": "SamplerCustomAdvanced",
+      "inputs": {
+        "noise": [
+          "73",
+          0
+        ],
+        "guider": [
+          "63",
+          0
+        ],
+        "sampler": [
+          "61",
+          0
+        ],
+        "sigmas": [
+          "62",
+          0
+        ],
+        "latent_image": [
+          "66",
+          0
+        ]
+      }
+    },
+    "65": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": [
+          "64",
+          0
+        ],
+        "vae": [
+          "72",
+          0
+        ]
+      }
+    },
+    "9": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "filename_prefix": "snofs",
+        "images": [
+          "65",
+          0
+        ]
+      }
+    }
+  },
+  "convert_output": {
+    "format": "jpeg",
+    "options": {
+      "quality": 90,
+      "progressive": true
+    }
+  }
+}

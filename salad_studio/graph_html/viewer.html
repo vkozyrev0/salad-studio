@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Salad Studio graph</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1A1A1A; overflow: hidden; }
+  #paper { width: 100%; height: 100%; }
+  .host {
+    box-sizing: border-box;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    font-family: "Segoe UI", sans-serif;
+    color: #E6E6E6;
+    pointer-events: none;
+  }
+  .card {
+    box-sizing: border-box;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    border-radius: 10px;
+  }
+  .hd {
+    height: 30px;
+    line-height: 30px;
+    padding: 0 12px;
+    background: #323232;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .body {
+    padding: 10px 10px 10px 10px;
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 26px;
+    min-height: 26px;
+    margin: 0;
+  }
+  .lab {
+    flex: 0 0 88px;
+    width: 88px;
+    color: #9A9A9A;
+    font-size: 11px;
+    line-height: 26px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .row.sock .lab { color: #C8C8C8; }
+  .row.out .lab {
+    flex: 1 1 auto;
+    width: auto;
+    margin-left: auto;
+    text-align: right;
+    color: #C8C8C8;
+  }
+  .box {
+    flex: 1;
+    min-width: 0;
+    background: #1F1F1F;
+    border: 1px solid #3F3F3F;
+    border-radius: 4px;
+    padding: 2px 6px;
+    color: #E6E6E6;
+    font-size: 11px;
+    line-height: 16px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .box.wrap {
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow: hidden;
+  }
+</style>
+</head>
+<body>
+<div id="paper"></div>
+<script src="joint.min.js"></script>
+<script>
+const GRAPH = __STUDIO_GRAPH__;
+(function () {
+  function esc(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+  function cardHTML(n) {
+    const socks = (n.inPorts || []).map(function (p) {
+      return '<div class="row sock"><span class="lab">' + esc(p.name) + "</span></div>";
+    }).join("");
+    const outs = (n.outPorts || []).map(function (p) {
+      return '<div class="row out"><span class="lab">' + esc(p.name) + "</span></div>";
+    }).join("");
+    const fields = (n.fields || []).map(function (f) {
+      const wrap = (f.lines || 1) > 1;
+      const style = wrap ? ' style="min-height:' + (f.lines * 16 + 4) + 'px"' : "";
+      return (
+        '<div class="row"><span class="lab">' + esc(f.key) + "</span>" +
+        '<span class="box' + (wrap ? " wrap" : "") + '"' + style + ">" +
+        esc(f.value) + "</span></div>"
+      );
+    }).join("");
+    return (
+      '<div class="card">' +
+      '<div class="hd">' + esc(n.title) + "</div>" +
+      '<div class="body">' + socks + outs + fields + "</div>" +
+      "</div>"
+    );
+  }
+
+  const namespace = joint.shapes;
+  const Card = joint.dia.Element.define("studio.Card", {
+    size: { width: 320, height: 100 },
+    attrs: {
+      body: {
+        width: "calc(w)",
+        height: "calc(h)",
+        fill: "#2B2B2B",
+        stroke: "#3A3A3A",
+        strokeWidth: 1,
+        rx: 10,
+        ry: 10,
+      },
+      fo: { width: "calc(w)", height: "calc(h)" },
+    },
+  }, {
+    markup: [
+      { tagName: "rect", selector: "body" },
+      {
+        tagName: "foreignObject",
+        selector: "fo",
+        children: [
+          {
+            tagName: "div",
+            selector: "content",
+            namespaceURI: "http://www.w3.org/1999/xhtml",
+            attributes: { class: "host" },
+          },
+        ],
+      },
+    ],
+  });
+
+  const graph = new joint.dia.Graph({}, { cellNamespace: namespace });
+  const paper = new joint.dia.Paper({
+    el: document.getElementById("paper"),
+    model: graph,
+    cellViewNamespace: namespace,
+    width: window.innerWidth,
+    height: window.innerHeight,
+    background: { color: "#1A1A1A" },
+    async: false,
+    frozen: false,
+    interactive: { elementMove: true, linkMove: false, labelMove: false },
+    defaultRouter: {
+      name: "manhattan",
+      args: {
+        step: 8,
+        padding: 18,
+        startDirections: ["right"],
+        endDirections: ["left"],
+      },
+    },
+    defaultConnector: { name: "rounded", args: { radius: 14 } },
+    defaultLink: function () {
+      return new joint.shapes.standard.Link();
+    },
+  });
+
+  const portGroups = {
+    in: {
+      position: { name: "absolute" },
+      attrs: {
+        portBody: { magnet: "passive", r: 5, stroke: "#111", strokeWidth: 1 },
+      },
+      markup: [{ tagName: "circle", selector: "portBody" }],
+    },
+    out: {
+      position: { name: "absolute" },
+      attrs: {
+        portBody: { magnet: "passive", r: 5, stroke: "#111", strokeWidth: 1 },
+      },
+      markup: [{ tagName: "circle", selector: "portBody" }],
+    },
+  };
+
+  function addNode(n) {
+    const card = new Card({
+      id: String(n.id),
+      position: { x: n.x, y: n.y },
+      size: { width: n.w, height: n.h },
+      ports: { groups: portGroups, items: [] },
+    });
+    (n.inPorts || []).forEach(function (p) {
+      card.addPort({
+        id: p.id,
+        group: "in",
+        args: { x: 0, y: p.y },
+        attrs: { portBody: { fill: p.color || "#9E9E9E" } },
+      });
+    });
+    (n.outPorts || []).forEach(function (p) {
+      card.addPort({
+        id: p.id,
+        group: "out",
+        args: { x: n.w, y: p.y },
+        attrs: { portBody: { fill: p.color || "#9E9E9E" } },
+      });
+    });
+    card.addTo(graph);
+    const view = paper.findViewByModel(card);
+    const host = view && view.el.querySelector(".host");
+    if (host) host.innerHTML = cardHTML(n);
+  }
+
+  function addLink(L) {
+    const link = new joint.shapes.standard.Link({
+      router: {
+        name: "manhattan",
+        args: {
+          step: 8,
+          padding: 18,
+          startDirections: ["right"],
+          endDirections: ["left"],
+        },
+      },
+      connector: { name: "rounded", args: { radius: 14 } },
+      attrs: {
+        line: {
+          stroke: L.color || "#9A9A9A",
+          strokeWidth: 2.2,
+          targetMarker: { type: "none" },
+          sourceMarker: { type: "none" },
+        },
+      },
+    });
+    link.source({ id: String(L.source), port: L.sourcePort });
+    link.target({ id: String(L.target), port: L.targetPort });
+    link.addTo(graph);
+  }
+
+  function renderGraph(data, fit) {
+    graph.clear();
+    (data.nodes || []).forEach(addNode);
+    (data.links || []).forEach(addLink);
+    if (!fit) return;
+    try {
+      paper.fitToContent({
+        padding: 48,
+        allowNewOrigin: "any",
+        minWidth: window.innerWidth,
+        minHeight: window.innerHeight,
+      });
+    } catch (e) {}
+  }
+
+  window.studioReplaceGraph = function (data) {
+    renderGraph(data || { nodes: [], links: [] }, false);
+  };
+
+  function postHost(msg) {
+    try {
+      if (window.ipc && window.ipc.postMessage) {
+        window.ipc.postMessage(JSON.stringify(msg));
+      }
+    } catch (e) {}
+  }
+
+  renderGraph(GRAPH, true);
+
+  let pan = null;
+  paper.on("blank:pointerdown", function (evt) {
+    const t = paper.translate();
+    pan = { x: evt.clientX, y: evt.clientY, tx: t.tx, ty: t.ty };
+  });
+  paper.on("blank:pointermove", function (evt) {
+    if (!pan) return;
+    paper.translate(pan.tx + (evt.clientX - pan.x), pan.ty + (evt.clientY - pan.y));
+  });
+  paper.on("blank:pointerup", function () {
+    pan = null;
+  });
+  paper.on("element:pointerclick", function (view) {
+    postHost({ op: "select", id: String(view.model.id) });
+  });
+  paper.on("element:pointerup", function (view) {
+    const pos = view.model.position();
+    postHost({ op: "position", id: String(view.model.id), x: pos.x, y: pos.y });
+  });
+  paper.el.addEventListener(
+    "wheel",
+    function (evt) {
+      evt.preventDefault();
+      const cur = paper.scale().sx || 1;
+      const next = Math.max(0.25, Math.min(2.4, cur * (evt.deltaY < 0 ? 1.1 : 0.9)));
+      paper.scaleUniformAtPoint(next, paper.clientToLocalPoint(evt.clientX, evt.clientY));
+    },
+    { passive: false }
+  );
+  window.addEventListener("resize", function () {
+    paper.setDimensions(window.innerWidth, window.innerHeight);
+  });
+})();
+</script>
+</body>
+</html>

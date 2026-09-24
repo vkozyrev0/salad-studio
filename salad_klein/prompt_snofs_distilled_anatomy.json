@@ -1,0 +1,147 @@
+{
+  "prompt": {
+    "70": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "snofsSexNudesAndOther_distilledV12KleinFp8.safetensors",
+        "weight_dtype": "default"
+      }
+    },
+    "71": {
+      "class_type": "CLIPLoader",
+      "inputs": {
+        "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+        "type": "flux2",
+        "device": "default"
+      }
+    },
+    "72": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "flux2-vae.safetensors"
+      }
+    },
+    "66": {
+      "class_type": "EmptyFlux2LatentImage",
+      "inputs": {
+        "width": 832,
+        "height": 1216,
+        "batch_size": 1
+      }
+    },
+    "62": {
+      "class_type": "Flux2Scheduler",
+      "inputs": {
+        "steps": 4,
+        "width": 832,
+        "height": 1216
+      }
+    },
+    "61": {
+      "class_type": "KSamplerSelect",
+      "inputs": {
+        "sampler_name": "euler"
+      }
+    },
+    "73": {
+      "class_type": "RandomNoise",
+      "inputs": {
+        "noise_seed": 323175253610296
+      }
+    },
+    "74": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "STYLE: ArsMJStyle, Impressionism, oil painting on canvas, visible expressive brushstrokes, dappled natural light, soft impressionist colour, crisp readable painted detail, sharp clean edges on the figures.\nSUBJECTS: exactly two nude figures, one woman and one man, two clearly separate bodies.\nWOMAN: naked 25yo girl, long blond hair, slim, lying on her back, face up, head on the pillow, shoulders flat on the mattress.\nMAN: naked man, brown hair, beard, lying prone flat on top of her, face to face with her.\nFRAMING: full body, both figures fully visible and complete inside the frame, nothing cropped at the edges, clean side view in profile, man over woman in missionary position, an explicit sex scene read clearly in profile.\nCOMPOSITION: distinct readable silhouettes, clear separation between the bodies, open space between his thigh and her thigh, each body reading as one solid silhouette, him stacked above her, his torso lowered and horizontal over hers, parallel to hers, chest to chest and belly to belly with no gap between their torsos, hips meeting hips at the same level.\nPOSE - WOMAN'S LEGS (THE MAIN FIX - DRAW THESE CLEARLY, EACH LEG ON ITS OWN CORRECT SIDE): only two legs on the woman. Her left leg grows out of the left side of her pelvis and her right leg grows out of the right side of her pelvis, each leg staying on its own side of her body with correct left-right anatomy, no leg swapped to the opposite side and no leg mirrored. Her left leg and her right leg are two separate, fully drawn limbs, each running from her own hip through her own knee to her own foot as one uninterrupted silhouette, and both legs are equally visible and readable at the same time, neither one hidden behind the other and neither one folded in front of the other. Both knees bent up and out, both feet flat on the mattress, her legs spread very wide open, her left knee out to the left, her right knee out to the right, both thighs lying down on the mattress on either side of his waist, her left thigh to the left of his hips and her right thigh to the right of his hips, mattress clearly visible in the gap between each of her thighs and his legs. Her thighs do not touch each other, do not cross her own body's midline and do not touch or cross his legs. Her right lower leg and foot extend out to the lower right as her own limb, her left lower leg and foot lie to the left of his body, well away from his. Both feet are complete with five separate toes each, clearly apart from one another with visible bedding between them, her feet never touching or overlapping his feet or each other, nothing of hers crossing or hiding under his body. Pelvis tilted up toward his, crotch open and uncovered between her spread thighs, no leg lifted into the air, no knee hooked over his back or shoulder, arms relaxed at her sides or reaching around his shoulders.\nPOSE - MAN: prone flat on top of her, chest lowered onto hers, weight resting on her and on his forearms with elbows bent, torso low and near-horizontal, not propped upright and not sitting back, hips settled low between her spread thighs and lower than his shoulders, pelvis pressed down flat onto hers and tipped so his penis points down and forward into her vaginal opening, his thighs and shins lying on the mattress outside hers, his legs extended straight back along the mattress on the far side of her legs, completely clear of hers with nothing crossing, no kneeling, not sitting up on his knees.\nLIMB OWNERSHIP: four legs and four feet in the whole picture, two legs and two feet for each figure, no more and no fewer; her legs belong to her alone and sit on the correct left and right sides of her body, his legs belong to him alone and sit on the correct left and right sides of his body, her thighs never touching or overlapping his legs; each leg running from its own hip through its own knee to its own foot with nothing crossing it; each figure complete with one head, two arms, two legs, two hands, two feet; her knees spread left and right at heights and positions clearly different from his, nothing covering either crotch.\nINTIMACY: explicit penetrative sex, erect penis fully inserted inside her vagina up to the base, her labia closed tight around his shaft, only the base of his penis and his pubic mound visible where he enters her, pelvis locked against hers, genitals joined together as one connected unit, frontal penetration clearly taking place, the point of penetration visible and unobstructed in the side view, both with pubic hair, his balls resting against her pelvic floor.\nANATOMY: anatomical correctness, correct body proportions, natural skin tones, correct left-and-right limb placement, hands with five separate fingers, clean defined edges where one limb overlaps another.\nDETAIL: crisp readable anatomy, sharply defined individual limbs, each of the four legs painted as its own separate shape with its own clean outline, clear outline where one limb overlaps another, clean separation between her limbs and his, no softened or melted forms.",
+        "clip": ["83", 1]
+      }
+    },
+    "67": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "STYLE: anime, cartoon, 3d render, plastic skin, censored, mosaic, blurred crotch.\nDETAIL FAILURE: mushy blurred anatomy, smudged soft melted detail, undefined limb outlines, low detail mush, loss of edge definition.\nANATOMY: deformed anatomy, malformed genitals, malformed hands, fused or merged fingers, duplicated or extra hands.\nPOSE FAILURES (MAIN FIX): man propped up on straight arms, push-up pose over the woman, man raised up above her, arched back, his torso upright or vertical, his chest lifted off her chest, air gap between their torsos, gap between their chests and bellies, bodies not touching, hovering above her, figures floating above the bed, man kneeling or sitting upright over the woman, man sitting back on his heels, his hips high above hers, woman sitting upright, woman seated in front of the man, woman on top, cowgirl position, doggy style, rear entry, spooning, side by side, lying face down, legs closed, thighs pressed together.\nLEG SIDE ERRORS (MAIN FIX): her left and right legs swapped, her left leg drawn on the right side of her body, her right leg drawn on the left side of her body, mirrored legs, flipped legs, leg attached to the wrong hip, leg springing from the wrong side of her pelvis, her right leg reading as her left leg, her left leg reading as her right leg, wrong-side limb, one of her legs crossing in front of her other leg, her legs crossing over her own body's midline, her legs crossed, legs scissored, only one of her legs visible, her second leg hidden behind the first, one leg obscuring the other, ambiguous left and right legs.\nLEG ERRORS: her two legs reading as one single tangled limb, a single ambiguous curled leg between the bodies, her leg fused with his leg, one bent leg shared between the two figures, her thigh merged into his thigh, hip or torso, her leg crossed over his leg, her legs tangled with his legs, her knee drawn twice, extra knee, extra bent leg, leg with two feet, her foot joined to his foot, her feet overlapping or stacked on one another, two feet growing from one leg, foot attached to the wrong leg, leg without a foot, missing foot, missing lower leg, stump limb, leg vanishing into his body, unclear whose foot is whose, her leg disappearing under his pelvis, her lower leg hidden under his body, her thigh tucked under his hip, her knee hidden under his body, her leg folded beneath his pelvis, her foot touching his body.\nLIMB ERRORS (MAIN FIX): extra, missing or duplicated limbs and feet, third foot, fourth foot, duplicated foot, oversized foot, huge foot, foot out of proportion to its ankle, two ankles fused into one, melted lower legs, stump limbs, tangled limbs, limb intersecting or passing through another, legs merged into one indistinct mass, melted thigh mass, ambiguous limb ownership, limb with no clear owner, missing arm, missing hand, hand hidden under the bodies, arm tucked under the torso, arm vanishing into the other body, leg covering the crotch, thigh hiding the genitals, folded legs over the hips.\nBODY FUSION: fused legs, fused bodies, conjoined figures, skin merging into skin, featureless smudged crotch blob, her leg melting into his torso, her thigh and his thigh reading as one limb.\nSEX ACT ERRORS: no penetration, penis not inside her, penis outside the vagina, penis resting on her belly, stomach or thigh, penis hovering above or beside her vulva, penis between her thighs but not entered, empty vulva, closed vagina, vagina not entered, missing male genitalia, penis behind the body, floating detached penis, genitals hidden behind her thigh, penetration not visible, genitals drawn separately, sex act not happening.",
+        "clip": ["83", 1]
+      }
+    },
+    "63": {
+      "class_type": "CFGGuider",
+      "inputs": {
+        "model": ["83", 0],
+        "positive": ["74", 0],
+        "negative": ["67", 0],
+        "cfg": 1
+      }
+    },
+    "64": {
+      "class_type": "SamplerCustomAdvanced",
+      "inputs": {
+        "noise": ["73", 0],
+        "guider": ["63", 0],
+        "sampler": ["61", 0],
+        "sigmas": ["62", 0],
+        "latent_image": ["66", 0]
+      }
+    },
+    "65": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["64", 0],
+        "vae": ["72", 0]
+      }
+    },
+    "9": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "filename_prefix": "snofsanat",
+        "images": ["65", 0]
+      }
+    },
+    "80": {
+      "class_type": "LoraLoader",
+      "inputs": {
+        "model": ["70", 0],
+        "clip": ["71", 0],
+        "lora_name": "https://civitai.com/api/download/models/2625692",
+        "strength_model": -1.5,
+        "strength_clip": -1.5
+      }
+    },
+    "81": {
+      "class_type": "LoraLoader",
+      "inputs": {
+        "model": ["80", 0],
+        "clip": ["80", 1],
+        "lora_name": "https://civitai.com/api/download/models/2763568",
+        "strength_model": 0.8,
+        "strength_clip": 0.8
+      }
+    },
+    "82": {
+      "class_type": "LoraLoader",
+      "inputs": {
+        "model": ["81", 0],
+        "clip": ["81", 1],
+        "lora_name": "https://civitai.com/api/download/models/2615554",
+        "strength_model": 2.0,
+        "strength_clip": 2.0
+      }
+    },
+    "83": {
+      "class_type": "LoraLoader",
+      "inputs": {
+        "model": ["82", 0],
+        "clip": ["82", 1],
+        "lora_name": "https://civitai.com/api/download/models/2790993",
+        "strength_model": 1.0,
+        "strength_clip": 1.0
+      }
+    }
+  },
+  "convert_output": {
+    "format": "jpeg",
+    "options": {
+      "quality": 90,
+      "progressive": true
+    }
+  }
+}

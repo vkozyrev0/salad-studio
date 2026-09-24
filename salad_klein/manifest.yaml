@@ -1,0 +1,5 @@
+# Empty: Salad's wrapper downloads before_start files one-by-one and that
+# is what the startup probe was killing. prefetch.py pulls all three in
+# parallel, then execs comfyui-api. Civitai LoRAs stay URL-loaded.
+models:
+  before_start: []

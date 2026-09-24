@@ -1,0 +1,4 @@
+2c5342a8cb0eaecaabf61435a5f37dd594c510ba
+https://github.com/rgthree/rgthree-comfy
+Image Comparer (rgthree) + Power Lora Loader (rgthree)
+Vendored at custom_nodes/rgthree-comfy (gitignored). Clone before docker build.

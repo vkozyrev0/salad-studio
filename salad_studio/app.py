@@ -434,9 +434,7 @@ class SaladStudio(tk.Tk):
     def _apply_generate_gate(self, word: str) -> None:
         ready = (word or "").split()[:1] == ["Ready"]
         state = "normal" if ready and not self._busy else "disabled"
-        for btn in (getattr(self, "gen_btn", None), getattr(self, "gen_editor_btn", None)):
-            if btn is None:
-                continue
+        for btn in (self.gen_btn, self.gen_editor_btn):
             try:
                 btn.configure(state=state)
             except tk.TclError:
@@ -503,7 +501,7 @@ class SaladStudio(tk.Tk):
                         if gwx.rstrip("/") == active_gw.rstrip("/") and pid in snaps:
                             active_word = str(snaps[pid].get("word") or active_word)
                             lines = snaps[pid].get("log_lines") or []
-                            if lines and hasattr(self, "_set_salad_logs"):
+                            if lines:
                                 self._set_salad_logs("\n".join(lines))
                             break
                 self._set_salad_word(active_word)
@@ -643,19 +641,15 @@ class SaladStudio(tk.Tk):
             src = policy.get(kind) or {}
             for k, var in self._pol_vars[kind].items():
                 var.set(str(src.get(k, "")))
-        if hasattr(self, "var_pol_image"):
-            self.var_pol_image.set(str(policy.get("image") or ""))
+        self.var_pol_image.set(str(policy.get("image") or ""))
         codes = [str(c).lower() for c in (policy.get("country_codes") or [])]
-        if hasattr(self, "var_pol_us"):
-            self.var_pol_us.set("us" in codes)
+        self.var_pol_us.set("us" in codes)
         selected = set(str(x) for x in (policy.get("gpu_classes") or []))
         for gid, var in self._pol_gpu_vars.items():
             var.set(gid in selected)
 
     def _fill_gpu_checkboxes(self, classes: list[dict], selected: list[str]) -> None:
-        frame = getattr(self, "_pol_gpu_frame", None)
-        if frame is None:
-            return
+        frame = self._pol_gpu_frame
         for child in frame.winfo_children():
             child.destroy()
         self._pol_gpu_vars = {}
@@ -1228,9 +1222,7 @@ class SaladStudio(tk.Tk):
             pass
 
     def _set_helper_reply(self, text: str) -> None:
-        widget = getattr(self, "helper_reply", None)
-        if widget is None:
-            return
+        widget = self.helper_reply
         widget.configure(state="normal")
         widget.delete("1.0", "end")
         if text:
@@ -1522,9 +1514,7 @@ class SaladStudio(tk.Tk):
             return None
 
     def _refresh_prompt_catalog(self) -> None:
-        tree = getattr(self, "catalog_tree", None)
-        if tree is None:
-            return
+        tree = self.catalog_tree
         keep = self._selected_catalog_id()
         for child in tree.get_children():
             tree.delete(child)
@@ -1801,7 +1791,7 @@ class SaladStudio(tk.Tk):
         )
 
     def _import_workflow_text(self) -> str:
-        stashed = (getattr(self, "_import_workflow_stash", "") or "").strip()
+        stashed = (self._import_workflow_stash or "").strip()
         if stashed:
             return stashed
         text = self.import_workflow.get("1.0", "end").strip()
@@ -1812,9 +1802,7 @@ class SaladStudio(tk.Tk):
     def _set_import_issues(
         self, issues: list[str] | None, notes: list[str] | None = None
     ) -> None:
-        widget = getattr(self, "import_issues", None)
-        if widget is None:
-            return
+        widget = self.import_issues
         notes = notes or []
         widget.configure(state="normal")
         widget.delete("1.0", "end")
@@ -1857,8 +1845,7 @@ class SaladStudio(tk.Tk):
         self._import_workflow_stash = ""
         self.import_meta.delete("1.0", "end")
         self.import_workflow.delete("1.0", "end")
-        if getattr(self, "var_imp_image_url", None) is not None:
-            self.var_imp_image_url.set("")
+        self.var_imp_image_url.set("")
         self.var_imp_cfg.set("")
         self.var_imp_seed.set("")
         self.var_imp_steps.set("")
@@ -2059,9 +2046,7 @@ class SaladStudio(tk.Tk):
         self._refresh_prompt_history()
 
     def _refresh_prompt_history(self) -> None:
-        tree = getattr(self, "prompt_hist_tree", None)
-        if tree is None:
-            return
+        tree = self.prompt_hist_tree
         for child in tree.get_children():
             tree.delete(child)
         self._hist_photos = []
@@ -2196,9 +2181,7 @@ class SaladStudio(tk.Tk):
         paned.add(studio_box, weight=1)
 
     def _set_salad_logs(self, text: str) -> None:
-        widget = getattr(self, "salad_log_text", None)
-        if widget is None:
-            return
+        widget = self.salad_log_text
         widget.configure(state="normal")
         widget.delete("1.0", "end")
         widget.insert("1.0", text)
@@ -2234,9 +2217,7 @@ class SaladStudio(tk.Tk):
         line = studio_log.format_line(level, cleaned)
 
         def append() -> None:
-            widget = getattr(self, "log_text", None)
-            if widget is None:
-                return
+            widget = self.log_text
             widget.configure(state="normal")
             widget.insert("end", line + "\n", (f"log_{level}",))
             widget.see("end")
@@ -2339,8 +2320,6 @@ class SaladStudio(tk.Tk):
         self.var_lora_ref.set(str(src.get("page") or src.get("download") or item.get("id") or ""))
 
     def _on_graph_change(self, *_a) -> None:
-        if getattr(self, "_lora_inner", None) is None:
-            return
         if self._applying_profile:
             return
         gid = lora_store.graph_id(self.var_graph.get())
@@ -2518,7 +2497,7 @@ class SaladStudio(tk.Tk):
             pass
         probes = {
             kind: {key: var.get() for key, var in fields.items()}
-            for kind, fields in getattr(self, "_pol_vars", {}).items()
+            for kind, fields in self._pol_vars.items()
         }
         return {
             "tab": tab,
@@ -2528,35 +2507,35 @@ class SaladStudio(tk.Tk):
             "width": self.var_width.get(),
             "height": self.var_height.get(),
             "steps": self.var_steps.get(),
-            "cfg": self.var_cfg.get() if hasattr(self, "var_cfg") else "",
-            "seed": self.var_seed.get() if hasattr(self, "var_seed") else "",
-            "scheduler": self.var_scheduler.get() if hasattr(self, "var_scheduler") else "",
-            "unet": self.var_unet.get() if hasattr(self, "var_unet") else "",
+            "cfg": self.var_cfg.get(),
+            "seed": self.var_seed.get(),
+            "scheduler": self.var_scheduler.get(),
+            "unet": self.var_unet.get(),
             "selected_loras": self._selected_lora_ids(),
             "prompt": self.prompt_text.get("1.0", "end-1c"),
-            "negative": self.negative_text.get("1.0", "end-1c") if getattr(self, "negative_text", None) else "",
+            "negative": self.negative_text.get("1.0", "end-1c"),
             "editor": self.editor_text.get("1.0", "end-1c"),
-            "helper_issue": self.helper_issue.get("1.0", "end-1c") if hasattr(self, "helper_issue") else "",
-            "helper_local_url": self.var_helper_local_url.get() if hasattr(self, "var_helper_local_url") else "",
-            "helper_image": bool(self.var_helper_image.get()) if hasattr(self, "var_helper_image") else False,
-            "lora_ref": self.var_lora_ref.get() if hasattr(self, "var_lora_ref") else "",
-            "lora_name": self.var_lora_name.get() if hasattr(self, "var_lora_name") else "",
-            "lora_file": self.var_lora_file.get() if hasattr(self, "var_lora_file") else "",
-            "lora_family": self.var_lora_family.get() if hasattr(self, "var_lora_family") else "",
-            "lora_sm": self.var_lora_sm.get() if hasattr(self, "var_lora_sm") else "",
-            "lora_sc": self.var_lora_sc.get() if hasattr(self, "var_lora_sc") else "",
-            "import_url": self.var_imp_image_url.get() if hasattr(self, "var_imp_image_url") else "",
-            "import_cfg": self.var_imp_cfg.get() if hasattr(self, "var_imp_cfg") else "",
-            "import_seed": self.var_imp_seed.get() if hasattr(self, "var_imp_seed") else "",
-            "import_steps": self.var_imp_steps.get() if hasattr(self, "var_imp_steps") else "",
-            "import_width": self.var_imp_width.get() if hasattr(self, "var_imp_width") else "",
-            "import_height": self.var_imp_height.get() if hasattr(self, "var_imp_height") else "",
-            "import_sched": self.var_imp_sched.get() if hasattr(self, "var_imp_sched") else "",
-            "import_unet": self.var_imp_unet.get() if hasattr(self, "var_imp_unet") else "",
-            "import_workflow": getattr(self, "_import_workflow_stash", "") or "",
-            "policy_image": self.var_pol_image.get() if hasattr(self, "var_pol_image") else "",
-            "policy_us": bool(self.var_pol_us.get()) if hasattr(self, "var_pol_us") else False,
-            "policy_gpus": [gid for gid, var in getattr(self, "_pol_gpu_vars", {}).items() if var.get()],
+            "helper_issue": self.helper_issue.get("1.0", "end-1c"),
+            "helper_local_url": self.var_helper_local_url.get(),
+            "helper_image": bool(self.var_helper_image.get()),
+            "lora_ref": self.var_lora_ref.get(),
+            "lora_name": self.var_lora_name.get(),
+            "lora_file": self.var_lora_file.get(),
+            "lora_family": self.var_lora_family.get(),
+            "lora_sm": self.var_lora_sm.get(),
+            "lora_sc": self.var_lora_sc.get(),
+            "import_url": self.var_imp_image_url.get(),
+            "import_cfg": self.var_imp_cfg.get(),
+            "import_seed": self.var_imp_seed.get(),
+            "import_steps": self.var_imp_steps.get(),
+            "import_width": self.var_imp_width.get(),
+            "import_height": self.var_imp_height.get(),
+            "import_sched": self.var_imp_sched.get(),
+            "import_unet": self.var_imp_unet.get(),
+            "import_workflow": self._import_workflow_stash or "",
+            "policy_image": self.var_pol_image.get(),
+            "policy_us": bool(self.var_pol_us.get()),
+            "policy_gpus": [gid for gid, var in self._pol_gpu_vars.items() if var.get()],
             "policy_probes": probes,
         }
 
@@ -2590,27 +2569,26 @@ class SaladStudio(tk.Tk):
                 ("var_scheduler", "scheduler"),
                 ("var_unet", "unet"),
             ):
-                if hasattr(self, attr) and key in state:
+                if key in state:
                     getattr(self, attr).set(str(state.get(key) or ""))
             ids = state.get("selected_loras")
             if isinstance(ids, list):
                 self._set_selected_lora_ids([str(x) for x in ids])
             self.prompt_text.delete("1.0", "end")
             self.prompt_text.insert("1.0", str(state.get("prompt") or ""))
-            if getattr(self, "negative_text", None) is not None:
-                self.negative_text.delete("1.0", "end")
-                self.negative_text.insert("1.0", str(state.get("negative") or ""))
+            self.negative_text.delete("1.0", "end")
+            self.negative_text.insert("1.0", str(state.get("negative") or ""))
             editor = state.get("editor")
             has_editor = isinstance(editor, str) and editor.strip()
             if has_editor:
                 self.editor_text.delete("1.0", "end")
                 self.editor_text.insert("1.0", editor)
-            if hasattr(self, "helper_issue") and "helper_issue" in state:
+            if "helper_issue" in state:
                 self.helper_issue.delete("1.0", "end")
                 self.helper_issue.insert("1.0", str(state.get("helper_issue") or ""))
-            if hasattr(self, "var_helper_local_url") and state.get("helper_local_url"):
+            if state.get("helper_local_url"):
                 self.var_helper_local_url.set(str(state["helper_local_url"]))
-            if hasattr(self, "var_helper_image") and "helper_image" in state:
+            if "helper_image" in state:
                 self.var_helper_image.set(bool(state.get("helper_image")))
                 self._refresh_helper_image_label()
             for attr, key in (
@@ -2630,14 +2608,14 @@ class SaladStudio(tk.Tk):
                 ("var_imp_unet", "import_unet"),
                 ("var_pol_image", "policy_image"),
             ):
-                if hasattr(self, attr) and key in state:
+                if key in state:
                     getattr(self, attr).set(str(state.get(key) or ""))
-            if hasattr(self, "var_pol_us") and "policy_us" in state:
+            if "policy_us" in state:
                 self.var_pol_us.set(bool(state.get("policy_us")))
             probes = state.get("policy_probes")
             if isinstance(probes, dict):
                 for kind, fields in probes.items():
-                    live = getattr(self, "_pol_vars", {}).get(kind) or {}
+                    live = self._pol_vars.get(kind) or {}
                     if isinstance(fields, dict):
                         for key, val in fields.items():
                             if key in live:
@@ -2645,7 +2623,7 @@ class SaladStudio(tk.Tk):
             gpus = state.get("policy_gpus")
             if isinstance(gpus, list):
                 self._restored_gpu_ids = [str(x) for x in gpus]
-                for gid, var in getattr(self, "_pol_gpu_vars", {}).items():
+                for gid, var in self._pol_gpu_vars.items():
                     var.set(gid in self._restored_gpu_ids)
             stash = str(state.get("import_workflow") or "")
             if stash:
@@ -2676,9 +2654,7 @@ class SaladStudio(tk.Tk):
             self._sync_editor()
             return
         text = self.prompt_text.get("1.0", "end").strip()
-        neg = ""
-        if getattr(self, "negative_text", None) is not None:
-            neg = self.negative_text.get("1.0", "end").strip()
+        neg = self.negative_text.get("1.0", "end").strip()
         if not request_json.apply_prompt_texts(payload, text, neg):
             self._sync_editor()
             return
@@ -2705,9 +2681,7 @@ class SaladStudio(tk.Tk):
             except ValueError:
                 return
             text = self.prompt_text.get("1.0", "end").strip()
-            neg = ""
-            if getattr(self, "negative_text", None) is not None:
-                neg = self.negative_text.get("1.0", "end").strip()
+            neg = self.negative_text.get("1.0", "end").strip()
             body = request_json.build_request(
                 prompt_text=text,
                 negative_text=neg,
@@ -2793,11 +2767,10 @@ class SaladStudio(tk.Tk):
             self.prompt_text.delete("1.0", "end")
             if text:
                 self.prompt_text.insert("1.0", text)
-            if getattr(self, "negative_text", None) is not None:
-                self.negative_text.delete("1.0", "end")
-                neg = str(cfg.get("negative_text") or "")
-                if neg:
-                    self.negative_text.insert("1.0", neg)
+            self.negative_text.delete("1.0", "end")
+            neg = str(cfg.get("negative_text") or "")
+            if neg:
+                self.negative_text.insert("1.0", neg)
             self._refresh_lora_lists()
         finally:
             self._applying_profile = False
@@ -2856,12 +2829,10 @@ class SaladStudio(tk.Tk):
 
     def _place_editor_sash(self, _e=None) -> None:
         """Open the Prompt Editor with the JSON box at 25% and the diagram at 75%."""
-        if getattr(self, "_editor_sash_set", False):
+        if self._editor_sash_set:
             return
         self._hold_opened_size()
-        pane = getattr(self, "_editor_pane", None)
-        if pane is None:
-            return
+        pane = self._editor_pane
         try:
             pane.update_idletasks()
             width = int(pane.winfo_width())

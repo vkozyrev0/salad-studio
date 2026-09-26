@@ -22,10 +22,20 @@ render is in flight is queued, not dropped), **vertical tabs** on the left
 Bottom (always visible) = horizontal history strip with a tall button on
 the left and right.
 
-- **Config**. The active profile (with **Save profile** / **Delete profile**)
-  and the **Gateway URL**. Nothing else: the replica badges and the Salad probe
-  live right-aligned in the top action bar, and every prompt knob is on
-  **Prompt Settings**. Generate is disabled until the *active* gateway is Ready.
+- **Config**. The profiles this app can render on, and what each one serves.
+  The **Active profile** box lists every profile the store holds; type a name and
+  press **Add profile** to create one (it is seeded from the metadata document's
+  family list and starts with the typed **Gateway URL**), **Save profile** writes
+  the selected one back, and **Delete profile** removes it (removing the last one
+  recreates a default, so the app stays usable). Below that, **Checkpoints this
+  profile serves** is the list routing reads: type a checkpoint filename or pick a
+  label, press **Add**, and select a row and press **Remove selected**. A profile's
+  list must stay in one unet family — one container holds one unet in VRAM, so
+  adding a checkpoint of another family is refused with the reason — and adding a
+  checkpoint makes a graph that loads it routable with no code edit. Every profile
+  gets its own replica badge and probe in the top action bar, and Generate is
+  disabled until the *active* gateway is Ready. The prompt knobs live on
+  **Prompt Settings**.
 - **Prompt Settings**. **Width**, **Height**, **Steps**, **CFG**, **Seed**,
   **Graph** (Flux.2 Klein / Flux.1 Dev), **Scheduler** (Flux2 / Simple), the
   **Checkpoint** (Base 9B / Distilled 9B) and the **LoRA** checkboxes. These are
@@ -199,18 +209,36 @@ the left and right.
   writes a 48×48 thumbnail in the first column. Double-click restores
   JSON + prompt.
 - **Queue**. The Salad request queue, rendered from `salad_queue`'s own
-  records: one row per request with its **State** (queued / running /
-  accepted / failed / cancelled), **Attempts**, **Last status**, **Reason**
-  and **Request** (gateway host and POST size, never a token), plus a summary
-  of the states and an explicit empty state when nothing is queued. The rows
-  refresh on the existing 15 s tick and on every queue event, so a render in
-  flight and its recorded outcome both show up without a manual refresh.
-  **Cancel selected** drops a request that has **not been submitted yet** (a
-  request the container has already accepted keeps rendering, and a job that
-  has been sent once cannot be cancelled); **Retry selected** re-runs a failed
-  request on a worker thread, so the window stays live while it retries; a
-  request the container already accepted is never re-POSTed, so it is not
-  retryable; **Clear finished** drops the terminal rows.
+  records: one row per request with its **Profile** (the container profile it is
+  dispatched to), **State** (queued / running / accepted / failed / cancelled),
+  **Attempts**, **Last status**, **Reason** and **Request** (gateway host and
+  POST size, never a token), plus a summary of the states and an explicit empty
+  state when nothing is queued. The rows refresh on the existing 15 s tick and on
+  every queue event, so a render in flight and its recorded outcome both show up
+  without a manual refresh. There is **one line per profile**: a request waits
+  behind the other requests for *its* container, and runs beside a request for a
+  different profile, because one container runs one Comfy instance. **Cancel
+  selected** drops a request that has **not been submitted yet** (a request the
+  container has already accepted keeps rendering, and a job that has been sent
+  once cannot be cancelled); **Retry selected** re-runs a failed request on a
+  worker thread, on its own profile's line, so the window stays live while it
+  retries; a request the container already accepted is never re-POSTed, so it is
+  not retryable; **Clear finished** drops the terminal rows.
+
+  The queue also owns the containers' **lifecycle**, so nothing has to be started
+  or stopped by hand. Before a request's first attempt, the queue asks Salad to
+  **start** the group behind that profile's gateway when the group is stopped
+  (`POST …/containers/{name}/start`), once per stopped container: a retry does
+  not start it again, a container that is already running is left alone, an
+  unknown state is left alone rather than guessed at, and a start Salad rejects
+  fails that request with the control plane's own reason instead of hanging.
+  The start uses the Salad token the app already stores. When a profile's last
+  request has finished, the queue **stops** its group once it has been idle for
+  the `queue.idle_stop_s` timeout in the metadata document (3600 seconds, one
+  hour, by default), from the app's existing 15 s tick: a profile with a request
+  queued or in flight is never stopped, a stopped container leaves the idle set
+  so a second check cannot stop it twice, and a stop Salad rejects is retried
+  only after another full timeout.
 
 Klein group, prefetch image, Civitai-vs-Comfy quality, and startup
 probes: [`docs/workflow/15-salad-flux2-klein-group.md`](../docs/workflow/15-salad-flux2-klein-group.md).
@@ -236,7 +264,7 @@ window in `app.py`.
 | Import | `comfy_import.py`, `civitai_verify.py`, `request_json.py` | a Comfy graph built from a Civitai page, a Comfy workflow, or the prompt knobs |
 | Persistence | `tokens.py`, `prompt_history.py`, `prompt_catalog.py`, `lora_store.py`, `profiles.py`, `studio_meta.py` | stored tokens, prompts, configurations, LoRAs, model info and the metadata document |
 | Logging | `studio_log.py` | formatted redacted log lines, and an explanation for an HTTP failure |
-| Salad communication | `generator.py`, `salad_status.py`, `salad_queue.py`, `salad_gen.py` (repo root) | a routed, queued render request and the plate it wrote |
+| Salad communication | `generator.py`, `salad_status.py`, `salad_queue.py`, `salad_gen.py` (repo root) | a routed, queued render request, the plate it wrote, and the container lifecycle (start on demand, stop when idle) |
 | AI communication | `ai_helper.py`, `ref_check.py` | the Prompt Assist request and its parsed reply |
 
 `app.py` keeps the widgets and the wiring and nothing else that belongs to a
@@ -267,14 +295,22 @@ takes effect with no code change and no restart. A hand-edited or half-written
 file cannot abort startup: a broken user document falls back to the shipped one
 and the reason is carried in the document's `error` field.
 
-- `routing.families` maps a unet family to the group that serves it
-  (`group`, the saved profile's name), the `image` that group runs, the
-  `unets` it serves, and the name `markers` that catch a variant. A checkpoint
-  with no entry is refused with a stated reason instead of being sent to a group
-  that cannot serve it: one container holds one unet family in VRAM, and mixing
-  them turns a seconds-long render into minutes. An optional `gateway` in an
-  entry moves that family to another host; leave it out and the routed profile's
-  own gateway (the `~/.config/salad/gateway-*` file) is used.
+- `routing.families` says what a unet **family** is: the `unets` that belong to
+  it (the seed list a new profile starts from and the exact names the family
+  check matches), the `markers` that catch a variant, and the `image` that group
+  runs (informational). **Which profile serves which checkpoint is not here**: it
+  is each profile's own `checkpoints` list, edited on the **Config** page, and
+  routing sends a graph to the profile that lists the checkpoint it loads. A
+  checkpoint in no profile's list is refused with a stated reason instead of
+  being sent to a container that cannot serve it, and so is one two profiles
+  list (the choice would be a coin toss) and a profile whose list spans two
+  families (one container holds one unet family in VRAM). A checkpoint the
+  document does not classify is its own family, so a checkpoint that does not
+  exist yet needs no document edit.
+- `queue.idle_stop_s` is how long a container may sit idle before the queue stops
+  it, in seconds (one hour by default). A hand-edited `0`, a negative number or a
+  word reads as the default, so a typo cannot stop a container the moment it goes
+  quiet.
 - `prompt` holds the AI layer's instruction: `role`, `task`, `rules` and
   `reply_contract`. Prompt Assist sends what is written there, so the house
   Klein rules in [`docs/workflow/19-two-body-prompt-playbook.md`](../docs/workflow/19-two-body-prompt-playbook.md)
@@ -302,7 +338,7 @@ the real freeze path the moment that gap is closed.
 Two test commands, and the second is not part of the first:
 
 ```
-python -m unittest discover -s salad_studio -p "test_*.py"   # 600 tests, ~3 min
+python -m unittest discover -s salad_studio -p "test_*.py"   # 683 tests, ~5 min
 python test_salad_comfy_live_findings.py                     # root structural checks
 ```
 

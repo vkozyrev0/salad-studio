@@ -8,12 +8,20 @@ from dataclasses import fields
 from pathlib import Path
 
 from profiles import (
+    add_checkpoint,
+    checkpoint_family,
+    mixed_family_reason,
     payload_unets,
+    plan_route,
     profile_for_gateway,
+    profiles_for_checkpoint,
+    remove_checkpoint,
     route_payload,
     same_gateway,
+    seed_checkpoints,
     serving_family,
     unet_family,
+    SNOFS_UNET,
     DEFAULT_KEY_PATH,
     KLEIN_5090_GATEWAY,
     KLEIN_GATEWAY,
@@ -40,7 +48,7 @@ EXPECTED_FIELDS = (
     "cfg",
     "seed",
     "scheduler",
-    "unet",
+    "checkpoints",
     "use_loras",
     "selected_loras",
 )
@@ -397,7 +405,7 @@ class UnetRoutingTest(unittest.TestCase):
     Comfy to stream weights from host memory (240-576 s renders, measured)."""
 
     def _profile(self, name: str, unet: str) -> SaladProfile:
-        return SaladProfile(name=name, gateway="https://example.test/", unet=unet)
+        return SaladProfile(name=name, gateway="https://example.test/", checkpoints=[unet])
 
     def _graph(self, unet: str) -> dict:
         return {
@@ -427,8 +435,8 @@ class UnetRoutingTest(unittest.TestCase):
 
     def test_the_two_builtin_profiles_are_the_two_families(self) -> None:
         """klein serves the plain unets; klein5090 serves the SNOFS cut."""
-        self.assertEqual(unet_family(default_profile("klein").unet), "klein")
-        self.assertEqual(unet_family(default_profile("klein5090").unet), "snofs")
+        self.assertEqual(checkpoint_family(default_profile("klein").primary_checkpoint), "klein")
+        self.assertEqual(checkpoint_family(default_profile("klein5090").primary_checkpoint), "snofs")
 
 
 
@@ -443,8 +451,8 @@ class RoutingTest(unittest.TestCase):
 
     def test_the_two_builtins_serve_the_two_families(self) -> None:
         allp = self._all()
-        self.assertEqual(unet_family(allp["klein"].unet), "klein")
-        self.assertEqual(unet_family(allp["klein5090"].unet), "snofs")
+        self.assertEqual(checkpoint_family(allp["klein"].primary_checkpoint), "klein")
+        self.assertEqual(checkpoint_family(allp["klein5090"].primary_checkpoint), "snofs")
 
     def test_each_family_routes_to_its_own_group(self) -> None:
         allp = self._all()
@@ -483,6 +491,166 @@ class RoutingTest(unittest.TestCase):
         self.assertEqual(profile_for_gateway(snofs.gateway + "/", allp).name, "klein5090")
         self.assertIsNone(profile_for_gateway("https://custom.example.test/gw", allp))
         self.assertIsNone(profile_for_gateway("", allp))
+
+
+class CheckpointListTest(unittest.TestCase):
+    """A profile owns the checkpoints its container serves, and the store keeps them."""
+
+    def setUp(self) -> None:
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.path = Path(self._td.name) / "studio-profiles.json"
+
+    def test_a_multi_checkpoint_list_round_trips(self) -> None:
+        listed = ["flux-2-klein-base-9b-fp8.safetensors", "flux-2-klein-9b-fp8.safetensors"]
+        upsert(SaladProfile(name="klein", gateway="https://example.salad.cloud", checkpoints=listed), self.path)
+        self.assertEqual(load_all(self.path)["klein"].checkpoints, listed)
+        doc = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(doc["profiles"]["klein"]["checkpoints"], listed)
+        self.assertNotIn("unet", doc["profiles"]["klein"], "the single-checkpoint field is gone")
+
+    def test_an_entry_can_be_added_and_removed_and_persisted(self) -> None:
+        upsert(
+            SaladProfile(name="klein", checkpoints=["flux-2-klein-base-9b-fp8.safetensors"]),
+            self.path,
+        )
+        stored = load_all(self.path)["klein"]
+        self.assertEqual(add_checkpoint(stored, "flux-2-klein-9b-fp8.safetensors"), "")
+        upsert(stored, self.path)
+        stored = load_all(self.path)["klein"]
+        self.assertEqual(
+            stored.checkpoints,
+            ["flux-2-klein-base-9b-fp8.safetensors", "flux-2-klein-9b-fp8.safetensors"],
+        )
+        self.assertTrue(remove_checkpoint(stored, "flux-2-klein-base-9b-fp8.safetensors"))
+        upsert(stored, self.path)
+        self.assertEqual(
+            load_all(self.path)["klein"].checkpoints, ["flux-2-klein-9b-fp8.safetensors"]
+        )
+
+    def test_adding_a_checkpoint_of_another_family_is_refused(self) -> None:
+        profile = SaladProfile(name="snofs-group", checkpoints=[SNOFS_UNET])
+        reason = add_checkpoint(profile, "flux-2-klein-base-9b-fp8.safetensors")
+        self.assertIn("one unet family", reason)
+        self.assertEqual(profile.checkpoints, [SNOFS_UNET])
+        self.assertEqual(add_checkpoint(profile, SNOFS_UNET), f"{SNOFS_UNET} is already in 'snofs-group'.")
+
+    def test_a_legacy_single_checkpoint_record_loads_as_a_one_entry_list(self) -> None:
+        legacy = {
+            "profiles": {
+                "klein": {
+                    "name": "klein",
+                    "gateway": "https://example.salad.cloud",
+                    "unet": "flux-2-klein-base-9b-fp8.safetensors",
+                }
+            },
+            "active": "klein",
+        }
+        self.path.write_text(json.dumps(legacy), encoding="utf-8")
+        self.assertEqual(
+            load_all(self.path)["klein"].checkpoints,
+            ["flux-2-klein-base-9b-fp8.safetensors"],
+        )
+
+    def test_a_new_profile_is_seeded_from_the_metadata_document(self) -> None:
+        self.assertEqual(seed_checkpoints("klein5090"), [SNOFS_UNET])
+        self.assertIn("flux-2-klein-base-9b-fp8.safetensors", seed_checkpoints("klein"))
+        self.assertEqual(default_profile("klein").checkpoints, seed_checkpoints("klein"))
+        self.assertEqual(default_profile("klein5090").checkpoints, [SNOFS_UNET])
+
+    def test_delete_removes_the_profile_from_the_store(self) -> None:
+        upsert(SaladProfile(name="third", checkpoints=["a.safetensors"]), self.path)
+        upsert(SaladProfile(name="fourth", checkpoints=["b.safetensors"]), self.path)
+        self.assertEqual(sorted(delete("third", self.path)), ["fourth"])
+        self.assertEqual(sorted(load_all(self.path)), ["fourth"])
+
+
+class RoutingByCheckpointListTest(unittest.TestCase):
+    """Three profiles with distinct lists: the list decides, and a change moves it."""
+
+    KLEIN_BASE = "flux-2-klein-base-9b-fp8.safetensors"
+    KLEIN_DISTILLED = "flux-2-klein-9b-fp8.safetensors"
+    KLEIN_THIRD = "flux-2-klein-3b-fp8.safetensors"
+
+    def _all(self) -> dict[str, SaladProfile]:
+        return {
+            "klein": SaladProfile(
+                name="klein",
+                gateway="https://klein.example/",
+                checkpoints=[self.KLEIN_BASE, self.KLEIN_DISTILLED],
+            ),
+            "snofs": SaladProfile(
+                name="snofs", gateway="https://snofs.example/", checkpoints=[SNOFS_UNET]
+            ),
+            "third": SaladProfile(
+                name="third", gateway="https://third.example/", checkpoints=[self.KLEIN_THIRD]
+            ),
+        }
+
+    @staticmethod
+    def _graph(unet: str) -> dict:
+        return {"prompt": {"94": {"class_type": "UNETLoader", "inputs": {"unet_name": unet}}}}
+
+    def test_three_profiles_each_route_their_own_checkpoint(self) -> None:
+        allp = self._all()
+        for name, unet in (
+            ("klein", self.KLEIN_DISTILLED),
+            ("snofs", SNOFS_UNET),
+            ("third", self.KLEIN_THIRD),
+        ):
+            with self.subTest(profile=name):
+                got = route_payload(self._graph(unet), allp)
+                self.assertIsNotNone(got)
+                assert got is not None
+                self.assertEqual(got[0], name)
+                self.assertEqual(got[1].gateway, allp[name].gateway)
+
+    def test_a_checkpoint_in_no_list_is_refused_with_a_reason(self) -> None:
+        allp = self._all()
+        route, refusal = plan_route(self._graph("mystery.safetensors"), allp["klein"], allp)
+        self.assertIsNone(route)
+        self.assertIn("mystery.safetensors", refusal)
+        self.assertIn("No profile lists", refusal)
+        self.assertIsNone(route_payload(self._graph("mystery.safetensors"), allp))
+
+    def test_changing_only_a_profiles_list_changes_the_target(self) -> None:
+        allp = self._all()
+        moved = "flux-2-klein-4b-fp8.safetensors"
+        allp["klein"].checkpoints.append(moved)
+        self.assertEqual(route_payload(self._graph(moved), allp)[0], "klein")
+        self.assertTrue(remove_checkpoint(allp["klein"], moved))
+        allp["third"].checkpoints.append(moved)
+        self.assertEqual(route_payload(self._graph(moved), allp)[0], "third")
+
+    def test_a_checkpoint_two_profiles_list_is_refused_as_ambiguous(self) -> None:
+        allp = self._all()
+        allp["third"].checkpoints.append(self.KLEIN_DISTILLED)
+        self.assertEqual(
+            profiles_for_checkpoint(self.KLEIN_DISTILLED, allp), ["klein", "third"]
+        )
+        route, refusal = plan_route(self._graph(self.KLEIN_DISTILLED), allp["klein"], allp)
+        self.assertIsNone(route)
+        self.assertIn("ambiguous", refusal)
+
+    def test_a_profile_that_mixes_families_is_refused(self) -> None:
+        allp = self._all()
+        # SNOFS on one profile only, which also lists a klein cut.
+        allp["snofs"].checkpoints = []
+        allp["third"].checkpoints = [self.KLEIN_THIRD, SNOFS_UNET]
+        self.assertIn("2 unet families", mixed_family_reason(allp["third"]))
+        route, refusal = plan_route(self._graph(SNOFS_UNET), allp["klein"], allp)
+        self.assertIsNone(route)
+        self.assertIn("unet families", refusal)
+        self.assertIsNone(route_payload(self._graph(SNOFS_UNET), allp))
+
+    def test_the_profile_that_lists_it_is_left_alone(self) -> None:
+        allp = self._all()
+        route, refusal = plan_route(self._graph(self.KLEIN_BASE), allp["klein"], allp)
+        self.assertIsNone(route)
+        self.assertEqual(refusal, "")
+        route, refusal = plan_route(self._graph(SNOFS_UNET), allp["snofs"], allp)
+        self.assertIsNone(route)
+        self.assertEqual(refusal, "")
 
 
 if __name__ == "__main__":

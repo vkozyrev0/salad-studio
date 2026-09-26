@@ -109,12 +109,36 @@ def _strip_instance(it: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def find_group_by_gateway(gateway: str, key: str) -> dict[str, Any] | None:
+def find_group_by_gateway(
+    gateway: str,
+    key: str,
+    *,
+    sender: Any | None = None,
+    group: str = "",
+) -> dict[str, Any] | None:
+    """The Salad group whose DNS is this gateway, or None.
+
+    ``group`` short-circuits the lookup when the caller already knows the name,
+    and ``sender`` replaces the transport, so a test drives this with a recorded
+    request instead of a live call.
+    """
+    send = sender or _api_request
+    list_url = f"{API}/organizations/{ORG}/projects/{PROJECT}/containers"
+
+    def get(url: str) -> tuple[int, Any]:
+        # With no explicit sender this goes through _api_get, which is the seam
+        # the rest of this module's callers and tests patch.
+        if sender is not None:
+            return send("GET", url, key, None)
+        return _api_get(url, key)
+
+    if group:
+        code, data = get(f"{list_url}/{group}")
+        return data if code == 200 and isinstance(data, dict) else None
     host = (urlparse((gateway or "").strip()).hostname or "").lower()
     if not host:
         return None
-    list_url = f"{API}/organizations/{ORG}/projects/{PROJECT}/containers"
-    code, data = _api_get(list_url, key)
+    code, data = get(list_url)
     if code != 200 or not isinstance(data, dict):
         return None
     for g in data.get("items") or []:
@@ -648,6 +672,123 @@ def reallocate_instance(gateway: str, key: str) -> tuple[int, Any]:
         f"{name}/instances/{iid}/reallocate"
     )
     return _api_request("POST", url, key)
+
+
+def _group_action(
+    action: str,
+    gateway: str,
+    key: str,
+    *,
+    sender: Any | None = None,
+    group: str = "",
+) -> tuple[int, Any]:
+    """``POST …/containers/{name}/{action}`` for the group behind ``gateway``.
+
+    Salad answers a start or stop with 202 and no body; the group keeps its
+    configuration and DNS, and a later start allocates new instances.
+    """
+    send = sender or _api_request
+    name = group or str(
+        (find_group_by_gateway(gateway, key, sender=sender) or {}).get("name") or ""
+    )
+    if not name:
+        return 404, {"error": "No container group matches this gateway DNS."}
+    url = f"{API}/organizations/{ORG}/projects/{PROJECT}/containers/{name}/{action}"
+    return send("POST", url, key, None)
+
+
+def start_container_group(
+    gateway: str, key: str, *, sender: Any | None = None, group: str = ""
+) -> tuple[int, Any]:
+    """Start the group behind ``gateway``, so it can take a request."""
+    return _group_action("start", gateway, key, sender=sender, group=group)
+
+
+def stop_container_group(
+    gateway: str, key: str, *, sender: Any | None = None, group: str = ""
+) -> tuple[int, Any]:
+    """Stop the group behind ``gateway``. Its configuration and DNS stay."""
+    return _group_action("stop", gateway, key, sender=sender, group=group)
+
+
+def group_is_running(
+    gateway: str, key: str, *, sender: Any | None = None, group: str = ""
+) -> bool | None:
+    """Whether the group behind ``gateway`` has instances up.
+
+    ``True`` running, ``False`` stopped, ``None`` when the answer is unknown (no
+    group, no key, an API error, or a state in between such as pending or
+    failed). The caller starts a container only on a definite ``False``, so an
+    unknown answer leaves it alone rather than starting or stopping it twice.
+    """
+    found = find_group_by_gateway(gateway, key, sender=sender, group=group)
+    if found is None:
+        return None
+    status = str((found.get("current_state") or {}).get("status") or "").lower()
+    if status == "stopped":
+        return False
+    if status == "running":
+        return True
+    return None
+
+
+class ContainerLifecycle:
+    """The queue's handle on the containers it may start and stop.
+
+    ``key_provider`` is called for every action, so the token the app stores is
+    read when the action happens rather than captured at startup. ``sender``
+    replaces the transport, the way the rest of this module is tested.
+    """
+
+    def __init__(self, key_provider: Any, *, sender: Any | None = None) -> None:
+        self._key = key_provider
+        self._sender = sender
+
+    def _token(self) -> str:
+        try:
+            return str(self._key() or "")
+        except Exception:  # noqa: BLE001 - no stored token is a refusal, not a crash
+            return ""
+
+    def is_running(self, profile: str, gateway: str) -> bool | None:
+        key = self._token()
+        if not key or not gateway:
+            return None
+        return group_is_running(gateway, key, sender=self._sender)
+
+    def start(self, profile: str, gateway: str) -> tuple[int, str]:
+        return self._act("start", profile, gateway)
+
+    def stop(self, profile: str, gateway: str) -> tuple[int, str]:
+        return self._act("stop", profile, gateway)
+
+    def _act(self, action: str, profile: str, gateway: str) -> tuple[int, str]:
+        key = self._token()
+        if not key:
+            return 401, "no Salad token is stored"
+        if not gateway:
+            return 404, f"profile {profile!r} has no gateway"
+        # The group is resolved from the gateway's DNS: a profile name and a
+        # Salad group name are not the same thing (profile "klein" is the group
+        # "flux2-klein2"), so the DNS is the only reliable link between them.
+        code, payload = _group_action(action, gateway, key, sender=self._sender)
+        return int(code), _api_message(payload)
+
+
+def _api_message(payload: Any) -> str:
+    """The server's own words for a failed control-plane call."""
+    if isinstance(payload, dict):
+        for key in ("error", "detail", "title", "message"):
+            value = payload.get(key)
+            if isinstance(value, dict):
+                value = value.get("message") or value.get("detail") or value.get("type")
+            if isinstance(value, str) and value.strip():
+                return value.strip()[:200]
+        if payload.get("raw"):
+            return str(payload["raw"])[:200]
+    if isinstance(payload, str) and payload.strip():
+        return payload.strip()[:200]
+    return ""
 
 
 def snapshot_gateway(gateway: str, key: str) -> dict[str, Any]:

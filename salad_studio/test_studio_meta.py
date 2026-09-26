@@ -30,9 +30,7 @@ SENTINEL = "SENTINEL_HINT_FROM_THE_DOCUMENT"
 
 def _document(
     *,
-    snofs_group: str = "klein5090",
-    snofs_gateway: str = "",
-    klein_group: str = "klein",
+    snofs_unets: list[str] | None = None,
     hint: str = SENTINEL,
 ) -> dict:
     return {
@@ -40,14 +38,11 @@ def _document(
         "routing": {
             "families": {
                 "snofs": {
-                    "group": snofs_group,
-                    "gateway": snofs_gateway,
                     "image": "image-snofs",
-                    "unets": [SNOFS_UNET],
+                    "unets": list(snofs_unets if snofs_unets is not None else [SNOFS_UNET]),
                     "markers": ["snofs"],
                 },
                 "klein": {
-                    "group": klein_group,
                     "image": "image-klein",
                     "unets": [KLEIN_UNET, "flux-2-klein-9b-fp8.safetensors"],
                     "markers": ["klein"],
@@ -85,17 +80,17 @@ class DocumentTest(unittest.TestCase):
         path.write_text("{not json", encoding="utf-8")
         doc = meta.load(path=path)
         self.assertIn("not JSON", doc["error"])
-        self.assertEqual(meta.group_for_family("klein", doc), "")
+        self.assertEqual(meta.entry_for_family("klein", doc)["unets"], [])
 
     def test_a_hand_edited_document_is_coerced(self) -> None:
         path = self._write(
             {
-                "routing": {"families": {"snofs": {"group": 7, "unets": SNOFS_UNET}}},
+                "routing": {"families": {"snofs": {"unets": SNOFS_UNET, "markers": None}}},
                 "prompt": {"rules": "one rule"},
             }
         )
         doc = meta.load(path=path)
-        self.assertEqual(meta.group_for_family("snofs", doc), "7")
+        self.assertEqual(meta.entry_for_family("snofs", doc)["unets"], [SNOFS_UNET])
         self.assertEqual(meta.family_for_unet(SNOFS_UNET, doc), "snofs")
         self.assertIn("one rule", meta.instruction(doc))
 
@@ -104,8 +99,10 @@ class DocumentTest(unittest.TestCase):
         self.assertEqual(meta.family_for_unet(SNOFS_UNET, doc), "snofs")
         self.assertEqual(meta.family_for_unet(KLEIN_UNET, doc), "klein")
         self.assertEqual(meta.family_for_unet("flux-2-klein-9b-fp8.safetensors", doc), "klein")
-        self.assertEqual(meta.group_for_family("snofs", doc), "klein5090")
-        self.assertEqual(meta.group_for_family("klein", doc), "klein")
+        self.assertEqual(
+            meta.entry_for_family("snofs", doc)["unets"], [SNOFS_UNET], "the seed list"
+        )
+        self.assertIn("prefetch6-snofs", meta.image_for_family("snofs", doc))
         self.assertEqual(doc["error"], "")
 
     def test_the_earlier_marker_wins(self) -> None:
@@ -115,90 +112,114 @@ class DocumentTest(unittest.TestCase):
         self.assertEqual(meta.family_for_unet("mystery_model.safetensors", doc), "")
 
 
-class RoutingFromMetadataTest(unittest.TestCase):
-    """The document, not the code, says where a graph goes."""
+class FamiliesFromMetadataTest(unittest.TestCase):
+    """The document says what a family is and seeds a new profile's list.
+
+    Which profile serves which checkpoint is the profile's own list, tested in
+    test_profiles; this is the half the document still owns.
+    """
 
     def setUp(self) -> None:
         self._td = tempfile.TemporaryDirectory()
         self.addCleanup(self._td.cleanup)
         self.tmp = Path(self._td.name)
-        self.allp = {
-            "klein": profiles.default_profile("klein"),
-            "klein5090": profiles.default_profile("klein5090"),
-        }
-        self.assertNotEqual(
-            self.allp["klein"].gateway,
-            self.allp["klein5090"].gateway,
-            "the two built-in groups must point at different gateways",
-        )
 
     def _write(self, doc: dict) -> Path:
         path = self.tmp / "meta.json"
         path.write_text(json.dumps(doc), encoding="utf-8")
         return path
 
+    def test_a_new_profile_is_seeded_from_the_document(self) -> None:
+        doc = meta.load(path=self._write(_document()))
+        self.assertEqual(profiles.seed_checkpoints("klein5090", doc), [SNOFS_UNET])
+        self.assertEqual(
+            profiles.seed_checkpoints("klein", doc),
+            [KLEIN_UNET, "flux-2-klein-9b-fp8.safetensors"],
+        )
+
+    def test_editing_only_the_document_changes_the_seed(self) -> None:
+        """Same code, same profile name: the file decides what a new one serves."""
+        before = meta.load(path=self._write(_document(snofs_unets=[SNOFS_UNET])))
+        after = meta.load(
+            path=self._write(_document(snofs_unets=[SNOFS_UNET, "snofs_second_cut.safetensors"]))
+        )
+        self.assertEqual(profiles.seed_checkpoints("klein5090", before), [SNOFS_UNET])
+        self.assertEqual(
+            profiles.seed_checkpoints("klein5090", after),
+            [SNOFS_UNET, "snofs_second_cut.safetensors"],
+        )
+
+    def test_an_unlisted_checkpoint_is_its_own_family(self) -> None:
+        """So a checkpoint that does not exist yet is routable without a doc edit."""
+        doc = meta.load(path=self._write(_document()))
+        self.assertEqual(meta.family_for_unet("brand_new.safetensors", doc), "")
+        self.assertEqual(
+            profiles.checkpoint_family("brand_new.safetensors", doc), "brand_new.safetensors"
+        )
+        self.assertEqual(
+            profiles.checkpoint_family("snofs_another_cut.safetensors", doc), "snofs"
+        )
+
+    def test_a_family_whose_seed_is_empty_starts_a_profile_with_no_checkpoints(self) -> None:
+        doc = meta.load(path=self._write(_document(snofs_unets=[])))
+        self.assertEqual(profiles.seed_checkpoints("klein5090", doc), [])
+        # ... and such a profile is then routable for nothing until one is added.
+        empty = profiles.SaladProfile(name="klein5090")
+        self.assertEqual(profiles.route_payload(self._graph(SNOFS_UNET), {"klein5090": empty}), None)
+
     @staticmethod
     def _graph(unet: str) -> dict:
         return {"prompt": {"70": {"class_type": "UNETLoader", "inputs": {"unet_name": unet}}}}
 
-    def test_the_documents_group_decides_where_a_graph_goes(self) -> None:
-        doc = meta.load(path=self._write(_document(snofs_group="klein")))
-        got = profiles.route_payload(self._graph(SNOFS_UNET), self.allp, meta=doc)
-        assert got is not None
-        self.assertEqual(got[0], "klein")
-        self.assertEqual(got[1].gateway, self.allp["klein"].gateway)
 
-    def test_editing_only_the_document_changes_the_route(self) -> None:
-        """Same graph, same profiles, same code: the file decides."""
-        first = meta.load(path=self._write(_document(snofs_group="klein5090")))
-        before = profiles.route_payload(self._graph(SNOFS_UNET), self.allp, meta=first)
-        second = meta.load(path=self._write(_document(snofs_group="klein")))
-        after = profiles.route_payload(self._graph(SNOFS_UNET), self.allp, meta=second)
-        assert before is not None and after is not None
-        self.assertEqual(before[0], "klein5090")
-        self.assertEqual(after[0], "klein")
-        self.assertEqual(before[1].gateway, self.allp["klein5090"].gateway)
-        self.assertEqual(after[1].gateway, self.allp["klein"].gateway)
+class IdleTimeoutFromMetadataTest(unittest.TestCase):
+    """The queue's idle timeout is the document's setting, with a safe default."""
 
-    def test_the_document_can_name_the_gateway_itself(self) -> None:
-        doc = meta.load(
-            path=self._write(_document(snofs_group="klein5090", snofs_gateway=OTHER_GATEWAY))
+    def setUp(self) -> None:
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.tmp = Path(self._td.name)
+
+    def _doc(self, payload: dict) -> dict:
+        path = self.tmp / "meta.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return meta.load(path=path)
+
+    def test_the_shipped_document_says_one_hour(self) -> None:
+        self.assertEqual(
+            meta.idle_stop_seconds(meta.load()), meta.DEFAULT_IDLE_STOP_S
         )
-        got = profiles.route_payload(self._graph(SNOFS_UNET), self.allp, meta=doc)
-        assert got is not None
-        self.assertEqual(got[0], "klein5090")
-        self.assertEqual(got[1].gateway, OTHER_GATEWAY)
+        self.assertEqual(meta.DEFAULT_IDLE_STOP_S, 3600)
 
-    def test_a_checkpoint_with_no_entry_is_refused_with_a_reason(self) -> None:
-        doc = meta.load(path=self._write(_document()))
-        route, refusal = profiles.plan_route(
-            self._graph("mystery_model.safetensors"),
-            self.allp["klein"],
-            self.allp,
-            meta=doc,
-        )
-        self.assertIsNone(route)
-        self.assertIn("mystery_model.safetensors", refusal)
-        self.assertIn("no entry in the routing metadata", refusal)
-        self.assertIsNone(
-            profiles.route_payload(self._graph("mystery_model.safetensors"), self.allp, meta=doc)
+    def test_a_different_timeout_is_read_from_the_document(self) -> None:
+        self.assertEqual(meta.idle_stop_seconds(self._doc({"queue": {"idle_stop_s": 45}})), 45)
+        self.assertEqual(
+            meta.idle_stop_seconds(self._doc({"queue": {"idle_stop_s": "120"}})), 120
         )
 
-    def test_a_family_whose_group_is_not_saved_is_refused(self) -> None:
-        doc = meta.load(path=self._write(_document(snofs_group="a_group_we_never_saved")))
-        route, refusal = profiles.plan_route(
-            self._graph(SNOFS_UNET), self.allp["klein"], self.allp, meta=doc
-        )
-        self.assertIsNone(route)
-        self.assertIn("a_group_we_never_saved", refusal)
+    def test_a_nonsense_timeout_falls_back_to_the_default(self) -> None:
+        for payload in (
+            {"queue": {"idle_stop_s": 0}},
+            {"queue": {"idle_stop_s": -5}},
+            {"queue": {"idle_stop_s": "soon"}},
+            {"queue": {"idle_stop_s": None}},
+            {"queue": {}},
+            {"queue": "nope"},
+            {},
+        ):
+            with self.subTest(payload=payload):
+                self.assertEqual(
+                    meta.idle_stop_seconds(self._doc(payload)),
+                    meta.DEFAULT_IDLE_STOP_S,
+                    "a typo must not stop a container the moment it goes quiet",
+                )
 
-    def test_a_matching_group_is_left_alone(self) -> None:
-        doc = meta.load(path=self._write(_document()))
-        route, refusal = profiles.plan_route(
-            self._graph(SNOFS_UNET), self.allp["klein5090"], self.allp, meta=doc
+    def test_a_broken_document_still_yields_the_default(self) -> None:
+        path = self.tmp / "broken.json"
+        path.write_text("{not json", encoding="utf-8")
+        self.assertEqual(
+            meta.idle_stop_seconds(meta.load(path=path)), meta.DEFAULT_IDLE_STOP_S
         )
-        self.assertIsNone(route)
-        self.assertEqual(refusal, "")
 
 
 class HintsFromMetadataTest(unittest.TestCase):

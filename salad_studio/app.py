@@ -91,8 +91,13 @@ class SaladStudio(tk.Tk):
         self._busy = False
         self._gen_jobs = 0
         # One line for every render, shared with the generator: a press while a
-        # render is in flight waits its turn here instead of being dropped.
-        self.gen_queue = salad_queue.SaladQueue(on_log=self._on_queue_log)
+        # render is in flight waits its turn here instead of being dropped. The
+        # lifecycle handle lets the queue start the container a request needs and
+        # stop it once it has sat idle past the metadata document's timeout.
+        self.gen_queue = salad_queue.SaladQueue(
+            on_log=self._on_queue_log,
+            lifecycle=salad_status.ContainerLifecycle(self._salad_api_key),
+        )
         self._helper_busy = False
         self._token_probe_busy = False
         self._token_detail: dict[str, str] = {}
@@ -206,15 +211,42 @@ class SaladStudio(tk.Tk):
         self._build_replica_cluster(bar)
 
     def _build_replica_cluster(self, bar) -> None:
-        """Dual replica badges and the Salad probe, right-aligned in the action bar."""
+        """The Salad probe and one badge row per configured profile, right-aligned."""
         holder = ttk.Frame(bar)
         holder.pack(side="right")
         self._replica_holder = holder
         self._replica_vars: dict[str, tuple[tk.StringVar, tk.StringVar, tk.Label]] = {}
-        for i, (pid, title) in enumerate(
-            (("klein", "klein (4090/3090)"), ("klein5090", "klein5090 (5090)"))
-        ):
-            ttk.Label(holder, text=title).grid(row=i, column=0, sticky="w", padx=(0, 6))
+        right = ttk.Frame(holder)
+        right.grid(row=0, column=3, sticky="ne", padx=(10, 0))
+        ttk.Button(
+            right, text="Check Salad status", command=self._check_salad_status
+        ).pack(side="left")
+        self.var_salad_status = tk.StringVar(value="…")
+        self.salad_status_lbl = tk.Label(
+            right,
+            textvariable=self.var_salad_status,
+            font=("Segoe UI Semibold", 11),
+            bg=theme.PALETTE["bg"],
+            fg=theme.PALETTE["fg_muted"],
+        )
+        self.salad_status_lbl.pack(side="left", padx=(8, 0))
+        self._refresh_replica_badges()
+
+    def _refresh_replica_badges(self) -> None:
+        """One badge row per profile the store holds, so N profiles all show.
+
+        Rebuilt whenever the profile set changes: the number of badges is the
+        number of profiles, and the probe reads the same dict.
+        """
+        holder = getattr(self, "_replica_holder", None)
+        if holder is None:
+            return
+        for child in list(holder.grid_slaves()):
+            if int(child.grid_info().get("column", 0) or 0) != 3:
+                child.destroy()
+        self._replica_vars = {}
+        for i, (pid, _gateway) in enumerate(self._status_targets()):
+            ttk.Label(holder, text=pid).grid(row=i, column=0, sticky="w", padx=(0, 6))
             word = tk.StringVar(value="…")
             detail = tk.StringVar(value="")
             lbl = tk.Label(
@@ -229,20 +261,6 @@ class SaladStudio(tk.Tk):
                 row=i, column=2, sticky="w"
             )
             self._replica_vars[pid] = (word, detail, lbl)
-        right = ttk.Frame(holder)
-        right.grid(row=0, column=3, rowspan=2, sticky="e", padx=(10, 0))
-        ttk.Button(
-            right, text="Check Salad status", command=self._check_salad_status
-        ).pack(side="left")
-        self.var_salad_status = tk.StringVar(value="…")
-        self.salad_status_lbl = tk.Label(
-            right,
-            textvariable=self.var_salad_status,
-            font=("Segoe UI Semibold", 11),
-            bg=theme.PALETTE["bg"],
-            fg=theme.PALETTE["fg_muted"],
-        )
-        self.salad_status_lbl.pack(side="left", padx=(8, 0))
 
     def _build_nav_buttons(self) -> None:
         for child in self._nav.winfo_children():
@@ -301,9 +319,15 @@ class SaladStudio(tk.Tk):
                 pass
 
     def _build_config_tab(self) -> None:
-        """Profile and gateway only; the prompt knobs live on Prompt Settings."""
+        """Profiles: add, remove, configure, and the checkpoints each one serves.
+
+        The prompt knobs stay on Prompt Settings; what a profile *is* (its
+        gateway and the checkpoints its container serves) is here, because that
+        is what routing and the queue read.
+        """
         self._config = ttk.Frame(self.nb, padding=10)
         self._config.columnconfigure(1, weight=1)
+        self._config.rowconfigure(3, weight=1)
         self.var_name = tk.StringVar()
         self.var_gateway = tk.StringVar()
 
@@ -318,6 +342,9 @@ class SaladStudio(tk.Tk):
         ttk.Button(btns, text="Save profile", command=self._save_profile).pack(
             side="left", padx=(0, 6)
         )
+        ttk.Button(btns, text="Add profile", command=self._on_add_profile).pack(
+            side="left", padx=(0, 6)
+        )
         ttk.Button(btns, text="Delete profile", command=self._delete_profile).pack(
             side="left"
         )
@@ -325,12 +352,159 @@ class SaladStudio(tk.Tk):
         ttk.Entry(self._config, textvariable=self.var_gateway).grid(
             row=2, column=1, sticky="ew", padx=6, pady=3
         )
+
+        box = ttk.LabelFrame(self._config, text="Checkpoints this profile serves", padding=6)
+        box.grid(row=3, column=0, columnspan=2, sticky="nsew", pady=(10, 0))
+        box.columnconfigure(0, weight=1)
+        box.rowconfigure(0, weight=1)
+        self.checkpoint_tree = ttk.Treeview(
+            box, columns=("checkpoint", "family"), show="headings", height=7
+        )
+        for col, heading, width, stretch in (
+            ("checkpoint", "Checkpoint", 420, True),
+            ("family", "Family", 120, False),
+        ):
+            self.checkpoint_tree.heading(col, text=heading)
+            self.checkpoint_tree.column(col, width=width, stretch=stretch, anchor="w")
+        cscroll = ttk.Scrollbar(box, orient="vertical", command=self.checkpoint_tree.yview)
+        self.checkpoint_tree.configure(yscrollcommand=cscroll.set)
+        self.checkpoint_tree.grid(row=0, column=0, columnspan=2, sticky="nsew")
+        cscroll.grid(row=0, column=1, sticky="ns")
+        add = ttk.Frame(box)
+        add.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        add.columnconfigure(1, weight=1)
+        ttk.Label(add, text="Add checkpoint").grid(row=0, column=0, sticky="w")
+        self.var_checkpoint = tk.StringVar()
+        self.checkpoint_combo = ttk.Combobox(
+            add,
+            textvariable=self.var_checkpoint,
+            values=request_json.UNET_LABELS,
+            state="normal",
+        )
+        self.checkpoint_combo.grid(row=0, column=1, sticky="ew", padx=6)
+        ttk.Button(add, text="Add", command=self._on_add_checkpoint).grid(row=0, column=2)
+        ttk.Button(add, text="Remove selected", command=self._on_remove_checkpoint).grid(
+            row=0, column=3, padx=(6, 0)
+        )
+        self.var_config_note = tk.StringVar(value="")
+        ttk.Label(
+            box, textvariable=self.var_config_note, wraplength=760
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
         ttk.Label(
             self._config,
-            text="Replica status and the Salad probe are in the top bar; size, steps, "
-            "CFG, seed, graph, scheduler, checkpoint and LoRA selection are on Prompt Settings.",
+            text="One container serves one unet family, so a profile's checkpoints must "
+            "stay in one family. Routing sends a graph to the profile that lists the "
+            "checkpoint it loads; the queue runs one line per profile, so two profiles "
+            "render at the same time. Replica status and the Salad probe are in the top "
+            "bar; size, steps, CFG, seed, graph, scheduler and LoRA selection are on "
+            "Prompt Settings.",
             wraplength=760,
-        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(12, 0))
+
+    def _config_status(self, text: str) -> None:
+        self.var_config_note.set(text)
+        self.status.set(text)
+
+    def _refresh_profile_choices(self, select: str = "") -> None:
+        """The combo lists every profile the store holds, so N profiles are usable."""
+        try:
+            names = sorted(profiles.load_all())
+        except Exception:
+            names = []
+        self.profile_combo["values"] = names
+        if select:
+            self.var_name.set(select)
+
+    def _refresh_checkpoint_list(self, profile: SaladProfile | None = None) -> None:
+        """Show the selected profile's checkpoint list and the family each belongs to."""
+        tree = getattr(self, "checkpoint_tree", None)
+        if tree is None:
+            return
+        tree.delete(*tree.get_children())
+        if profile is None:
+            name = (self.var_name.get() or "").strip()
+            profile = profiles.load_all().get(name)
+        if profile is None:
+            return
+        for i, unet in enumerate(profile.checkpoints):
+            tree.insert(
+                "", "end", iid=str(i), values=(unet, profiles.checkpoint_family(unet))
+            )
+
+    def _selected_checkpoint(self) -> str:
+        tree = getattr(self, "checkpoint_tree", None)
+        if tree is None:
+            return ""
+        selection = tree.selection()
+        if not selection:
+            return ""
+        values = tree.item(selection[0], "values")
+        return str(values[0]) if values else ""
+
+    def _on_add_profile(self) -> None:
+        """Add the profile named in the box, seeded from the metadata document."""
+        allp = profiles.load_all()
+        base = (self.var_name.get() or "").strip() or "profile"
+        name, n = base, 2
+        while name in allp:
+            name = f"{base}{n}"
+            n += 1
+        p = profiles.default_profile(name)
+        typed_gateway = self.var_gateway.get().strip()
+        if typed_gateway:
+            p.gateway = typed_gateway
+        profiles.upsert(p)
+        profiles.set_active(name)
+        self._refresh_profile_choices(name)
+        self._apply_profile(p)
+        self._refresh_replica_badges()
+        self.status.set(f"Added profile {name}")
+        self.log(
+            "ok",
+            f"added profile {name}  gateway={p.gateway}  "
+            f"checkpoints={len(p.checkpoints)}",
+        )
+
+    def _on_add_checkpoint(self) -> None:
+        """Add the typed checkpoint to the selected profile's list and save it."""
+        name = (self.var_name.get() or "").strip()
+        p = profiles.load_all().get(name)
+        if p is None:
+            self._config_status(f"No saved profile named {name!r}; press Add profile first")
+            return
+        raw = (self.var_checkpoint.get() or "").strip()
+        if not raw:
+            self._config_status("Type a checkpoint filename or pick a label first")
+            return
+        unet = request_json.normalize_unet(raw)
+        reason = profiles.add_checkpoint(p, unet)
+        if reason:
+            self._config_status(reason)
+            messagebox.showinfo("Salad Studio", reason)
+            return
+        profiles.upsert(p)
+        self.var_checkpoint.set("")
+        self._refresh_checkpoint_list(p)
+        self.status.set(f"{p.name} lists {len(p.checkpoints)} checkpoint(s)")
+        self.log("ok", f"profile {p.name} checkpoint added: {unet}")
+
+    def _on_remove_checkpoint(self) -> None:
+        """Drop the selected checkpoint from the profile's list and save it."""
+        name = (self.var_name.get() or "").strip()
+        p = profiles.load_all().get(name)
+        if p is None:
+            self._config_status(f"No saved profile named {name!r}")
+            return
+        unet = self._selected_checkpoint()
+        if not unet:
+            self._config_status("Select a checkpoint in the list first")
+            return
+        if not profiles.remove_checkpoint(p, unet):
+            return
+        profiles.upsert(p)
+        self._refresh_checkpoint_list(p)
+        self.status.set(f"{p.name} lists {len(p.checkpoints)} checkpoint(s)")
+        self.log("warn", f"profile {p.name} checkpoint removed: {unet}")
 
     def _build_prompt_settings_tab(self) -> None:
         """The prompt-shaping knobs split off Config, under the same attribute names."""
@@ -416,8 +590,11 @@ class SaladStudio(tk.Tk):
         self._salad_poll_after = None
         self._check_salad_status(silent=True)
         # The existing tick also redraws the queue page, so a job that started
-        # or finished since the last poll shows up without a manual Refresh.
+        # or finished since the last poll shows up without a manual Refresh, and
+        # runs the queue's idle check: a container that has sat unused past the
+        # metadata document's timeout is stopped from here, with no extra timer.
         self._refresh_queue_page()
+        self.gen_queue.idle_check()
         self._schedule_salad_poll()
 
     def _on_destroy_cancel_poll(self, e=None) -> None:
@@ -489,17 +666,21 @@ class SaladStudio(tk.Tk):
                 pass
 
     def _status_targets(self) -> list[tuple[str, str]]:
-        """(profile_id, gateway) for dual badges; always klein + klein5090."""
-        allp = profiles.load_all()
+        """(profile name, gateway) for every configured profile.
+
+        One badge and one probe per profile, so any number of profiles is active
+        at once. A profile with no gateway falls back to the published one for a
+        built-in name; anything else with no gateway has nothing to probe.
+        """
+        try:
+            allp = profiles.load_all()
+        except Exception:
+            allp = {}
         out: list[tuple[str, str]] = []
-        for pid, fallback in (
-            ("klein", profiles.KLEIN_GATEWAY),
-            ("klein5090", profiles.KLEIN_5090_GATEWAY),
-        ):
-            gw = fallback
-            if pid in allp and (allp[pid].gateway or "").strip():
-                gw = allp[pid].gateway.strip()
-            out.append((pid, gw))
+        for name in sorted(allp):
+            gw = (allp[name].gateway or "").strip() or profiles.fallback_gateway(name)
+            if gw:
+                out.append((name, gw))
         return out
 
     def _check_salad_status(self, silent: bool = False) -> None:
@@ -527,6 +708,7 @@ class SaladStudio(tk.Tk):
             def done() -> None:
                 self._salad_check_busy = False
                 active_word = "Unknown"
+                first_pid = targets[0][0] if targets else ""
                 for pid, (word_var, detail_var, lbl) in getattr(
                     self, "_replica_vars", {}
                 ).items():
@@ -542,7 +724,7 @@ class SaladStudio(tk.Tk):
                     tgt_gw = dict(targets).get(pid, "")
                     if active_gw and tgt_gw and active_gw.rstrip("/") == tgt_gw.rstrip("/"):
                         active_word = word
-                    if pid == "klein" and not active_gw:
+                    if not active_gw and pid == first_pid:
                         active_word = word
                 if active_gw:
                     for pid, gwx in targets:
@@ -2233,15 +2415,16 @@ class SaladStudio(tk.Tk):
         ttk.Label(bar, textvariable=self.var_queue_summary, style="Status.TLabel").pack(
             side="left", padx=(12, 0)
         )
-        cols = ("id", "state", "attempts", "status", "reason", "request")
+        cols = ("id", "profile", "state", "attempts", "status", "reason", "request")
         self.queue_tree = ttk.Treeview(self._queue, columns=cols, show="headings", height=14)
         for col, heading, width, stretch in (
-            ("id", "#", 44, False),
+            ("id", "#", 40, False),
+            ("profile", "Profile", 110, False),
             ("state", "State", 90, False),
             ("attempts", "Attempts", 70, False),
             ("status", "Last status", 90, False),
-            ("reason", "Reason", 300, True),
-            ("request", "Request", 240, True),
+            ("reason", "Reason", 280, True),
+            ("request", "Request", 220, True),
         ):
             self.queue_tree.heading(col, text=heading)
             self.queue_tree.column(col, width=width, stretch=stretch, anchor="w")
@@ -2266,6 +2449,7 @@ class SaladStudio(tk.Tk):
             rows.append(
                 (
                     str(job.id),
+                    job.line or "(default)",
                     job.state,
                     str(job.attempts),
                     str(job.status) if job.status else "",
@@ -2298,6 +2482,9 @@ class SaladStudio(tk.Tk):
         summary = f"{len(jobs)} request(s)"
         if pending:
             summary += f", {pending} not finished"
+        busy_lines = self.gen_queue.lines()
+        if len(busy_lines) > 1:
+            summary += f", {len(busy_lines)} profiles in flight"
         if counts:
             summary += "   " + "   ".join(f"{state}: {n}" for state, n in sorted(counts.items()))
         self.var_queue_summary.set(summary)
@@ -3189,13 +3376,31 @@ class SaladStudio(tk.Tk):
                 pass
         self._lift_editor_soon()
 
+    def _event_widget(self, event):
+        """The widget an event came from, as an object rather than a name.
+
+        ``bind_all`` delivers a click on the WebView2 child window (and a click
+        on a widget Tk no longer holds an object for) with ``event.widget`` set
+        to the widget's **path name**, and a name has no ``focus_set``: the
+        handler raised ``AttributeError`` inside a Tk callback, which Tk logs
+        and abandons. A name is resolved back to its widget here, and anything
+        unresolvable is None, so a stray event is ignored.
+        """
+        raw = getattr(event, "widget", None)
+        if raw is None or hasattr(raw, "focus_set"):
+            return raw
+        if isinstance(raw, str):
+            try:
+                return self.nametowidget(raw)
+            except (tk.TclError, KeyError):
+                return None
+        return None
+
     def _on_click_outside_graph(self, event) -> None:
-        if self._widget_in_graph(getattr(event, "widget", None)):
+        widget = self._event_widget(event)
+        if widget is None or self._widget_in_graph(widget):
             return
         self._release_graph_keyboard()
-        widget = getattr(event, "widget", None)
-        if widget is None:
-            return
         try:
             widget.focus_set()
         except tk.TclError:
@@ -3334,6 +3539,18 @@ class SaladStudio(tk.Tk):
     def _scheduler_label(self, kind: str) -> str:
         return "Simple (Civitai)" if str(kind).lower() == "simple" else "Flux2 (Klein)"
 
+    def _form_checkpoints(self, name: str) -> list[str]:
+        """The checkpoint list to save with the form: the stored profile's own.
+
+        The list is edited through the Config page's checkpoint controls, which
+        persist as they go, so the store is the authority here. A name with no
+        stored record starts from the metadata document's seed for it.
+        """
+        stored = profiles.load_all().get(name)
+        if stored is not None:
+            return list(stored.checkpoints)
+        return profiles.seed_checkpoints(name)
+
     def _profile_from_form(self) -> SaladProfile:
         name = (self.var_name.get() or "klein").strip()
         selected = self._selected_lora_ids()
@@ -3348,7 +3565,7 @@ class SaladStudio(tk.Tk):
             cfg=float(self.var_cfg.get() or 5),
             seed=int(float(self.var_seed.get() or 1)),
             scheduler=self._scheduler_id(),
-            unet=request_json.normalize_unet(self.var_unet.get()),
+            checkpoints=self._form_checkpoints(name),
             use_loras=bool(selected),
             selected_loras=selected,
         )
@@ -3370,16 +3587,18 @@ class SaladStudio(tk.Tk):
             if hasattr(self, "var_scheduler"):
                 self.var_scheduler.set(self._scheduler_label(getattr(p, "scheduler", "flux2")))
             if hasattr(self, "var_unet"):
-                self.var_unet.set(request_json.unet_label(getattr(p, "unet", "")))
+                self.var_unet.set(request_json.unet_label(p.primary_checkpoint))
         finally:
             self._applying_profile = False
         if getattr(self, "_lora_inner", None) is not None:
             self._refresh_lora_lists()
+        self._refresh_checkpoint_list(p)
         self._sync_editor()
         self.log(
             "info",
             f"loaded profile {p.name}  gateway={p.gateway}  graph={p.graph}  "
-            f"{p.width}x{p.height}  steps={p.steps}",
+            f"{p.width}x{p.height}  steps={p.steps}  "
+            f"checkpoints={len(p.checkpoints)}",
         )
 
     def _load_profiles_into_ui(self) -> None:
@@ -3395,6 +3614,7 @@ class SaladStudio(tk.Tk):
         if active not in allp:
             active = names[0]
         self._apply_profile(allp[active])
+        self._refresh_replica_badges()
 
     def _on_select_profile(self) -> None:
         name = self.var_name.get().strip()
@@ -3411,9 +3631,15 @@ class SaladStudio(tk.Tk):
             return
         profiles.upsert(p)
         profiles.set_active(p.name)
-        self.profile_combo["values"] = sorted(profiles.load_all())
+        self._refresh_profile_choices(p.name)
+        self._refresh_checkpoint_list(p)
+        self._refresh_replica_badges()
         self.status.set(f"Saved profile {p.name}")
-        self.log("ok", f"saved profile {p.name}  gateway={p.gateway}  graph={p.graph}")
+        self.log(
+            "ok",
+            f"saved profile {p.name}  gateway={p.gateway}  graph={p.graph}  "
+            f"checkpoints={len(p.checkpoints)}",
+        )
 
     def _delete_profile(self) -> None:
         name = self.var_name.get().strip()
@@ -3430,7 +3656,9 @@ class SaladStudio(tk.Tk):
             profiles.upsert(p)
             profiles.set_active(p.name)
             self._apply_profile(p)
-        self.profile_combo["values"] = sorted(profiles.load_all())
+        self._refresh_profile_choices()
+        self._refresh_checkpoint_list()
+        self._refresh_replica_badges()
         self.status.set(f"Deleted {name}")
         self.log("warn", f"deleted profile {name}")
 
@@ -3580,6 +3808,7 @@ class SaladStudio(tk.Tk):
                     out_dir=OUT_DIR,
                     on_log=self.log,
                     queue=self.gen_queue,
+                    line=p.name,
                 )
             except Exception as e:
                 err = str(e)

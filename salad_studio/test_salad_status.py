@@ -359,5 +359,161 @@ class ApiGetDelegation(unittest.TestCase):
         self.assertEqual(req.call_args.kwargs, {})
 
 
+class GroupLifecycleCalls(unittest.TestCase):
+    """Start/stop name the group behind the gateway, and carry the stored token."""
+
+    GW = "https://apple-gadogado-5d0vs4l8x0j51hwy.salad.cloud"
+    HOST = "apple-gadogado-5d0vs4l8x0j51hwy.salad.cloud"
+    GROUP = "flux2-klein2"
+
+    def _group(self, status: str) -> dict:
+        return {
+            "name": self.GROUP,
+            "networking": {"dns": self.HOST},
+            "current_state": {"status": status},
+        }
+
+    def _sender(
+        self,
+        *,
+        groups: list[dict] | None = None,
+        action_code: int = 202,
+        action_payload: Any | None = None,
+        record: list | None = None,
+    ):
+        listed = groups if groups is not None else [self._group("stopped")]
+
+        def send(method, url, key, data=None):
+            if record is not None:
+                record.append((method, url, key, data))
+            if url.endswith("/containers"):
+                return 200, {"items": listed}
+            if url.endswith("/start") or url.endswith("/stop"):
+                return action_code, ({} if action_payload is None else action_payload)
+            return 404, {"error": "not found"}
+
+        return send
+
+    def _url(self, action: str) -> str:
+        return (
+            f"{salad_status.API}/organizations/{salad_status.ORG}/projects/"
+            f"{salad_status.PROJECT}/containers/{self.GROUP}/{action}"
+        )
+
+    def test_start_names_the_resolved_group_and_carries_the_token(self) -> None:
+        calls: list = []
+        code, _payload = salad_status.start_container_group(
+            self.GW, "salad-secret", sender=self._sender(record=calls)
+        )
+        self.assertEqual(code, 202)
+        posts = [call for call in calls if call[0] == "POST"]
+        self.assertEqual(len(posts), 1)
+        method, url, key, data = posts[0]
+        self.assertEqual(method, "POST")
+        self.assertEqual(url, self._url("start"))
+        self.assertEqual(key, "salad-secret")
+        self.assertIsNone(data, "a start carries no body")
+
+    def test_stop_names_the_resolved_group(self) -> None:
+        calls: list = []
+        code, _payload = salad_status.stop_container_group(
+            self.GW, "k", sender=self._sender(record=calls)
+        )
+        self.assertEqual(code, 202)
+        self.assertEqual(
+            [call for call in calls if call[0] == "POST"][0][1], self._url("stop")
+        )
+
+    def test_a_non_2xx_answer_comes_back_as_its_status_and_message(self) -> None:
+        sender = self._sender(
+            action_code=403, action_payload={"error": {"message": "quota exceeded"}}
+        )
+        code, payload = salad_status.start_container_group(self.GW, "k", sender=sender)
+        self.assertEqual(code, 403)
+        self.assertIn("quota exceeded", str(payload))
+
+    def test_a_gateway_with_no_group_is_refused_without_calling_the_action(self) -> None:
+        calls: list = []
+        code, payload = salad_status.stop_container_group(
+            self.GW, "k", sender=self._sender(groups=[], record=calls)
+        )
+        self.assertEqual(code, 404)
+        self.assertIn("No container group", payload["error"])
+        self.assertEqual([call for call in calls if call[0] == "POST"], [])
+
+    def test_group_is_running_reads_the_groups_own_state(self) -> None:
+        for status, want in (
+            ("stopped", False),
+            ("running", True),
+            ("pending", None),
+            ("failed", None),
+        ):
+            with self.subTest(status=status):
+                sender = self._sender(groups=[self._group(status)])
+                self.assertIs(
+                    salad_status.group_is_running(self.GW, "k", sender=sender), want
+                )
+
+    def test_group_is_running_is_unknown_without_a_matching_group(self) -> None:
+        other = {
+            "name": "someone-elses-group",
+            "networking": {"dns": "other.example.salad.cloud"},
+            "current_state": {"status": "running"},
+        }
+        self.assertIsNone(
+            salad_status.group_is_running(
+                self.GW, "k", sender=self._sender(groups=[other])
+            ),
+            "a group that is not this gateway's says nothing about this gateway",
+        )
+        self.assertIsNone(salad_status.group_is_running("", "k", sender=self._sender()))
+
+    def test_the_lifecycle_client_resolves_the_group_from_the_gateway(self) -> None:
+        calls: list = []
+        life = salad_status.ContainerLifecycle(lambda: "tok", sender=self._sender(record=calls))
+        code, message = life.start("klein", self.GW)
+        self.assertEqual((code, message), (202, ""))
+        posts = [call for call in calls if call[0] == "POST"]
+        self.assertEqual(len(posts), 1)
+        self.assertTrue(
+            posts[0][1].endswith(f"/containers/{self.GROUP}/start"),
+            f"the group came from the DNS, not the profile name: {posts[0][1]}",
+        )
+        self.assertNotIn("/klein/", posts[0][1])
+
+    def test_the_lifecycle_client_reports_a_missing_token_as_a_refusal(self) -> None:
+        life = salad_status.ContainerLifecycle(lambda: "", sender=self._sender())
+        self.assertEqual(life.start("klein", self.GW), (401, "no Salad token is stored"))
+        self.assertEqual(life.stop("klein", self.GW), (401, "no Salad token is stored"))
+        self.assertIsNone(life.is_running("klein", self.GW))
+
+    def test_the_lifecycle_client_survives_a_key_provider_that_raises(self) -> None:
+        def broken() -> str:
+            raise FileNotFoundError("no key file")
+
+        life = salad_status.ContainerLifecycle(broken, sender=self._sender())
+        self.assertEqual(life.start("klein", self.GW)[0], 401)
+        self.assertIsNone(life.is_running("klein", self.GW))
+
+    def test_the_lifecycle_client_carries_the_servers_message(self) -> None:
+        life = salad_status.ContainerLifecycle(
+            lambda: "tok",
+            sender=self._sender(
+                action_code=403, action_payload={"error": {"message": "quota exceeded"}}
+            ),
+        )
+        code, message = life.stop("klein", self.GW)
+        self.assertEqual(code, 403)
+        self.assertIn("quota exceeded", message)
+
+    def test_a_profile_with_no_gateway_is_refused_without_a_call(self) -> None:
+        calls: list = []
+        life = salad_status.ContainerLifecycle(lambda: "tok", sender=self._sender(record=calls))
+        code, message = life.start("klein", "")
+        self.assertEqual(code, 404)
+        self.assertIn("no gateway", message)
+        self.assertEqual(calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()

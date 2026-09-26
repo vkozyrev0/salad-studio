@@ -1,13 +1,22 @@
 """Salad Studio named-profile persistence (stdlib only).
 
 Secrets stay on disk at ``key_path``; this module stores the path, never the key.
+
+The unet family to container group table is not here: it lives in the metadata
+document (:mod:`studio_meta`), so routing changes without a code edit. What
+stays here is reading the graph and comparing it to the group it would be sent
+to.
 """
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
+
+# Top-level, the way this package's leaf modules are imported (studio_log,
+# request_json): one module object per process, shared with the app and tests.
+import studio_meta  # noqa: E402
 
 PROFILES_PATH = Path.home() / ".config" / "salad" / "studio-profiles.json"
 DEFAULT_KEY_PATH = str(Path.home() / ".config" / "salad" / "key")
@@ -74,18 +83,23 @@ class SaladProfile:
 # *_disk_ costs nothing; loading two into VRAM is what breaks. So each container
 # group serves exactly one family, and a graph that asks for the wrong one is
 # refused here rather than silently degrading every render on that group.
+#
+# Which family is which, and which group serves it, comes from the metadata
+# document. This module only reads the graph.
 SNOFS_MARKER = "snofs"
 # Mirrors request_json.UNET_SNOFS, duplicated on purpose: this module is
 # stdlib-only and request_json imports salad_gen + lora_store.
 SNOFS_UNET = "snofsSexNudesAndOther_distilledV12KleinFp8.safetensors"
 
 
-def unet_family(unet_name: str) -> str:
-    """``"snofs"``, ``"klein"``, or ``""`` for an empty name."""
-    name = (unet_name or "").strip().lower()
-    if not name:
-        return ""
-    return "snofs" if SNOFS_MARKER in name else "klein"
+def unet_family(unet_name: str, meta: dict[str, Any] | None = None) -> str:
+    """``"snofs"``, ``"klein"``, or ``""`` when the metadata has no entry.
+
+    The family table lives in the metadata document; a checkpoint it does not
+    list has no family, and routing refuses it rather than guessing a group.
+    """
+    doc = studio_meta.default() if meta is None else meta
+    return studio_meta.family_for_unet(unet_name, doc)
 
 
 def payload_unets(payload: dict[str, Any] | None) -> list[str]:
@@ -103,58 +117,116 @@ def payload_unets(payload: dict[str, Any] | None) -> list[str]:
     return out
 
 
-def routing_conflict(payload: dict[str, Any] | None, profile: SaladProfile) -> str:
-    """Why this graph does not belong on this profile's group, or ``""``.
-
-    Empty when they agree, when the graph loads no unet at all, or when the
-    profile names no unet to compare against.
-    """
-    wanted = unet_family(profile.unet)
-    if not wanted:
-        return ""
-    bad = [u for u in payload_unets(payload) if unet_family(u) != wanted]
-    if not bad:
-        return ""
-    return (
-        f"This graph loads {bad[0]}, which is a {unet_family(bad[0])} unet, but "
-        f"profile {profile.name!r} serves {profile.unet} ({wanted}).\n\n"
-        "One container holds only one unet in VRAM. Rendering both families on the "
-        "same group makes Comfy stream weights from host memory and turns a "
-        "seconds-long render into minutes (and a gateway timeout).\n\n"
-        "Switch to the profile for the other family and Generate again."
-    )
-
-
 def serving_family(profile: SaladProfile) -> str:
     """The unet family this profile's group serves (its own ``unet`` declares it)."""
     return unet_family(profile.unet)
 
 
-def profile_for_family(
-    family: str, all_profiles: dict[str, SaladProfile]
-) -> tuple[str, SaladProfile] | None:
-    """The profile whose group serves ``family``, or None if no group does."""
-    if not family:
-        return None
-    for name in sorted(all_profiles):
-        profile = all_profiles[name]
-        if serving_family(profile) == family:
-            return name, profile
-    return None
+def _with_metadata_gateway(
+    profile: SaladProfile, family: str, doc: dict[str, Any]
+) -> SaladProfile:
+    """``profile``, moved to the gateway the document names for ``family``.
+
+    The profile's own gateway is the normal case (an edit to
+    ``~/.config/salad/gateway-*`` must keep working), so the document's entry
+    only wins when it names one.
+    """
+    named = studio_meta.gateway_for_family(family, doc)
+    if not named or same_gateway(named, profile.gateway):
+        return profile
+    return replace(profile, gateway=named)
 
 
 def route_payload(
-    payload: dict[str, Any] | None, all_profiles: dict[str, SaladProfile]
+    payload: dict[str, Any] | None,
+    all_profiles: dict[str, SaladProfile],
+    meta: dict[str, Any] | None = None,
 ) -> tuple[str, SaladProfile] | None:
     """Which group should render this graph, by the unet it loads.
 
-    None means "no group serves that family". The caller should refuse rather
-    than send it somewhere it would thrash.
+    The group is the metadata document's entry for the graph's unet family, so
+    editing the document moves the graph without a code edit. None means "no
+    group serves that family", or the document has no entry for the checkpoint;
+    the caller refuses rather than sending it somewhere it would thrash.
     """
     unets = payload_unets(payload)
     if not unets:
         return None
-    return profile_for_family(unet_family(unets[0]), all_profiles)
+    doc = studio_meta.default() if meta is None else meta
+    family = studio_meta.family_for_unet(unets[0], doc)
+    if not family:
+        return None
+    name = studio_meta.group_for_family(family, doc)
+    if not name or name not in all_profiles:
+        return None
+    return name, _with_metadata_gateway(all_profiles[name], family, doc)
+
+
+@dataclass(frozen=True)
+class Route:
+    """Where a graph belongs: the group that serves the unet it loads."""
+
+    family: str
+    name: str
+    profile: SaladProfile
+    image: str = ""
+
+
+def plan_route(
+    payload: dict[str, Any] | None,
+    form_profile: SaladProfile,
+    all_profiles: dict[str, SaladProfile],
+    meta: dict[str, Any] | None = None,
+) -> tuple[Route | None, str]:
+    """The route this graph needs, and the reason to refuse it instead.
+
+    ``(None, "")`` means "send it where the form points": the graph loads no
+    unet, the form points at a gateway that is not one of our groups (a
+    hand-typed gateway is the user's own), or that group already serves this
+    family. ``(None, reason)`` means refuse and say why. A route means the
+    form's group cannot serve this graph, and carries where it goes.
+
+    The comparison is against the group the form's GATEWAY belongs to, not
+    against the form's unet: loading a JSON into the editor rewrites that field
+    from the graph, so comparing the graph's family to it compares the graph
+    with itself and can never fire, which is how a SNOFS graph reached the klein
+    group (2026-09-22).
+    """
+    unets = payload_unets(payload)
+    if not unets:
+        return None, ""
+    here = profile_for_gateway(form_profile.gateway, all_profiles)
+    if here is None:
+        return None, ""
+    doc = studio_meta.default() if meta is None else meta
+    family = studio_meta.family_for_unet(unets[0], doc)
+    if not family:
+        return None, (
+            f"{unets[0]} has no entry in the routing metadata, so no group is known "
+            "to serve it. Add the checkpoint to routing.families in the metadata "
+            f"document ({studio_meta.USER_PATH} or {studio_meta.DEFAULT_PATH})."
+        )
+    if serving_family(here) == family:
+        return None, ""
+    name = studio_meta.group_for_family(family, doc)
+    target = all_profiles.get(name) if name else None
+    if target is None:
+        return None, (
+            f"The routing metadata sends the {family} unet family to group "
+            f"{name or '(unset)'}, which is not a saved profile. This graph loads "
+            f"{unets[0]}, and profile {here.name!r} serves {here.unet} "
+            f"({serving_family(here) or 'no family'})."
+        )
+    moved = _with_metadata_gateway(target, family, doc)
+    return (
+        Route(
+            family=family,
+            name=name,
+            profile=moved,
+            image=studio_meta.image_for_family(family, doc),
+        ),
+        "",
+    )
 
 
 def same_gateway(a: str, b: str) -> bool:

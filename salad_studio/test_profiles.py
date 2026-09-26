@@ -9,10 +9,8 @@ from pathlib import Path
 
 from profiles import (
     payload_unets,
-    profile_for_family,
     profile_for_gateway,
     route_payload,
-    routing_conflict,
     same_gateway,
     serving_family,
     unet_family,
@@ -427,32 +425,6 @@ class UnetRoutingTest(unittest.TestCase):
         self.assertEqual(payload_unets({"prompt": {}}), [])
         self.assertEqual(payload_unets(None), [])
 
-    def test_a_matching_family_is_allowed(self) -> None:
-        snofs = self._profile("snofs-group", "snofsSexNudesAndOther_distilledV12KleinFp8.safetensors")
-        klein = self._profile("klein", "flux-2-klein-base-9b-fp8.safetensors")
-        self.assertEqual(routing_conflict(self._graph("snofsSexNudesAndOther_distilledV12KleinFp8.safetensors"), snofs), "")
-        self.assertEqual(routing_conflict(self._graph("flux-2-klein-base-9b-fp8.safetensors"), klein), "")
-
-    def test_the_mismatch_is_refused_and_names_both(self) -> None:
-        klein = self._profile("klein", "flux-2-klein-base-9b-fp8.safetensors")
-        msg = routing_conflict(self._graph("snofsSexNudesAndOther_distilledV12KleinFp8.safetensors"), klein)
-        self.assertTrue(msg)
-        self.assertIn("snofs", msg)
-        self.assertIn("klein", msg)
-        # the classic case: a Civitai import landing on the SNOFS group
-        snofs = self._profile("snofs-group", "snofsSexNudesAndOther_distilledV12KleinFp8.safetensors")
-        msg2 = routing_conflict(self._graph("flux-2-klein-base-9b-fp8.safetensors"), snofs)
-        self.assertTrue(msg2)
-        self.assertIn("flux-2-klein-base-9b-fp8.safetensors", msg2)
-
-    def test_a_graph_with_no_unet_is_never_blocked(self) -> None:
-        klein = self._profile("klein", "flux-2-klein-base-9b-fp8.safetensors")
-        self.assertEqual(routing_conflict({"prompt": {"1": {"class_type": "SaveImage", "inputs": {}}}}, klein), "")
-
-    def test_a_profile_with_no_unet_never_blocks(self) -> None:
-        blank = self._profile("blank", "")
-        self.assertEqual(routing_conflict(self._graph("snofs_x.safetensors"), blank), "")
-
     def test_the_two_builtin_profiles_are_the_two_families(self) -> None:
         """klein serves the plain unets; klein5090 serves the SNOFS cut."""
         self.assertEqual(unet_family(default_profile("klein").unet), "klein")
@@ -488,12 +460,6 @@ class RoutingTest(unittest.TestCase):
 
     def test_a_graph_with_no_unet_routes_to_nothing(self) -> None:
         self.assertIsNone(route_payload({"prompt": {"1": {"class_type": "SaveImage", "inputs": {}}}}, self._all()))
-
-    def test_profile_for_family_is_deterministic(self) -> None:
-        allp = {"b": default_profile("klein5090"), "a": default_profile("klein")}
-        self.assertEqual(profile_for_family("snofs", allp)[0], "b")
-        self.assertEqual(profile_for_family("klein", allp)[0], "a")
-        self.assertIsNone(profile_for_family("", allp))
 
     def test_serving_family_reads_the_profiles_own_unet(self) -> None:
         self.assertEqual(serving_family(default_profile("klein")), "klein")

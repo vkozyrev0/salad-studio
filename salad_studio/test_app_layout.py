@@ -899,6 +899,7 @@ class LiveFieldSync(unittest.TestCase):
             "Prompt Editor",
             "Import",
             "Prompt History",
+            "Queue",
             "Logs",
         ):
             self.assertIn(name, app._nav_btns)
@@ -960,6 +961,7 @@ class LiveFieldSync(unittest.TestCase):
                 "Prompt Catalog",
                 "Import",
                 "Prompt History",
+                "Queue",
                 "Logs",
             ],
         )

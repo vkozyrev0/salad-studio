@@ -14,10 +14,11 @@ python salad_studio/app.py
 ```
 
 Layout: **top action bar** (Generate + live generation status every 2s, and the
-replica status badges with the Salad probe, right-aligned), **vertical tabs** on
-the left (**Config**, **Prompt Settings**, **Policy**, **Tokens**, **LoRAs**,
+replica status badges with the Salad probe, right-aligned; a press made while a
+render is in flight is queued, not dropped), **vertical tabs** on the left
+(**Config**, **Prompt Settings**, **Policy**, **Tokens**, **LoRAs**,
 **Prompt Editor**, **Prompt Assist**, **Prompt Catalog**, **Import**,
-**Prompt History**, **Logs**).
+**Prompt History**, **Queue**, **Logs**).
 Bottom (always visible) = horizontal history strip with a tall button on
 the left and right.
 
@@ -159,9 +160,18 @@ the left and right.
   read: the restarted object is recovered from behind the cut-off head. A reply
   that arrives missing one of the two prompts leaves the box you typed in
   untouched and says so in the Logs tab, so a partial answer cannot wipe your
-  own wording. **Help (DeepSeek)** sends the editor's positive and negative, both
-  adjusted prompts, the issue, the request JSON, the attached plate when ticked,
-  and a resolved inventory of the checkpoints / LoRAs / CLIP / VAE the request
+  own wording. The system prompt is `studio_meta.instruction()` over the
+  metadata document's `prompt` section (`role`, `task`, `rules` and the
+  `reply_contract`), so the house's Klein anatomy rules live in that document.
+  The wording came from
+  [`docs/workflow/19-two-body-prompt-playbook.md`](../docs/workflow/19-two-body-prompt-playbook.md):
+  state the act directly, name the position in the model's own vocabulary,
+  give each body its own limb posture, clinical anatomical words, a short
+  style-only negative, the style block verbatim with no placeholder token, and
+  no defect enumeration or limb counts. **Help (DeepSeek)** sends the editor's
+  positive and negative, both adjusted prompts, the issue, the request JSON,
+  the attached plate when ticked, and a resolved inventory of the checkpoints /
+  LoRAs / CLIP / VAE the request
   loads; the reply's adjusted positive and negative replace the two boxes, what
   the model saw wrong with the image is reported next to the buttons, and the
   raw reply stays in the pane below. **Help (local)** does the same against an
@@ -188,6 +198,19 @@ the left and right.
   skim, Graph column for node/LoRA/size stats). A successful Generate
   writes a 48×48 thumbnail in the first column. Double-click restores
   JSON + prompt.
+- **Queue**. The Salad request queue, rendered from `salad_queue`'s own
+  records: one row per request with its **State** (queued / running /
+  accepted / failed / cancelled), **Attempts**, **Last status**, **Reason**
+  and **Request** (gateway host and POST size, never a token), plus a summary
+  of the states and an explicit empty state when nothing is queued. The rows
+  refresh on the existing 15 s tick and on every queue event, so a render in
+  flight and its recorded outcome both show up without a manual refresh.
+  **Cancel selected** drops a request that has **not been submitted yet** (a
+  request the container has already accepted keeps rendering, and a job that
+  has been sent once cannot be cancelled); **Retry selected** re-runs a failed
+  request on a worker thread, so the window stays live while it retries; a
+  request the container already accepted is never re-POSTed, so it is not
+  retryable; **Clear finished** drops the terminal rows.
 
 Klein group, prefetch image, Civitai-vs-Comfy quality, and startup
 probes: [`docs/workflow/15-salad-flux2-klein-group.md`](../docs/workflow/15-salad-flux2-klein-group.md).
@@ -198,6 +221,64 @@ Profiles: `~/.config/salad/studio-profiles.json`. User LoRA extras:
 `~/.config/salad/studio-loras.json`. Prompt history (full `/prompt` JSON):
 `~/.config/salad/studio-prompt-history.json`. Prompt catalog (named request
 JSON): `~/.config/salad/studio-prompt-catalog.json`.
+
+## Layers
+
+Six layers, one seam. `app.py` owns the window, the tab wiring and the thread
+starts; every module outside the UI layer imports and runs in a process where
+`tkinter` is never loaded. `test_layers.py` drives one real call per non-UI
+layer in a subprocess and asserts exactly that, and a second test keeps the
+window in `app.py`.
+
+| Layer | Modules | What a caller gets |
+|---|---|---|
+| UI | `app.py`, `__main__.py`, `graph_view.py`, `theme.py`, `ui_state.py`, `history_strip.py`, `json_highlight.py` | the window, the tabs, the prompt graph pane |
+| Import | `comfy_import.py`, `civitai_verify.py`, `request_json.py` | a Comfy graph built from a Civitai page, a Comfy workflow, or the prompt knobs |
+| Persistence | `tokens.py`, `prompt_history.py`, `prompt_catalog.py`, `lora_store.py`, `profiles.py`, `studio_meta.py` | stored tokens, prompts, configurations, LoRAs, model info and the metadata document |
+| Logging | `studio_log.py` | formatted redacted log lines, and an explanation for an HTTP failure |
+| Salad communication | `generator.py`, `salad_status.py`, `salad_queue.py`, `salad_gen.py` (repo root) | a routed, queued render request and the plate it wrote |
+| AI communication | `ai_helper.py`, `ref_check.py` | the Prompt Assist request and its parsed reply |
+
+`app.py` keeps the widgets and the wiring and nothing else that belongs to a
+layer: the routing decision is `profiles.plan_route`, the POST is
+`generator.generate_from_payload` driven through `salad_queue`, and the Prompt
+Assist instruction is assembled from the metadata document.
+
+**Queue.** One container runs one Comfy instance, so `salad_queue` holds
+requests in order: pressing **Generate** while a render is in flight queues the
+request instead of dropping it, and it starts when the container is free. The
+queue retries only when the container is *not available yet* (502, 503, 520,
+521, 522, 523, or a transport that never answered), and treats 504/524 as
+terminal, because Cloudflare returns those after giving up on a job the
+container may still be running and a re-POST renders the plate twice. A request
+the container has already accepted is never POSTed again.
+
+### Metadata document
+
+The routing table and the AI layer's instruction are data, not code:
+
+| Path | Role |
+|---|---|
+| `salad_studio/studio-metadata.json` | the shipped default |
+| `~/.config/salad/studio-metadata.json` | yours; it wins when it is present and readable |
+
+`studio_meta.py` loads it, re-reading when the file's mtime moves, so an edit
+takes effect with no code change and no restart. A hand-edited or half-written
+file cannot abort startup: a broken user document falls back to the shipped one
+and the reason is carried in the document's `error` field.
+
+- `routing.families` maps a unet family to the group that serves it
+  (`group`, the saved profile's name), the `image` that group runs, the
+  `unets` it serves, and the name `markers` that catch a variant. A checkpoint
+  with no entry is refused with a stated reason instead of being sent to a group
+  that cannot serve it: one container holds one unet family in VRAM, and mixing
+  them turns a seconds-long render into minutes. An optional `gateway` in an
+  entry moves that family to another host; leave it out and the routed profile's
+  own gateway (the `~/.config/salad/gateway-*` file) is used.
+- `prompt` holds the AI layer's instruction: `role`, `task`, `rules` and
+  `reply_contract`. Prompt Assist sends what is written there, so the house
+  Klein rules in [`docs/workflow/19-two-body-prompt-playbook.md`](../docs/workflow/19-two-body-prompt-playbook.md)
+  are edited in the document, not in `ai_helper.py`.
 
 ## Settings (this repo is standalone; two things live elsewhere)
 
@@ -221,7 +302,7 @@ the real freeze path the moment that gap is closed.
 Two test commands, and the second is not part of the first:
 
 ```
-python -m unittest discover -s salad_studio -p "test_*.py"   # 566 tests, ~3 min
+python -m unittest discover -s salad_studio -p "test_*.py"   # 600 tests, ~3 min
 python test_salad_comfy_live_findings.py                     # root structural checks
 ```
 

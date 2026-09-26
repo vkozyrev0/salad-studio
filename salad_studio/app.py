@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Salad Studio Windows UI: Config, LoRAs, Prompt Editor + history strip."""
+"""Salad Studio Windows UI: the window, its twelve tabs and the prompt graph pane.
+
+The tabs are **Config**, **Prompt Settings**, **Policy**, **Tokens**, **LoRAs**,
+**Prompt Editor**, **Prompt Assist**, **Prompt Catalog**, **Import**, **Prompt
+History**, **Queue** and **Logs**, plus the always-visible history strip. This
+module is the UI layer: it holds the widgets and the wiring and calls the other
+five layers (`TAB_ORDER` is the one list the notebook, the sidebar and the tab
+lookup all follow).
+"""
 from __future__ import annotations
 
 import json
@@ -19,6 +27,10 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 from salad_studio import ai_helper, comfy_import, generator, graph_view, json_highlight, lora_store, profiles, prompt_catalog, prompt_history, ref_check, request_json, salad_status, studio_log, theme, tokens, ui_state  # noqa: E402
+# Top-level, like studio_log: the generator and this module must hold the same
+# salad_queue object, or a job this app submits is not a job the generator's
+# type checks accept.
+import salad_queue  # noqa: E402
 from salad_studio.history_strip import HistoryStrip  # noqa: E402
 from salad_studio.profiles import SaladProfile  # noqa: E402
 
@@ -38,9 +50,27 @@ TAB_ORDER = (
     "Prompt Catalog",
     "Import",
     "Prompt History",
+    "Queue",
     "Logs",
 )
 LORA_CHECK_COLUMNS = 3
+QUEUE_EMPTY_TEXT = "The queue is empty. Press Generate to submit a render."
+QUEUE_CANCEL_NOTE = (
+    "Cancel drops a request that has not been submitted yet. A request the "
+    "container has already accepted keeps rendering."
+)
+
+
+def queue_request_label(request: Any) -> str:
+    """One line for what a queued request will POST (never the token)."""
+    if isinstance(request, dict):
+        url = str(request.get("url") or request.get("gateway") or "")
+        host = url.split("//", 1)[-1].split("/", 1)[0] if url else ""
+        size = request.get("bytes")
+        bits = [bit for bit in (host, f"{size} bytes" if size else "") if bit]
+        if bits:
+            return "  ".join(bits)
+    return str(request or "")[:120]
 
 
 class SaladStudio(tk.Tk):
@@ -59,6 +89,10 @@ class SaladStudio(tk.Tk):
         self._opened_height = 0
         self.bind("<Map>", self._hold_opened_size, add="+")
         self._busy = False
+        self._gen_jobs = 0
+        # One line for every render, shared with the generator: a press while a
+        # render is in flight waits its turn here instead of being dropped.
+        self.gen_queue = salad_queue.SaladQueue(on_log=self._on_queue_log)
         self._helper_busy = False
         self._token_probe_busy = False
         self._token_detail: dict[str, str] = {}
@@ -107,6 +141,7 @@ class SaladStudio(tk.Tk):
         self._build_prompt_catalog_tab()
         self._build_import_tab()
         self._build_prompt_history_tab()
+        self._build_queue_tab()
         self._build_logs_tab()
         self.nb.add(self._config, text="Config")
         self.nb.add(self._settings, text="Prompt Settings")
@@ -118,6 +153,7 @@ class SaladStudio(tk.Tk):
         self.nb.add(self._catalog, text="Prompt Catalog")
         self.nb.add(self._import, text="Import")
         self.nb.add(self._prompt_hist, text="Prompt History")
+        self.nb.add(self._queue, text="Queue")
         self.nb.add(self._logs, text="Logs")
         self._build_nav_buttons()
 
@@ -379,6 +415,9 @@ class SaladStudio(tk.Tk):
     def _poll_salad_status(self) -> None:
         self._salad_poll_after = None
         self._check_salad_status(silent=True)
+        # The existing tick also redraws the queue page, so a job that started
+        # or finished since the last poll shows up without a manual Refresh.
+        self._refresh_queue_page()
         self._schedule_salad_poll()
 
     def _on_destroy_cancel_poll(self, e=None) -> None:
@@ -419,6 +458,9 @@ class SaladStudio(tk.Tk):
         line = f"Generating… {elapsed}s"
         if note:
             line = f"{line}  {note}"
+        waiting = max(0, self._gen_jobs - 1)
+        if waiting:
+            line = f"{line}  (+{waiting} queued)"
         self.var_gen_state.set(line)
         self._schedule_gen_tick()
 
@@ -432,8 +474,14 @@ class SaladStudio(tk.Tk):
         self._apply_generate_gate(word)
 
     def _apply_generate_gate(self, word: str) -> None:
+        """Generate is live whenever the replica is Ready.
+
+        A render in flight no longer disables it: the press is queued by
+        ``salad_queue`` and starts when the container is free, so disabling the
+        button would be the drop this queue exists to remove.
+        """
         ready = (word or "").split()[:1] == ["Ready"]
-        state = "normal" if ready and not self._busy else "disabled"
+        state = "normal" if ready else "disabled"
         for btn in (self.gen_btn, self.gen_editor_btn):
             try:
                 btn.configure(state=state)
@@ -526,6 +574,8 @@ class SaladStudio(tk.Tk):
             self._refresh_prompt_helper()
         if tab == "Prompt Catalog":
             self._refresh_prompt_catalog()
+        if tab == "Queue":
+            self._refresh_queue_page()
         if tab == "Logs":
             self._refresh_salad_logs()
 
@@ -2141,6 +2191,179 @@ class SaladStudio(tk.Tk):
         if prompt_history.add_prompt(text):
             self._refresh_prompt_history()
 
+    def _on_queue_log(self, level: str, message: str) -> None:
+        """Every queue event reaches the log and redraws the queue page.
+
+        Called from whichever thread is running the job, so the redraw is
+        scheduled on the Tk thread the way ``log`` already does it.
+        """
+        self.log(level, message)
+        if getattr(self, "queue_tree", None) is not None:
+            try:
+                self.after(0, self._refresh_queue_page)
+            except Exception:  # noqa: BLE001 - no main loop (a test), or a dead window
+                pass
+
+    def _build_queue_tab(self) -> None:
+        """The Salad request queue, rendered from the queue's own records.
+
+        The page keeps no copy of job state: every row is read back out of
+        ``self.gen_queue`` on a refresh, so what the page shows is what the
+        queue will act on.
+        """
+        self._queue = ttk.Frame(self.nb, padding=10)
+        self._queue.columnconfigure(0, weight=1)
+        self._queue.rowconfigure(1, weight=1)
+        bar = ttk.Frame(self._queue)
+        bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        ttk.Button(bar, text="Refresh", command=self._refresh_queue_page).pack(side="left")
+        self.queue_cancel_btn = ttk.Button(
+            bar, text="Cancel selected", command=self._on_queue_cancel
+        )
+        self.queue_cancel_btn.pack(side="left", padx=(6, 0))
+        self.queue_retry_btn = ttk.Button(
+            bar, text="Retry selected", command=self._on_queue_retry
+        )
+        self.queue_retry_btn.pack(side="left", padx=(6, 0))
+        self.queue_clear_btn = ttk.Button(
+            bar, text="Clear finished", command=self._on_queue_clear
+        )
+        self.queue_clear_btn.pack(side="left", padx=(6, 0))
+        self.var_queue_summary = tk.StringVar(value="")
+        ttk.Label(bar, textvariable=self.var_queue_summary, style="Status.TLabel").pack(
+            side="left", padx=(12, 0)
+        )
+        cols = ("id", "state", "attempts", "status", "reason", "request")
+        self.queue_tree = ttk.Treeview(self._queue, columns=cols, show="headings", height=14)
+        for col, heading, width, stretch in (
+            ("id", "#", 44, False),
+            ("state", "State", 90, False),
+            ("attempts", "Attempts", 70, False),
+            ("status", "Last status", 90, False),
+            ("reason", "Reason", 300, True),
+            ("request", "Request", 240, True),
+        ):
+            self.queue_tree.heading(col, text=heading)
+            self.queue_tree.column(col, width=width, stretch=stretch, anchor="w")
+        qscroll = ttk.Scrollbar(self._queue, orient="vertical", command=self.queue_tree.yview)
+        self.queue_tree.configure(yscrollcommand=qscroll.set)
+        self.queue_tree.grid(row=1, column=0, sticky="nsew")
+        qscroll.grid(row=1, column=1, sticky="ns")
+        self.queue_empty_lbl = ttk.Label(
+            self._queue, text=QUEUE_EMPTY_TEXT, style="Status.TLabel"
+        )
+        self.queue_empty_lbl.grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        self.var_queue_note = tk.StringVar(value=QUEUE_CANCEL_NOTE)
+        ttk.Label(
+            self._queue, textvariable=self.var_queue_note, style="Status.TLabel"
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        self._refresh_queue_page()
+
+    def _queue_rows(self) -> list[tuple[str, ...]]:
+        """One row per job, straight out of the queue's records."""
+        rows: list[tuple[str, ...]] = []
+        for job in self.gen_queue.jobs():
+            rows.append(
+                (
+                    str(job.id),
+                    job.state,
+                    str(job.attempts),
+                    str(job.status) if job.status else "",
+                    job.reason or "",
+                    queue_request_label(job.request),
+                )
+            )
+        return rows
+
+    def _refresh_queue_page(self) -> None:
+        tree = getattr(self, "queue_tree", None)
+        if tree is None:
+            return
+        selected = tuple(tree.selection())
+        tree.delete(*tree.get_children())
+        for row in self._queue_rows():
+            tree.insert("", "end", iid=row[0], values=row)
+        for iid in selected:
+            if tree.exists(iid):
+                tree.selection_add(iid)
+        jobs = self.gen_queue.jobs()
+        if jobs:
+            self.queue_empty_lbl.grid_remove()
+        else:
+            self.queue_empty_lbl.grid()
+        counts: dict[str, int] = {}
+        for job in jobs:
+            counts[job.state] = counts.get(job.state, 0) + 1
+        pending = self.gen_queue.pending()
+        summary = f"{len(jobs)} request(s)"
+        if pending:
+            summary += f", {pending} not finished"
+        if counts:
+            summary += "   " + "   ".join(f"{state}: {n}" for state, n in sorted(counts.items()))
+        self.var_queue_summary.set(summary)
+
+    def _queue_status(self, text: str) -> None:
+        self.var_queue_note.set(text)
+        self.status.set(text)
+
+    def _selected_queue_job(self):
+        tree = getattr(self, "queue_tree", None)
+        if tree is None:
+            return None
+        selection = tree.selection()
+        if not selection:
+            return None
+        try:
+            job_id = int(selection[0])
+        except (TypeError, ValueError):
+            return None
+        return self.gen_queue.job_by_id(job_id)
+
+    def _on_queue_cancel(self) -> None:
+        job = self._selected_queue_job()
+        if job is None:
+            self._queue_status("Queue: select a request first")
+            return
+        if self.gen_queue.cancel(job):
+            self._queue_status(
+                f"Queue: request {job.id} cancelled before it was submitted"
+            )
+        else:
+            self._queue_status(
+                f"Queue: request {job.id} is {job.state} and has already been sent, "
+                "so it cannot be cancelled"
+            )
+        self._refresh_queue_page()
+
+    def _on_queue_retry(self) -> None:
+        job = self._selected_queue_job()
+        if job is None:
+            self._queue_status("Queue: select a request first")
+            return
+        if not job.retryable:
+            self._queue_status(
+                f"Queue: request {job.id} cannot be retried ({job.reason or job.state})"
+            )
+            self._refresh_queue_page()
+            return
+        self._queue_status(f"Queue: retrying request {job.id}…")
+
+        def work() -> None:
+            # Off the Tk thread: retry() runs the request and blocks until it is
+            # terminal again, which is what would freeze the window here.
+            try:
+                self.gen_queue.retry(job)
+            except Exception as e:
+                self.log("error", f"Queue retry failed: {e}")
+            self.after(0, self._refresh_queue_page)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_queue_clear(self) -> None:
+        removed = self.gen_queue.clear_finished()
+        self._queue_status(f"Queue: cleared {removed} finished request(s)")
+        self._refresh_queue_page()
+
     def _build_logs_tab(self) -> None:
         self._logs = ttk.Frame(self.nb, padding=10)
         self._logs.columnconfigure(0, weight=1)
@@ -3264,8 +3487,8 @@ class SaladStudio(tk.Tk):
             messagebox.showerror("Salad Studio", str(e))
 
     def _on_generate(self) -> None:
-        if self._busy:
-            return
+        # No early return on a render already in flight: the press is queued and
+        # starts when the container is free, which is what salad_queue is for.
         raw = self.editor_text.get("1.0", "end").strip()
         try:
             payload = generator.parse_request_json(raw)
@@ -3283,34 +3506,31 @@ class SaladStudio(tk.Tk):
         # encoder, so Comfy streams weights from host memory and a seconds-long
         # render becomes minutes, which the gateway then cuts off with a 524.
         #
-        # The comparison is against the group the form's GATEWAY points at, not
-        # against the form's unet. Loading a JSON into the editor rewrites
-        # var_unet from the graph (_rebuild_from_json), so comparing the graph's
-        # family to the form's unet compares the graph with itself and can never
+        # The table that decides this lives in the metadata document, not here:
+        # profiles.plan_route compares the graph's family to the family the group
+        # the form's GATEWAY points at serves. The comparison cannot use the
+        # form's unet, because loading a JSON into the editor rewrites that field
+        # from the graph, so it would compare the graph with itself and never
         # fire, which is how a SNOFS graph reached the klein group. (2026-09-22)
         loaded = profiles.payload_unets(payload)
-        want = profiles.unet_family(loaded[0]) if loaded else ""
-        if want:
-            try:
-                allp = profiles.load_all()
-            except Exception:
-                allp = {}
-            here = profiles.profile_for_gateway(p.gateway, allp)
-            serving = profiles.serving_family(here) if here else ""
-            if serving and serving != want:
-                target = profiles.route_payload(payload, allp)
-                if target is None:
-                    reason = profiles.routing_conflict(payload, p)
-                    self.log("error", f"Generate blocked: no profile serves the {want} unet family")
-                    messagebox.showerror("Salad Studio", reason)
-                    return
-                name, routed = target
-                self.log(
-                    "info",
-                    f"Routed to profile {name!r} (gateway {routed.gateway}). This graph loads "
-                    f"{loaded[0]}, so it belongs on the {want} group.",
-                )
-                p = routed
+        try:
+            allp = profiles.load_all()
+        except Exception:
+            allp = {}
+        route, refusal = profiles.plan_route(payload, p, allp)
+        if refusal:
+            self.log("error", f"Generate blocked: {refusal}")
+            messagebox.showerror("Salad Studio", refusal)
+            return
+        if route is not None:
+            note = f" (image {route.image})" if route.image else ""
+            self.log(
+                "info",
+                f"Routed to profile {route.name!r} (gateway {route.profile.gateway}). "
+                f"This graph loads {loaded[0]}, so it belongs on the {route.family} "
+                f"group{note}.",
+            )
+            p = route.profile
         try:
             key = self._salad_api_key()
         except (OSError, FileNotFoundError) as e:
@@ -3330,15 +3550,23 @@ class SaladStudio(tk.Tk):
             self.log("warn", f"Generate blocked: {reason}")
             messagebox.showinfo("Salad Studio", reason or "Replica is not Ready.")
             return
+        self._gen_jobs += 1
+        first = self._gen_jobs == 1
         self._busy = True
-        self.gen_btn.configure(state="disabled")
-        self._gen_t0 = time.monotonic()
+        if first:
+            self._gen_t0 = time.monotonic()
         self._gen_last_note = "queued"
-        self.var_gen_state.set("Starting…")
+        self.var_gen_state.set("Starting…" if first else "Queued…")
         self.status.set("Generating…")
         self._schedule_gen_tick()
         self._remember_request(payload)
         self.log("info", f"Generate  gateway={p.gateway}  graph={p.graph}")
+        if not first:
+            self.log(
+                "info",
+                f"Queued behind {self._gen_jobs - 1} render(s); it starts when the "
+                "container is free",
+            )
         self.log("debug", studio_log.summarize_payload(payload))
 
         def work() -> None:
@@ -3351,16 +3579,15 @@ class SaladStudio(tk.Tk):
                     payload=payload,
                     out_dir=OUT_DIR,
                     on_log=self.log,
+                    queue=self.gen_queue,
                 )
             except Exception as e:
                 err = str(e)
                 self.log("error", err)
 
             def done() -> None:
-                self._busy = False
-                self._cancel_gen_tick()
+                self._gen_jobs = max(0, self._gen_jobs - 1)
                 elapsed = max(0, int(time.monotonic() - self._gen_t0))
-                self.gen_btn.configure(state="normal")
                 if err:
                     # Probe rather than re-apply the cached word. A failed render
                     # usually means the replica went away mid-job, and the cache
@@ -3370,18 +3597,25 @@ class SaladStudio(tk.Tk):
                     self.var_gen_state.set(f"Failed after {elapsed}s")
                     self.status.set("Failed. See Logs")
                     messagebox.showerror("Salad Studio", err)
-                    return
-                self._apply_generate_gate(self.var_salad_status.get())
-                self.var_gen_state.set(f"Done in {elapsed}s")
-                self.status.set(f"Wrote {out}")
-                self.log("ok", f"Generate finished  {out}")
-                if out:
-                    try:
-                        prompt_history.attach_image(Path(out))
-                    except Exception as e:
-                        self.log("warn", f"history thumb skipped: {e}")
-                    self._refresh_prompt_history()
-                self._refresh_history()
+                else:
+                    self._apply_generate_gate(self.var_salad_status.get())
+                    self.var_gen_state.set(f"Done in {elapsed}s")
+                    self.status.set(f"Wrote {out}")
+                    self.log("ok", f"Generate finished  {out}")
+                    if out:
+                        try:
+                            prompt_history.attach_image(Path(out))
+                        except Exception as e:
+                            self.log("warn", f"history thumb skipped: {e}")
+                        self._refresh_prompt_history()
+                    self._refresh_history()
+                if self._gen_jobs <= 0:
+                    self._busy = False
+                    self._cancel_gen_tick()
+                    self._apply_generate_gate(self.var_salad_status.get())
+                else:
+                    self.var_gen_state.set(f"{self._gen_jobs} render(s) still queued")
+                self._refresh_queue_page()
 
             self.after(0, done)
 

@@ -31,23 +31,25 @@ controlled test that mattered (4 LoRAs vs none) found **both bad**.
 Catalog of successful prompts: [`prompt_catalog.json`](prompt_catalog.json),
 kept honest by
 [`test_klein_prompt_catalog.py`](../salad_studio/test_klein_prompt_catalog.py).
-Tests for the verified recipe: `python -m unittest test_klein_recipes` from
-`salad_studio`.
+Tests for the verified recipe: `python -m unittest discover -s salad_studio -p "test_klein_recipes.py"`
+from the repo root (the whole suite runs the same way with `-p "test_*.py"`).
 
 ```
 git clone --depth 1 https://github.com/rgthree/rgthree-comfy.git salad_klein/custom_nodes/rgthree-comfy
-docker build -t vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch4 salad_klein
-docker push vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch4
+docker build -t vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-klein salad_klein
+docker push vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-klein
 ```
 
-**LIVE** groups still use **prefetch3** (no rgthree). **Recipe** tag is
-**prefetch4**: clone rgthree locally, `COPY` into
-`/opt/ComfyUI/custom_nodes/rgthree-comfy` at `docker build` (pin
-`2c5342a8cb0eaecaabf61435a5f37dd594c510ba`). Prefetch stays weights-only
-Do not `git clone` on Salad. On prefetch4, `/prompt` can instantiate
+**The live image tags are `prefetch6-klein` (base + distilled) and
+`prefetch6-snofs` (the SNOFS cut)**, one per group, per
+[`docs/workflow/21-klein-image-handoff.md`](../docs/workflow/21-klein-image-handoff.md)
+§2, which is the entry point for this work and the authority on the tags. The
+older `prefetch3`/`prefetch4` tags below are kept as the record of how the
+rgthree COPY was introduced. Prefetch stays weights-only —
+do not `git clone` on Salad. On the current images, `/prompt` can instantiate
 `Image Comparer (rgthree)` and `Power Lora Loader (rgthree)`. Studio
-**Convert still expands** Power Lora → stock `LoraLoader` so LIVE
-prefetch3 can run the graph. Studio has no comparer slider; `SaveImage`
+**Convert still expands** Power Lora → stock `LoraLoader` so an older replica
+can run the graph. Studio has no comparer slider; `SaveImage`
 is the plate.
 
 The image stays the Salad runtime (~12 GB). Do **not** COPY the unet/CLIP/VAE

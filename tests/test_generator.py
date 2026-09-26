@@ -15,7 +15,8 @@ from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 TOOLS = HERE.parent
-sys.path.insert(0, str(HERE))
+PKG = TOOLS / "salad_studio"
+sys.path.insert(0, str(PKG))
 sys.path.insert(0, str(TOOLS))
 
 import generator  # noqa: E402

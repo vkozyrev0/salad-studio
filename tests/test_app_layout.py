@@ -12,7 +12,8 @@ from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 TOOLS = HERE.parent
-sys.path.insert(0, str(HERE))
+PKG = TOOLS / "salad_studio"
+sys.path.insert(0, str(PKG))
 sys.path.insert(0, str(TOOLS))
 
 import request_json as rj  # noqa: E402
@@ -1091,7 +1092,7 @@ class LiveFieldSync(unittest.TestCase):
         self.assertEqual(app.var_imp_seed.get(), "")
 
     def test_import_issues_panel_flags_distilled_klein(self) -> None:
-        from salad_studio.test_comfy_import import DISTILLED, DISTILLED_META
+        from tests.test_comfy_import import DISTILLED, DISTILLED_META
 
         app = self.app
         app.import_meta.insert("1.0", DISTILLED_META)

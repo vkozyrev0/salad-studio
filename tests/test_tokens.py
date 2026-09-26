@@ -11,7 +11,8 @@ from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 TOOLS = HERE.parent
-for p in (str(TOOLS), str(HERE)):
+PKG = TOOLS / "salad_studio"
+for p in (str(TOOLS), str(PKG)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
@@ -200,7 +201,7 @@ class TokenFiles(unittest.TestCase):
     def test_paths_stay_under_temp(self) -> None:
         self.assertEqual(tok.token_path("salad"), tok.LOCAL_PATH)
         self.assertTrue(str(tok.default_path("salad")).startswith(str(tok.CONFIG_HOME)))
-        self.assertNotEqual(tok.LOCAL_PATH, HERE / "studio-tokens.json")
+        self.assertNotEqual(tok.LOCAL_PATH, PKG / "studio-tokens.json")
 
     def test_read_missing_is_empty(self) -> None:
         self.assertEqual(tok.read_token("salad"), "")

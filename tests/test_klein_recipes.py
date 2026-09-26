@@ -25,7 +25,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 TOOLS = HERE.parent
-for p in (str(TOOLS), str(HERE)):
+PKG = TOOLS / "salad_studio"
+for p in (str(TOOLS), str(PKG)):
     if str(p) not in sys.path:
         sys.path.insert(0, p)
 

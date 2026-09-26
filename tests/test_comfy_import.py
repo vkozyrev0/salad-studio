@@ -11,13 +11,14 @@ from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 TOOLS = HERE.parent
-for p in (str(TOOLS), str(HERE)):
+PKG = TOOLS / "salad_studio"
+for p in (str(TOOLS), str(PKG)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
 from salad_studio import comfy_import as ci  # noqa: E402
 from salad_studio import request_json as rj  # noqa: E402
-from salad_studio.test_watercolor_import import (  # noqa: E402
+from tests.test_watercolor_import import (  # noqa: E402
     WATERCOLOR_LORAS,
     WATERCOLOR_PASTE,
     _fake_search,

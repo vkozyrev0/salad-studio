@@ -15,7 +15,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 TOOLS = HERE.parent
-for _p in (HERE, TOOLS):
+PKG = TOOLS / "salad_studio"
+for _p in (PKG, TOOLS):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
@@ -23,7 +24,7 @@ import salad_queue as q  # noqa: E402
 import studio_meta  # noqa: E402
 from salad_studio import app as app_mod  # noqa: E402
 
-MANUAL = HERE / "README.md"
+MANUAL = PKG / "README.md"
 ROOT_README = TOOLS / "README.md"
 
 
@@ -71,7 +72,7 @@ class TabListMatchesTheApp(unittest.TestCase):
     def test_the_manual_documents_profile_management(self) -> None:
         """The controls the Config page ships are the ones the manual names."""
         manual = " ".join(MANUAL.read_text(encoding="utf-8").split())
-        source = (HERE / "app.py").read_text(encoding="utf-8")
+        source = (PKG / "app.py").read_text(encoding="utf-8")
         for label in (
             "Add profile",
             "Delete profile",
@@ -91,7 +92,7 @@ class LayerMapMatchesTheModules(unittest.TestCase):
         named = sorted(set(re.findall(r"`([a-z_]+\.py)`", section)))
         self.assertTrue(named, "the layer map names no modules")
         for module in named:
-            where = TOOLS if module == "salad_gen.py" else HERE
+            where = TOOLS if module == "salad_gen.py" else PKG
             self.assertTrue(
                 (where / module).is_file(),
                 f"the layer map names {module}, which is not in {where.name}/",
@@ -101,8 +102,7 @@ class LayerMapMatchesTheModules(unittest.TestCase):
         text = MANUAL.read_text(encoding="utf-8")
         section = text.split("## Layers", 1)[1].split("### Metadata document", 1)[0]
         named = set(re.findall(r"`([a-z_]+\.py)`", section))
-        shipped = {p.name for p in HERE.glob("*.py")}
-        shipped -= {p.name for p in HERE.glob("test_*.py")}
+        shipped = {p.name for p in PKG.glob("*.py")}
         shipped.discard("__init__.py")
         missing = sorted(shipped - named)
         self.assertEqual(missing, [], f"the layer map does not name: {missing}")
@@ -317,7 +317,7 @@ class SkillMatchesTheCode(unittest.TestCase):
         )
 
     def test_the_journal_strings_are_the_drivers(self) -> None:
-        source = (HERE / "civitai_verify.py").read_text(encoding="utf-8")
+        source = (PKG / "civitai_verify.py").read_text(encoding="utf-8")
         for text in JOURNAL_STRINGS:
             self.assertIn(text, self.text, f"the skill no longer names {text!r}")
             self.assertIn(text, source, f"the driver no longer writes {text!r}")
@@ -341,7 +341,7 @@ class SkillMatchesTheCode(unittest.TestCase):
 
     def test_the_test_command_is_the_repos_documented_one(self) -> None:
         documented = re.search(
-            r'python -m unittest discover -s salad_studio -p "test_\*\.py"',
+            r'python -m unittest discover -s tests -p "test_\*\.py"',
             ROOT_README.read_text(encoding="utf-8"),
         )
         self.assertIsNotNone(documented, "the root README no longer documents the suite command")

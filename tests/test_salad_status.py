@@ -8,7 +8,8 @@ from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 TOOLS = HERE.parent
-for p in (str(TOOLS), str(HERE)):
+PKG = TOOLS / "salad_studio"
+for p in (str(TOOLS), str(PKG)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
@@ -404,7 +405,7 @@ class ContainerCounts(unittest.TestCase):
 
 class SourceButton(unittest.TestCase):
     def test_config_has_check_button(self) -> None:
-        src = (HERE / "app.py").read_text(encoding="utf-8")
+        src = (PKG / "app.py").read_text(encoding="utf-8")
         self.assertIn("Check Salad status", src)
         self.assertIn("_check_salad_status", src)
         self.assertIn("salad_status.snapshot_gateway", src)

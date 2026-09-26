@@ -113,7 +113,7 @@ Journal `prompt-edit`. Then compare the new JPEG to the site plate.
 5. If JSON is not runnable or POST/Comfy fails, the driver diagnoses the error. With **`--edit-import`**, mechanical `missing_node_type` failures may omit/stub **node types** and retry; without it the run journals `skipped: "edit_import is off; conversion code was not modified"` and halts. If the journal has `skipped: "no mechanical import-code fix for these issues"`, you may edit conversion **structure** only.
 6. Re-run the same command with the **same `--journal`** after a manual conversion edit. The driver fingerprints those import sources. If a new fingerprint restores an earlier hash, it writes `step: loop`, `loop: true`, and **stops**. An unchanged mechanical patch is journaled as no-mechanical-fix; it is not a loop.
 7. After an import-code edit, run the repo's suite from the repo root:
-   `python -m unittest discover -s salad_studio -p "test_*.py"`
+   `python -m unittest discover -s tests -p "test_*.py"`
    If it fails, revert the edit, journal the revert by re-running (the loop detector will stop a ping-pong), and stop.
 8. Cap: `MAX_ATTEMPTS` (`civitai_verify.py`); the driver stops itself at the cap and at a fingerprint loop.
 

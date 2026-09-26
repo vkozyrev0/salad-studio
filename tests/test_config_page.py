@@ -15,7 +15,8 @@ from unittest import mock
 from urllib.parse import urlparse
 
 HERE = Path(__file__).resolve().parent
-for _p in (HERE, HERE.parent):
+PKG = HERE.parent / "salad_studio"
+for _p in (PKG, HERE.parent):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
@@ -24,8 +25,8 @@ from salad_studio import salad_queue  # noqa: E402
 from salad_studio import salad_status  # noqa: E402
 from salad_studio import studio_meta  # noqa: E402
 from salad_studio import tokens as tok  # noqa: E402
-from salad_studio.test_launch import _Inline, _TempPaths  # noqa: E402
-from salad_studio.test_salad_queue import _FakeLifecycle  # noqa: E402
+from tests.test_launch import _Inline, _TempPaths  # noqa: E402
+from tests.test_salad_queue import _FakeLifecycle  # noqa: E402
 
 try:
     import tkinter as tk

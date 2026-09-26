@@ -14,12 +14,13 @@ from pathlib import Path
 from unittest import mock
 
 HERE = Path(__file__).resolve().parent
-for _p in (HERE, HERE.parent):
+PKG = HERE.parent / "salad_studio"
+for _p in (PKG, HERE.parent):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
 from salad_studio import comfy_import, lora_store  # noqa: E402
-from salad_studio.test_launch import _TempPaths  # noqa: E402
+from tests.test_launch import _TempPaths  # noqa: E402
 
 try:
     import tkinter as tk

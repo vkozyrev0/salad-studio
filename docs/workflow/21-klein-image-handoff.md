@@ -17,7 +17,7 @@ corrected in place, each pointing here:
 | --- | --- | --- |
 | `docs/workflow/15-salad-flux2-klein-group.md` → "Two-body plate recipe" | presented the 4-LoRA / 6-step / sectioned-prompt stack as *the* shipped plate recipe | marked superseded; points here |
 | `salad_klein/README.md` → recipe paragraph | same claim, plus "the prompt architecture is the quality lever" | corrected; points here |
-| `salad_studio/test_klein_recipes.py` → module docstring | asserted "the prompt architecture is the quality lever" as the module's subject | rewritten against the verified entry (§2) |
+| `tests/test_klein_recipes.py` → module docstring | asserted "the prompt architecture is the quality lever" as the module's subject | rewritten against the verified entry (§2) |
 
 The research documents (14, 17, 18, 19, 20) are the **record of how this was
 learned**, not the current state. Where they disagree with this document, this
@@ -296,8 +296,8 @@ Documented, **not** resolved. Do not assume an answer.
 | `salad_klein/prompt_catalog.json` | the catalog of successful prompts (§1), machine-checked against the recipes |
 | `salad_klein/prompt_snofs_distilled_v12.json` | the verified recipe |
 | `salad_klein/prompt_snofs_distilled_anatomy*.json` | superseded 4-LoRA research stack |
-| `salad_studio/test_klein_prompt_catalog.py` | the catalog drift / well-formedness check |
-| `salad_studio/test_klein_recipes.py` | asserts the verified operating point |
+| `tests/test_klein_prompt_catalog.py` | the catalog drift / well-formedness check |
+| `tests/test_klein_recipes.py` | asserts the verified operating point |
 | `docs/history/58-salad-studio-audit-2026-09-22.md` | the current Studio audit |
 | `~/.config/salad/studio-profiles.json` | profiles (gateways, unet per group), not git |
 | `~/.config/salad/gateway-klein`, `gateway-klein-5090` | gateway URLs, not git |

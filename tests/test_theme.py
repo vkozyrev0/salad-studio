@@ -14,12 +14,13 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 TOOLS = HERE.parent
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
+PKG = TOOLS / "salad_studio"
+if str(PKG) not in sys.path:
+    sys.path.insert(0, str(PKG))
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
-APP = HERE / "app.py"
+APP = PKG / "app.py"
 
 try:
     import tkinter as tk

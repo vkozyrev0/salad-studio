@@ -9,7 +9,7 @@ Companion documents:
 - `docs/workflow/15-salad-flux2-klein-group.md`, the group overview. **Its "Two-body
   plate recipe" section is stale and must be rewritten from this doc.**
 - `salad_klein/README.md`, also describes the old recipe.
-- `salad_studio/test_klein_recipes.py`, 24 tests asserting the old recipe.
+- `tests/test_klein_recipes.py`, 24 tests asserting the old recipe.
 
 **Scope:** 18+ adults only, two nude adults, no minors, nothing illegal. That is the
 whole content domain here and nothing outside it is considered.
@@ -611,7 +611,7 @@ asking. Do not commit images (CI `.github/workflows/tier1.yml` rejects any
   architecture is the quality lever, and the graph is not" (wrong framing: the *position* is
   the lever), documents the 6-step config, the penis LoRA at node 81, and `_meta` retargeting
   the encodes. Rewrite from §2–§3 of this doc.
-- `salad_studio/test_klein_recipes.py`, 24 tests asserting the old 6-step recipe,
+- `tests/test_klein_recipes.py`, 24 tests asserting the old 6-step recipe,
   penis LoRA at 81, `_meta`, encodes on the tail. Must be rewritten.
 - `salad_klein/README.md`, stale.
 - `target/klein_ab/make_recipes.py` and the two regenerated-but-uncommitted recipe files

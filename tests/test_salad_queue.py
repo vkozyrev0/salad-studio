@@ -17,7 +17,8 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
-for _p in (HERE, HERE.parent):
+PKG = HERE.parent / "salad_studio"
+for _p in (PKG, HERE.parent):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 

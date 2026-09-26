@@ -14,6 +14,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 TOOLS = HERE.parent
+PKG = TOOLS / "salad_studio"
 
 PROBE = r'''
 import sys, tempfile
@@ -116,7 +117,7 @@ class LayerSeparability(unittest.TestCase):
 
     def test_the_ui_module_is_the_one_that_imports_tkinter(self) -> None:
         """The other half of the split: the window still lives in app.py."""
-        source = (HERE / "app.py").read_text(encoding="utf-8")
+        source = (PKG / "app.py").read_text(encoding="utf-8")
         self.assertIn("import tkinter as tk", source)
         for module in (
             "ai_helper.py",
@@ -131,7 +132,7 @@ class LayerSeparability(unittest.TestCase):
             "studio_meta.py",
             "tokens.py",
         ):
-            text = (HERE / module).read_text(encoding="utf-8")
+            text = (PKG / module).read_text(encoding="utf-8")
             self.assertNotIn(
                 "import tkinter",
                 text,

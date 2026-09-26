@@ -356,7 +356,7 @@ JSON): `~/.config/salad/studio-prompt-catalog.json`.
 
 Six layers, one seam. `app.py` owns the window, the tab wiring and the thread
 starts; every module outside the UI layer imports and runs in a process where
-`tkinter` is never loaded. `test_layers.py` drives one real call per non-UI
+`tkinter` is never loaded. `tests/test_layers.py` drives one real call per non-UI
 layer in a subprocess and asserts exactly that, and a second test keeps the
 window in `app.py`.
 
@@ -448,9 +448,13 @@ the real freeze path the moment that gap is closed.
 Two test commands, and the second is not part of the first:
 
 ```
-python -m unittest discover -s salad_studio -p "test_*.py"   # 830 tests, ~6 min
-python test_salad_comfy_live_findings.py                     # root structural checks
+python -m unittest discover -s tests -p "test_*.py"   # 830 tests, ~6 min
+python test_salad_comfy_live_findings.py              # root structural checks
 ```
+
+The tests live in `tests/` at the repo root, not in the package: `salad_studio/`
+holds only the app's modules, and each test module puts the package directory and
+the repo root on `sys.path` itself, so either command runs from the repo root.
 
 ## Container groups
 

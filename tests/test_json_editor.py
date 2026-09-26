@@ -11,14 +11,15 @@ from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 TOOLS = HERE.parent
-for p in (str(TOOLS), str(HERE)):
+PKG = TOOLS / "salad_studio"
+for p in (str(TOOLS), str(PKG)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
 import json_highlight as jh  # noqa: E402
 from generator import parse_request_json  # noqa: E402
 
-APP = HERE / "app.py"
+APP = PKG / "app.py"
 SAMPLE = '{"hello": "world", "n": 1, "prompt": {"w": 64}}'
 
 

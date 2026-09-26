@@ -11,13 +11,14 @@ from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 TOOLS = HERE.parent
-for p in (str(TOOLS), str(HERE)):
+PKG = TOOLS / "salad_studio"
+for p in (str(TOOLS), str(PKG)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
 from salad_studio import civitai_verify as cv  # noqa: E402
 from salad_studio import generator  # noqa: E402
-from salad_studio.test_generator import _JPEG_2X2, _OK  # noqa: E402
+from tests.test_generator import _JPEG_2X2, _OK  # noqa: E402
 
 SAMPLE = "https://civitai.com/images/123566519"
 
@@ -437,8 +438,8 @@ class EditImportOptIn(unittest.TestCase):
     def _copy_sources(td: str) -> Path:
         src = Path(td) / "src"
         src.mkdir()
-        shutil.copy2(HERE / "comfy_import.py", src / "comfy_import.py")
-        shutil.copy2(HERE / "request_json.py", src / "request_json.py")
+        shutil.copy2(PKG / "comfy_import.py", src / "comfy_import.py")
+        shutil.copy2(PKG / "request_json.py", src / "request_json.py")
         return src
 
     def _boom(self, **_kwargs):
@@ -584,8 +585,8 @@ class AutoFixRetry(unittest.TestCase):
             journal = _journal(td)
             src = Path(td) / "src"
             src.mkdir()
-            shutil.copy2(HERE / "comfy_import.py", src / "comfy_import.py")
-            shutil.copy2(HERE / "request_json.py", src / "request_json.py")
+            shutil.copy2(PKG / "comfy_import.py", src / "comfy_import.py")
+            shutil.copy2(PKG / "request_json.py", src / "request_json.py")
             try:
                 with patch.object(generator.salad_gen, "_req", side_effect=_req):
                     result = cv.run_verify(

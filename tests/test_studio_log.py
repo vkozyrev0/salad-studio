@@ -8,7 +8,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 TOOLS = HERE.parent
-for p in (str(TOOLS), str(HERE)):
+PKG = TOOLS / "salad_studio"
+for p in (str(TOOLS), str(PKG)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
@@ -123,12 +124,12 @@ class ExplainHttp(unittest.TestCase):
 
 class SourceLogsTab(unittest.TestCase):
     def test_app_has_logs_tab(self) -> None:
-        src = (HERE / "app.py").read_text(encoding="utf-8")
+        src = (PKG / "app.py").read_text(encoding="utf-8")
         self.assertIn('text="Logs"', src)
         self.assertIn("_build_logs_tab", src)
         self.assertIn("on_log=self.log", src)
-        self.assertIn("explain_http", (HERE / "generator.py").read_text(encoding="utf-8"))
-        self.assertIn("wait_gateway_ready", (HERE / "generator.py").read_text(encoding="utf-8"))
+        self.assertIn("explain_http", (PKG / "generator.py").read_text(encoding="utf-8"))
+        self.assertIn("wait_gateway_ready", (PKG / "generator.py").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

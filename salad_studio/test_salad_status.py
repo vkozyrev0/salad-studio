@@ -411,7 +411,12 @@ class SourceButton(unittest.TestCase):
         self.assertIn("_schedule_salad_poll", src)
         self.assertIn("silent=True", src)
         self.assertIn("w is not self", src)
-        self.assertIn('text="Policy"', src)
+        # The policy fields and their actions live on the Config page now, one
+        # policy per config; there is no Policy page to build.
+        self.assertNotIn('text="Policy"', src)
+        self.assertIn("_build_policy_section", src)
+        self.assertIn("_policy_from_form", src)
+        self.assertIn("_show_policy", src)
         # Generate's dispatch decision: the app reads the snapshots it already
         # has and asks salad_status whether the request may go out at all.
         self.assertIn("generate_dispatch_reason", src)

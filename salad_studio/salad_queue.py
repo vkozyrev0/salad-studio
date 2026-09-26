@@ -23,6 +23,7 @@ are injected, so a test drives real retries without sleeping.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 import time
@@ -163,6 +164,19 @@ def request_gateway(request: Any) -> str:
     return ""
 
 
+def request_checksum(request: Any) -> str:
+    """A stable digest of a request, so a repeated press can be recognised.
+
+    The request is canonicalised before hashing: dict key order and the
+    spacing of a re-serialised payload do not change the digest, so the same
+    plate built twice by two code paths compares equal. Anything the JSON
+    encoder cannot represent is stringified rather than dropped, which keeps
+    two different payloads apart instead of collapsing them onto one digest.
+    """
+    canonical = json.dumps(request, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
 def reason_of(attempt: Attempt) -> str:
     """Why a failed attempt failed, in the server's own words when it sent any."""
     if attempt.error:
@@ -234,6 +248,7 @@ class Job:
     accepted: bool = False
     work: Callable[[Job], Attempt] | None = None
     line: str = ""
+    checksum: str = ""
 
     @property
     def terminal(self) -> bool:
@@ -336,10 +351,22 @@ class SaladQueue:
         work: Callable[[Job], Attempt] | None = None,
         *,
         line: str = "",
+        checksum: str = "",
     ) -> Job:
-        """Append a request to its profile's line and return its job."""
+        """Append a request to its profile's line and return its job.
+
+        ``checksum`` lets a caller that already digested the request pass its
+        digest in, so the press and the enqueue agree on the same value; an
+        empty one is computed here.
+        """
         with self._cond:
-            job = Job(id=self._next_id, request=request, work=work, line=str(line))
+            job = Job(
+                id=self._next_id,
+                request=request,
+                work=work,
+                line=str(line),
+                checksum=str(checksum) or request_checksum(request),
+            )
             self._next_id += 1
             waiting = self._line_of(job.line)
             waiting.append(job)
@@ -391,6 +418,7 @@ class SaladQueue:
         *,
         line: str = "",
         ensure: bool = True,
+        checksum: str = "",
     ) -> Job:
         """Queue ``request`` on its profile's line, wait for its turn, run it.
 
@@ -399,9 +427,10 @@ class SaladQueue:
         ``busy``, so the transport sees one call per real POST. ``ensure=False``
         is for a caller that already asked :meth:`ensure_container` and waited
         for readiness itself (the generator does), so one request never asks for
-        the same container twice.
+        the same container twice. ``checksum`` is passed on to
+        :meth:`enqueue`.
         """
-        job = self.enqueue(request, attempt, line=line)
+        job = self.enqueue(request, attempt, line=line, checksum=checksum)
         try:
             self._wait_turn(job)
             if job.terminal:
@@ -732,6 +761,40 @@ class SaladQueue:
         return None
 
     # -- inspection -------------------------------------------------------
+    def head_of(self, line: str = "") -> Job | None:
+        """The queue's first item, in queue order, on ``line`` (any line if "").
+
+        A cancelled job is skipped: it never reached a container, so it is not
+        a submission a repeat press could duplicate. An accepted or failed row
+        still counts, because the question is what the queue's first item is,
+        not what state it ended in. None when the line holds nothing.
+        """
+        name = str(line)
+        with self._cond:
+            for job in self._jobs:
+                if job.state == CANCELLED:
+                    continue
+                if not name or job.line == name:
+                    return job
+        return None
+
+    def duplicate_of_head(
+        self, request: Any = None, *, line: str = "", checksum: str = ""
+    ) -> Job | None:
+        """The head of the queue when it carries this same request, else None.
+
+        The press consults this before enqueueing: an identical request sitting
+        at the head would be submitted twice back to back, so it is refused.
+        Only the head counts. An identical request further down the queue is not
+        the head, so the press is allowed: the contract is head-only, and the
+        rows behind the head may still be cancelled or retried before they run.
+        """
+        digest = str(checksum) or (request_checksum(request) if request is not None else "")
+        head = self.head_of(line)
+        if head is None or not head.checksum or not digest:
+            return None
+        return head if head.checksum == digest else None
+
     def jobs(self) -> list[Job]:
         """Every job this queue has seen, in submission order."""
         with self._cond:

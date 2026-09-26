@@ -9,6 +9,7 @@ and the seed list a new built-in profile starts from.
 """
 from __future__ import annotations
 
+import copy
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -60,6 +61,11 @@ class SaladProfile:
     checkpoints: list[str] = field(default_factory=list)
     use_loras: bool = True
     selected_loras: list[str] = field(default_factory=list)
+    # This config's own Salad group policy (image tag, GPU classes, country
+    # codes, startup and readiness probe settings). Per profile, never
+    # window-wide: switching the Config page between profiles must not carry
+    # one group's policy onto another group.
+    policy: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.checkpoints = [c for c in (str(c).strip() for c in self.checkpoints) if c]
@@ -400,6 +406,20 @@ def _coerce_checkpoints(data: dict[str, Any]) -> list[str]:
     return [legacy] if legacy else []
 
 
+def _coerce_policy(value: Any) -> dict[str, Any]:
+    """The stored policy as this profile's own dict; ``{}`` when unusable.
+
+    The keys inside are the Policy page's business, so this stores whatever
+    shape it is handed and hands the same shape back. The copy is deep because
+    two loaded profiles must never share a nested ``startup`` or
+    ``gpu_classes``: editing one profile's policy would otherwise edit the
+    other's, and ``asdict`` would write that shared edit to both records.
+    """
+    if not isinstance(value, dict):
+        return {}
+    return copy.deepcopy(value)
+
+
 def _profile_from_dict(name: str, data: object) -> SaladProfile:
     if not isinstance(data, dict):
         data = {}
@@ -423,6 +443,7 @@ def _profile_from_dict(name: str, data: object) -> SaladProfile:
         checkpoints=_coerce_checkpoints(data),
         use_loras=use_loras if "selected_loras" not in data else bool(selected),
         selected_loras=selected,
+        policy=_coerce_policy(data.get("policy")),
     )
 
 

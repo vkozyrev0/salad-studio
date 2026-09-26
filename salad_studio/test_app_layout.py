@@ -902,6 +902,7 @@ class LiveFieldSync(unittest.TestCase):
         self.assertNotIn("original sentence", positive)
 
     def test_ui_state_roundtrip_restores_dropdowns_and_checks(self) -> None:
+        from salad_studio import profiles
         from salad_studio import ui_state
 
         app = self.app
@@ -909,22 +910,25 @@ class LiveFieldSync(unittest.TestCase):
         app.var_scheduler.set("Simple (Civitai)")
         app.var_unet.set("Distilled 9B")
         app.var_width.set("832")
-        app.var_pol_us.set(True)
         app.prompt_text.delete("1.0", "end")
         app.prompt_text.insert("1.0", "restored prompt")
         app._save_ui_state()
         app.var_scheduler.set("Flux2 (Klein)")
         app.var_unet.set("Base 9B")
         app.var_width.set("100")
-        app.var_pol_us.set(False)
         app.prompt_text.delete("1.0", "end")
         app.prompt_text.insert("1.0", "other")
         self.assertTrue(app._restore_ui_state())
         self.assertEqual(app.var_scheduler.get(), "Simple (Civitai)")
         self.assertEqual(app.var_unet.get(), "Distilled 9B")
         self.assertEqual(app.var_width.get(), "832")
-        self.assertTrue(app.var_pol_us.get())
         self.assertEqual(app.prompt_text.get("1.0", "end").strip(), "restored prompt")
+        # The policy is not window state any more: it comes from the config.
+        state = app._capture_ui_state()
+        self.assertEqual([k for k in state if "policy" in k], [])
+        active = app.var_name.get().strip()
+        policy = (profiles.load_all()[active].policy or {}).get("image") or ""
+        self.assertEqual(app.var_pol_image.get(), policy, "the fields follow the config")
 
     def test_action_bar_and_vertical_nav(self) -> None:
         app = self.app
@@ -933,7 +937,6 @@ class LiveFieldSync(unittest.TestCase):
         self.assertIs(app.gen_editor_btn, app.gen_btn)
         for name in (
             "Config",
-            "Policy",
             "Tokens",
             "LoRAs",
             "Prompt Editor",
@@ -943,6 +946,7 @@ class LiveFieldSync(unittest.TestCase):
             "Logs",
         ):
             self.assertIn(name, app._nav_btns)
+        self.assertNotIn("Policy", app._nav_btns, "the Policy page is gone")
         app._goto_tab("Import")
         app.update_idletasks()
         self.assertEqual(app.nb.tab(app.nb.select(), "text"), "Import")
@@ -993,7 +997,6 @@ class LiveFieldSync(unittest.TestCase):
             [
                 "Config",
                 "Prompt Settings",
-                "Policy",
                 "Tokens",
                 "LoRAs",
                 "Prompt Editor",
@@ -1035,15 +1038,19 @@ class LiveFieldSync(unittest.TestCase):
             app.log("info", "after save")
             self.assertEqual(read.call_count, 0)
 
-    def test_generate_gate_handles_an_empty_status_word(self) -> None:
-        """L11: the gate indexes [0] of a possibly empty status word."""
+    def test_the_status_word_never_disables_generate(self) -> None:
+        """L11, updated: the button is not the gate any more, the press is.
+
+        Every word leaves the button live, including the empty one, so a request
+        already queued or a container still coming up cannot block the next
+        press; a press that cannot be dispatched is refused when it is made.
+        """
         app = self.app
-        app._apply_generate_gate("")
-        self.assertEqual(str(app.gen_btn.cget("state")), "disabled")
-        app._apply_generate_gate("Ready")
-        self.assertEqual(str(app.gen_btn.cget("state")), "normal")
-        app._apply_generate_gate("Down")
-        self.assertEqual(str(app.gen_btn.cget("state")), "disabled")
+        for word in ("", "Ready", "Down", "Stopped", "Starting"):
+            with self.subTest(word=word):
+                app._set_salad_word(word)
+                self.assertEqual(str(app.gen_btn.cget("state")), "normal")
+        self.assertFalse(hasattr(app, "_apply_generate_gate"), "the button gate is gone")
 
     def test_status_probe_falls_through_on_an_empty_gateway(self) -> None:
         """L10: an empty gateway still probes the profile gateways."""
@@ -1884,6 +1891,117 @@ class NewPagesAndPlacement(unittest.TestCase):
         used = self._generate_gateway(self._graph_with_unet(klein.primary_checkpoint), klein.gateway)
         self.assertEqual(used, klein.gateway)
 
+    # --- Generate: pressable while queued, and the duplicate guard -------
+    def _press_that_queues(
+        self, graph: dict, gateway: str, *, word: str = "Starting"
+    ) -> dict:
+        """Drive a real _on_generate whose generator stand-in queues the request.
+
+        The stand-in takes the generator's place at the transport seam: it
+        enqueues the request the app handed it, carrying the app's own checksum,
+        and leaves it in the queue, so a following press meets the shipped
+        duplicate guard. Returns the kwargs the press handed down.
+        """
+        from salad_studio import app as app_mod
+        from salad_studio import salad_queue as q
+
+        app = self.app
+        self.tokens.write_token("salad", "salad-test-key-1234")
+        app.editor_text.delete("1.0", "end")
+        app.editor_text.insert("1.0", json.dumps(graph))
+        app._rebuild_from_json()
+        app.var_gateway.set(gateway)
+        app.var_salad_status.set(word)
+        seen: dict = {}
+        self.refusals = []
+
+        def fake_generate(**kwargs):
+            seen.update(kwargs)
+            job = app.gen_queue.enqueue(
+                kwargs.get("payload") or {},
+                lambda _job: q.Attempt(status=200, accepted=True),
+                line=str(kwargs.get("line") or ""),
+                checksum=str(kwargs.get("checksum") or ""),
+            )
+            return Path(self.tmp) / f"plate-{job.id}.jpg"
+
+        with mock.patch.object(
+            app_mod.generator, "generate_from_payload", side_effect=fake_generate
+        ), mock.patch.object(
+            app_mod.salad_status, "snapshot_gateway", side_effect=self._snapshot_for(word)
+        ), mock.patch.object(app_mod.messagebox, "showerror"), mock.patch.object(
+            app_mod.messagebox, "showinfo", lambda *a, **k: self.refusals.append(str(a))
+        ), mock.patch("salad_studio.app.threading.Thread", self._inline_thread()):
+            app._on_generate()
+            self.assertTrue(self._pump(lambda: not app._busy))
+        return seen
+
+    @staticmethod
+    def _variant(graph: dict, prefix: str) -> dict:
+        """The same graph with a different SaveImage prefix: a different request."""
+        other = json.loads(json.dumps(graph))
+        other["prompt"]["9"]["inputs"]["filename_prefix"] = prefix
+        return other
+
+    def test_generate_stays_pressable_while_a_request_is_queued(self) -> None:
+        """A request in the queue must not disable Generate; the press queues behind.
+
+        The button is no longer the gate: the press decides, and a press that can
+        be dispatched adds a request that waits behind the one already queued.
+        """
+        from salad_studio import profiles
+        from salad_studio import salad_queue as q
+
+        app = self.app
+        klein = profiles.load_all()["klein"]
+        app.gen_queue.enqueue(
+            {"gateway": klein.gateway, "profile": "klein"},
+            lambda _job: q.Attempt(status=200, accepted=True),
+            line="klein",
+            checksum="a-different-request",
+        )
+        app.var_salad_status.set("Starting")  # the routed container is not Ready
+        self.assertEqual(str(app.gen_btn.cget("state")), "normal")
+
+        seen = self._press_that_queues(
+            self._graph_with_unet(klein.primary_checkpoint), klein.gateway
+        )
+        self.assertEqual(seen.get("gateway"), klein.gateway, "the press must dispatch")
+        self.assertEqual(len(app.gen_queue.jobs()), 2, "it queues behind the first")
+        self.assertEqual(str(app.gen_btn.cget("state")), "normal", "still live afterwards")
+        self.assertNotIn("Generate blocked", app.log_text.get("1.0", "end"))
+
+    def test_a_repeat_of_the_heads_request_is_not_queued(self) -> None:
+        """A repeat of the queue's head adds nothing; behind another it is allowed."""
+        from salad_studio import profiles
+
+        app = self.app
+        klein = profiles.load_all()["klein"]
+        graph = self._graph_with_unet(klein.primary_checkpoint)
+        self._press_that_queues(graph, klein.gateway)
+        jobs = app.gen_queue.jobs()
+        self.assertEqual(len(jobs), 1)
+        head = jobs[0]
+        self.assertEqual(head.state, "pending")
+
+        app.log_text.delete("1.0", "end")
+        self._press_that_queues(graph, klein.gateway)  # the same request again
+        self.assertEqual(len(app.gen_queue.jobs()), 1, "the identical press added a job")
+        shown = app.log_text.get("1.0", "end")
+        self.assertIn(f"request {head.id}", shown, "the report must name the queue's head")
+        self.assertIn("already queued", shown)
+
+        # The identical request stops being the head: another request takes it.
+        app.gen_queue.cancel(head)
+        self._press_that_queues(self._variant(graph, "another-plate"), klein.gateway)
+        self.assertEqual(len(app.gen_queue.jobs()), 2)
+        self._press_that_queues(graph, klein.gateway)
+        jobs = app.gen_queue.jobs()
+        self.assertEqual(
+            len(jobs), 3, "an identical request that is not the head is allowed"
+        )
+        self.assertEqual(jobs[2].checksum, head.checksum, "and it is the same request")
+
     def test_generate_leaves_an_unknown_gateway_alone(self) -> None:
         """Only the groups we know are policed; a hand-typed gateway is the user's."""
         from salad_studio import profiles
@@ -2049,17 +2167,14 @@ class NewPagesAndPlacement(unittest.TestCase):
         self.assertEqual(colors[1], salad_status.WORD_COLORS["Creating"])
         self.assertEqual(colors[2], salad_status.WORD_COLORS["Failed"])
 
-    def test_status_word_still_reaches_the_generate_gate(self) -> None:
+    def test_status_word_still_reaches_the_dispatch_decision(self) -> None:
+        """The strip shows counts; the word is still what a press reads."""
         app = self.app
-        app._set_salad_word("Ready")
-        self.assertEqual(app.var_salad_status.get(), "Ready")
-        self.assertEqual(str(app.gen_btn.cget("state")), "normal")
-        app._set_salad_word("Down")
-        self.assertEqual(app.var_salad_status.get(), "Down")
-        self.assertEqual(str(app.gen_btn.cget("state")), "disabled")
-        app._set_salad_word("Stopped")
-        self.assertEqual(app.var_salad_status.get(), "Stopped")
-        self.assertEqual(str(app.gen_btn.cget("state")), "disabled")
+        for word in ("Ready", "Down", "Stopped"):
+            with self.subTest(word=word):
+                app._set_salad_word(word)
+                self.assertEqual(app.var_salad_status.get(), word)
+                self.assertEqual(str(app.gen_btn.cget("state")), "normal")
 
     # --- tokens page -----------------------------------------------------
     def test_tokens_page_has_no_fal_slot_and_shows_indicators(self) -> None:

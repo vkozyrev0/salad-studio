@@ -40,7 +40,6 @@ import salad_queue  # noqa: E402
 TABS = (
     "Config",
     "Prompt Settings",
-    "Policy",
     "Tokens",
     "LoRAs",
     "Prompt Editor",
@@ -355,7 +354,7 @@ class LaunchCheck(unittest.TestCase):
                             app.gen_queue = salad_queue.SaladQueue(
                                 on_log=app.log, sleep=lambda _s: None
                             )
-                            app._apply_generate_gate("Ready")
+                            app._set_salad_word("Ready")
                             self.assertEqual(
                                 str(app.gen_btn.cget("state")),
                                 "normal",
@@ -366,6 +365,30 @@ class LaunchCheck(unittest.TestCase):
                                 _pump(app, first_post.is_set, 60),
                                 "the first press never reached /prompt",
                             )
+                            # The same request again adds nothing: it is the head
+                            # of the queue, and that one is being submitted.
+                            queued_before = len(app.gen_queue.jobs())
+                            app.gen_btn.invoke()
+                            self.assertEqual(
+                                len(app.gen_queue.jobs()),
+                                queued_before,
+                                "a repeat of the head request must add no job",
+                            )
+                            self.assertEqual(
+                                app._gen_jobs,
+                                1,
+                                "the repeat must not queue a second render",
+                            )
+                            # A different request while the first is in flight is
+                            # queued behind it, never dropped. The editor text is
+                            # what Generate parses, so this is a different request.
+                            other = self._snofs_graph()
+                            other["prompt"]["9"] = {
+                                "class_type": "SaveImage",
+                                "inputs": {"filename_prefix": "second", "images": ["70", 0]},
+                            }
+                            app.editor_text.delete("1.0", "end")
+                            app.editor_text.insert("1.0", json.dumps(other))
                             app.gen_btn.invoke()
                             try:
                                 self.assertEqual(
@@ -380,6 +403,11 @@ class LaunchCheck(unittest.TestCase):
                                         15,
                                     ),
                                     "the second press never reached the queue",
+                                )
+                                self.assertNotEqual(
+                                    app.gen_queue.jobs()[1].checksum,
+                                    app.gen_queue.jobs()[0].checksum,
+                                    "the second press must be a different request",
                                 )
                                 queued = app.gen_queue.jobs()
                                 self.assertFalse(

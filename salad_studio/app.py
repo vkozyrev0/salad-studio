@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Salad Studio Windows UI: the window, its twelve tabs and the prompt graph pane.
+"""Salad Studio Windows UI: the window, its eleven tabs and the prompt graph pane.
 
-The tabs are **Config**, **Prompt Settings**, **Policy**, **Tokens**, **LoRAs**,
+The tabs are **Config**, **Prompt Settings**, **Tokens**, **LoRAs**,
 **Prompt Editor**, **Prompt Assist**, **Prompt Catalog**, **Import**, **Prompt
-History**, **Queue** and **Logs**, plus the always-visible history strip. This
-module is the UI layer: it holds the widgets and the wiring and calls the other
-five layers (`TAB_ORDER` is the one list the notebook, the sidebar and the tab
-lookup all follow).
+History**, **Queue** and **Logs**, plus the always-visible history strip. Each
+config carries its own Salad policy (image, GPU classes, country codes and the
+startup/readiness probes), edited on the Config page beside that config's
+checkpoints. This module is the UI layer: it holds the widgets and the wiring
+and calls the other five layers (`TAB_ORDER` is the one list the notebook, the
+sidebar and the tab lookup all follow).
 """
 from __future__ import annotations
 
@@ -42,7 +44,6 @@ PROBE_GLOB = "salad_probe_klein_*.jpg"
 TAB_ORDER = (
     "Config",
     "Prompt Settings",
-    "Policy",
     "Tokens",
     "LoRAs",
     "Prompt Editor",
@@ -141,7 +142,6 @@ class SaladStudio(tk.Tk):
 
         self._build_config_tab()
         self._build_prompt_settings_tab()
-        self._build_policy_tab()
         self._build_tokens_tab()
         self._build_loras_tab()
         self._build_editor_tab()
@@ -153,7 +153,6 @@ class SaladStudio(tk.Tk):
         self._build_logs_tab()
         self.nb.add(self._config, text="Config")
         self.nb.add(self._settings, text="Prompt Settings")
-        self.nb.add(self._policy, text="Policy")
         self.nb.add(self._tokens, text="Tokens")
         self.nb.add(self._loras, text="LoRAs")
         self.nb.add(self._editor, text="Prompt Editor")
@@ -397,16 +396,17 @@ class SaladStudio(tk.Tk):
         ttk.Label(
             box, textvariable=self.var_config_note, wraplength=760
         ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        self._build_policy_section()
         ttk.Label(
             self._config,
             text="One container serves one unet family, so a profile's checkpoints must "
             "stay in one family. Routing sends a graph to the profile that lists the "
             "checkpoint it loads; the queue runs one line per profile, so two profiles "
-            "render at the same time. Replica status and the Salad probe are in the top "
-            "bar; size, steps, CFG, seed, graph, scheduler and LoRA selection are on "
-            "Prompt Settings.",
+            "render at the same time. Each profile owns its Salad policy above. "
+            "Replica status and the Salad probe are in the top bar; size, steps, CFG, "
+            "seed, graph, scheduler and LoRA selection are on Prompt Settings.",
             wraplength=760,
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
     def _config_status(self, text: str) -> None:
         self.var_config_note.set(text)
@@ -677,24 +677,14 @@ class SaladStudio(tk.Tk):
         self._schedule_gen_tick()
 
     def _set_salad_word(self, word: str) -> None:
-        """The one status word the gates read. The strip shows counts, not words."""
-        self.var_salad_status.set(word)
-        self._apply_generate_gate(word)
+        """The one status word the dispatch decision reads. The strip shows counts.
 
-    def _apply_generate_gate(self, word: str) -> None:
-        """Generate is live whenever the replica is Ready.
-
-        A render in flight no longer disables it: the press is queued by
-        ``salad_queue`` and starts when the container is free, so disabling the
-        button would be the drop this queue exists to remove.
+        Generate's button state does not follow it: the press is the gate. A
+        queued or in-flight request, a stopped container or a booting replica all
+        leave the button live, and a press that cannot be dispatched is refused
+        with a reason when it is made (``_on_generate``).
         """
-        ready = (word or "").split()[:1] == ["Ready"]
-        state = "normal" if ready else "disabled"
-        for btn in (self.gen_btn, self.gen_editor_btn):
-            try:
-                btn.configure(state=state)
-            except tk.TclError:
-                pass
+        self.var_salad_status.set(word)
 
     def _status_targets(self) -> list[tuple[str, str]]:
         """(profile name, gateway) for every configured profile.
@@ -778,8 +768,6 @@ class SaladStudio(tk.Tk):
         except tk.TclError:
             return
         self._refresh_nav()
-        if tab == "Policy" and not self._applying_profile:
-            self._load_salad_policy()
         if tab == "Tokens":
             self._probe_tokens()
         if tab == "Prompt Assist":
@@ -791,20 +779,36 @@ class SaladStudio(tk.Tk):
         if tab == "Logs":
             self._refresh_salad_logs()
 
-    def _build_policy_tab(self) -> None:
-        self._policy = ttk.Frame(self.nb, padding=10)
-        self._policy.columnconfigure(1, weight=1)
+    def _build_policy_section(self) -> None:
+        """The selected config's Salad policy: its group's image, placement, probes.
+
+        The policy belongs to the config (it is stored on the profile), so Load
+        reads that config's live group and Apply PATCHes that config's group.
+        Nothing here is window-wide: selecting another config swaps these fields.
+        """
+        section = ttk.LabelFrame(
+            self._config, text="Salad policy for this config", padding=8
+        )
+        section.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        section.columnconfigure(1, weight=1)
+        self._policy_section = section
         ttk.Label(
-            self._policy,
-            text="Salad group probes for the Config gateway. Load reads the live group (including portal edits). Apply PATCHes Salad, not the Docker image.",
+            section,
+            text="Load reads this config's live group (portal edits included); Apply "
+            "PATCHes that group in Salad, not the Docker image. Both act on the "
+            "selected config, and Save profile stores these fields with it.",
             wraplength=760,
         ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
         self.var_pol_group = tk.StringVar(value="")
-        ttk.Label(self._policy, text="Group").grid(row=1, column=0, sticky="w")
-        ttk.Label(self._policy, textvariable=self.var_pol_group).grid(
+        # What the last Load read about that group; stored with the config so the
+        # Group line survives a reload.
+        self._pol_group_name = ""
+        self._pol_group_version: Any = None
+        ttk.Label(section, text="Group").grid(row=1, column=0, sticky="w")
+        ttk.Label(section, textvariable=self.var_pol_group).grid(
             row=1, column=1, sticky="w", padx=6
         )
-        bar = ttk.Frame(self._policy)
+        bar = ttk.Frame(section)
         bar.grid(row=2, column=0, columnspan=4, sticky="w", pady=6)
         ttk.Button(bar, text="Load from Salad", command=self._load_salad_policy).pack(
             side="left", padx=(0, 6)
@@ -814,14 +818,20 @@ class SaladStudio(tk.Tk):
         )
         self._pol_vars: dict[str, dict[str, tk.StringVar]] = {}
         self._pol_explain: dict[str, tk.StringVar] = {}
-        r = 3
-        for kind, title in (("startup", "Startup probe"), ("readiness", "Readiness probe")):
-            box = ttk.LabelFrame(self._policy, text=title, padding=8)
-            box.grid(row=r, column=0, columnspan=4, sticky="ew", pady=6)
-            box.columnconfigure(1, weight=0)
-            box.columnconfigure(2, weight=1)
+        # Side by side: the Config page carries the checkpoints too, and the two
+        # probe boxes stacked made the window taller than the screen.
+        probes_row = ttk.Frame(section)
+        probes_row.grid(row=3, column=0, columnspan=4, sticky="ew", pady=6)
+        probes_row.columnconfigure(0, weight=1, uniform="probe")
+        probes_row.columnconfigure(1, weight=1, uniform="probe")
+        for i, (kind, title) in enumerate(
+            (("startup", "Startup probe"), ("readiness", "Readiness probe"))
+        ):
+            box = ttk.LabelFrame(probes_row, text=title, padding=8)
+            box.grid(row=0, column=i, sticky="nsew", padx=(0, 6) if i == 0 else (6, 0))
+            box.columnconfigure(1, weight=1)
             fields = {}
-            for i, (key, label) in enumerate(
+            for j, (key, label) in enumerate(
                 (
                     ("path", "Path"),
                     ("port", "Port"),
@@ -831,10 +841,10 @@ class SaladStudio(tk.Tk):
                     ("failure_threshold", "Failure threshold (1–20)"),
                 )
             ):
-                ttk.Label(box, text=label).grid(row=i, column=0, sticky="w", pady=2)
+                ttk.Label(box, text=label).grid(row=j, column=0, sticky="w", pady=2)
                 var = tk.StringVar()
-                ttk.Entry(box, textvariable=var, width=24).grid(
-                    row=i, column=1, sticky="w", padx=6, pady=2
+                ttk.Entry(box, textvariable=var, width=18).grid(
+                    row=j, column=1, sticky="ew", padx=6, pady=2
                 )
                 var.trace_add(
                     "write", lambda *_a, k=kind: self._refresh_probe_explain(k)
@@ -846,12 +856,12 @@ class SaladStudio(tk.Tk):
             ttk.Label(
                 box,
                 textvariable=explain,
-                wraplength=520,
+                wraplength=340,
                 justify="left",
-            ).grid(row=0, column=2, rowspan=6, sticky="nw", padx=(16, 0))
+            ).grid(row=len(fields), column=0, columnspan=2, sticky="w", pady=(6, 0))
             self._refresh_probe_explain(kind)
-            r += 1
-        extra = ttk.LabelFrame(self._policy, text="Placement / image", padding=8)
+        r = 4
+        extra = ttk.LabelFrame(section, text="Placement / image", padding=8)
         extra.grid(row=r, column=0, columnspan=4, sticky="ew", pady=6)
         extra.columnconfigure(1, weight=1)
         ttk.Label(extra, text="Image").grid(row=0, column=0, sticky="w")
@@ -884,11 +894,14 @@ class SaladStudio(tk.Tk):
         var.set(salad_status.explain_probe(kind, raw))
 
     def _policy_from_form(self) -> dict:
+        """The policy the fields show, in the shape the store and Salad use."""
         out = {"startup": {}, "readiness": {}}
         for kind, fields in self._pol_vars.items():
             out[kind] = {k: v.get().strip() for k, v in fields.items()}
         out["image"] = self.var_pol_image.get().strip()
         out["country_codes"] = ["us"] if self.var_pol_us.get() else []
+        out["group_name"] = self._pol_group_name
+        out["version"] = self._pol_group_version
         if self._pol_gpu_vars:
             out["gpu_classes"] = [
                 gid for gid, var in self._pol_gpu_vars.items() if var.get()
@@ -896,8 +909,12 @@ class SaladStudio(tk.Tk):
         return out
 
     def _policy_to_form(self, policy: dict) -> None:
+        self._pol_group_name = str(policy.get("group_name") or "")
+        self._pol_group_version = policy.get("version")
         self.var_pol_group.set(
-            f"{policy.get('group_name') or ''}  v{policy.get('version') or '?'}"
+            f"{self._pol_group_name}  v{self._pol_group_version or '?'}"
+            if self._pol_group_name
+            else ""
         )
         for kind in ("startup", "readiness"):
             src = policy.get(kind) or {}
@@ -910,21 +927,52 @@ class SaladStudio(tk.Tk):
         for gid, var in self._pol_gpu_vars.items():
             var.set(gid in selected)
 
+    def _show_policy(self, policy: dict) -> None:
+        """Show a config's stored policy in the fields, with no network call.
+
+        The GPU classes that config stores are rendered by id until a Load brings
+        the live list's names; that is what keeps selecting a config from
+        silently dropping a class.
+        """
+        self._fill_gpu_checkboxes(
+            [], [str(x) for x in (policy.get("gpu_classes") or [])]
+        )
+        self._policy_to_form(policy)
+
+    def _store_policy(self, policy: dict) -> None:
+        """Write the fields shown onto the selected config's record.
+
+        Applying to Salad is what makes those fields that group's policy, so the
+        config keeps what it runs; Save profile writes them the same way.
+        """
+        name = (self.var_name.get() or "").strip()
+        allp = profiles.load_all()
+        prof = allp.get(name)
+        if prof is None:
+            return
+        prof.policy = dict(policy)
+        profiles.upsert(prof)
+
     def _fill_gpu_checkboxes(self, classes: list[dict], selected: list[str]) -> None:
         frame = self._pol_gpu_frame
         for child in frame.winfo_children():
             child.destroy()
         self._pol_gpu_vars = {}
-        self._pol_gpu_names = {}
         want = ("4090", "3090", "5090")
-        shown = []
+        shown: list[tuple[str, str]] = []
         for it in classes:
             name = str(it.get("name") or "")
             gid = str(it.get("id") or "")
             if not gid or not any(w in name for w in want):
                 continue
             shown.append((gid, name))
+            self._pol_gpu_names[gid] = name
         sel = set(str(x) for x in selected)
+        # A class the config stores but the live list did not name still has to
+        # be shown, or selecting that config would drop it on the next save.
+        named = {gid for gid, _ in shown}
+        for gid in sorted(sel - named):
+            shown.append((gid, self._pol_gpu_names.get(gid) or gid))
         for i, (gid, name) in enumerate(shown):
             var = tk.BooleanVar(value=gid in sel)
             ttk.Checkbutton(frame, text=name, variable=var).grid(
@@ -1005,11 +1053,28 @@ class SaladStudio(tk.Tk):
                     return
                 self.status.set("Policy applied to Salad")
                 self.log("ok", f"Policy applied HTTP {code}")
+                # The fields that were just applied are that config's policy now.
+                self._store_policy(policy)
                 self._load_salad_policy()
 
             self.after(0, done)
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _duplicate_note(self, head) -> str:
+        """Why a repeated press added no job, and what the user can do about it."""
+        where = f"request {head.id}"
+        if head.state == salad_queue.FAILED:
+            return (
+                f"{where} is the same request and it failed; press Retry selected "
+                "to run it again"
+            )
+        if head.state == salad_queue.ACCEPTED:
+            return (
+                f"{where} is the same request and it is done; press Clear finished "
+                "to submit it again"
+            )
+        return f"{where} is the same request and it is already queued"
 
     def _reallocate_instance(self) -> None:
         gw = self.var_gateway.get().strip()
@@ -2935,10 +3000,6 @@ class SaladStudio(tk.Tk):
             tab = str(self.nb.tab(self.nb.select(), "text"))
         except tk.TclError:
             pass
-        probes = {
-            kind: {key: var.get() for key, var in fields.items()}
-            for kind, fields in self._pol_vars.items()
-        }
         return {
             "tab": tab,
             "profile": self.var_name.get(),
@@ -2973,10 +3034,6 @@ class SaladStudio(tk.Tk):
             "import_sched": self.var_imp_sched.get(),
             "import_unet": self.var_imp_unet.get(),
             "import_workflow": self._import_workflow_stash or "",
-            "policy_image": self.var_pol_image.get(),
-            "policy_us": bool(self.var_pol_us.get()),
-            "policy_gpus": [gid for gid, var in self._pol_gpu_vars.items() if var.get()],
-            "policy_probes": probes,
         }
 
     def _save_ui_state(self) -> None:
@@ -3046,25 +3103,9 @@ class SaladStudio(tk.Tk):
                 ("var_imp_height", "import_height"),
                 ("var_imp_sched", "import_sched"),
                 ("var_imp_unet", "import_unet"),
-                ("var_pol_image", "policy_image"),
             ):
                 if key in state:
                     getattr(self, attr).set(str(state.get(key) or ""))
-            if "policy_us" in state:
-                self.var_pol_us.set(bool(state.get("policy_us")))
-            probes = state.get("policy_probes")
-            if isinstance(probes, dict):
-                for kind, fields in probes.items():
-                    live = self._pol_vars.get(kind) or {}
-                    if isinstance(fields, dict):
-                        for key, val in fields.items():
-                            if key in live:
-                                live[key].set(str(val))
-            gpus = state.get("policy_gpus")
-            if isinstance(gpus, list):
-                self._restored_gpu_ids = [str(x) for x in gpus]
-                for gid, var in self._pol_gpu_vars.items():
-                    var.set(gid in self._restored_gpu_ids)
             stash = str(state.get("import_workflow") or "")
             if stash:
                 self._stash_import_workflow(stash)
@@ -3601,6 +3642,7 @@ class SaladStudio(tk.Tk):
             checkpoints=self._form_checkpoints(name),
             use_loras=bool(selected),
             selected_loras=selected,
+            policy=self._policy_from_form(),
         )
 
     def _apply_profile(self, p: SaladProfile) -> None:
@@ -3626,6 +3668,9 @@ class SaladStudio(tk.Tk):
         if getattr(self, "_lora_inner", None) is not None:
             self._refresh_lora_lists()
         self._refresh_checkpoint_list(p)
+        # This config's own policy, not a window-wide copy: selecting another
+        # config swaps these fields with that config's stored policy.
+        self._show_policy(getattr(p, "policy", None) or {})
         self._sync_editor()
         self.log(
             "info",
@@ -3818,6 +3863,17 @@ class SaladStudio(tk.Tk):
                 f"{p.name} reads {word or 'unknown'}; the queue starts it if it is "
                 "stopped and waits for it to become ready",
             )
+        # A press that repeats the request at the head of the queue adds nothing:
+        # that one is about to be submitted (or is being submitted) already. The
+        # digest is over the request, so an edited prompt is a different request,
+        # and an identical request that is not the head is allowed.
+        digest = salad_queue.request_checksum(payload)
+        head = self.gen_queue.duplicate_of_head(line=p.name, checksum=digest)
+        if head is not None:
+            note = self._duplicate_note(head)
+            self.log("warn", f"Generate: {note}")
+            self.status.set(note)
+            return
         self._gen_jobs += 1
         first = self._gen_jobs == 1
         self._busy = True
@@ -3849,6 +3905,7 @@ class SaladStudio(tk.Tk):
                     on_log=self.log,
                     queue=self.gen_queue,
                     line=p.name,
+                    checksum=digest,
                 )
             except Exception as e:
                 err = str(e)
@@ -3867,7 +3924,6 @@ class SaladStudio(tk.Tk):
                     self.status.set("Failed. See Logs")
                     messagebox.showerror("Salad Studio", err)
                 else:
-                    self._apply_generate_gate(self.var_salad_status.get())
                     self.var_gen_state.set(f"Done in {elapsed}s")
                     self.status.set(f"Wrote {out}")
                     self.log("ok", f"Generate finished  {out}")
@@ -3881,7 +3937,6 @@ class SaladStudio(tk.Tk):
                 if self._gen_jobs <= 0:
                     self._busy = False
                     self._cancel_gen_tick()
-                    self._apply_generate_gate(self.var_salad_status.get())
                 else:
                     self.var_gen_state.set(f"{self._gen_jobs} render(s) still queued")
                 self._refresh_queue_page()

@@ -51,6 +51,7 @@ EXPECTED_FIELDS = (
     "checkpoints",
     "use_loras",
     "selected_loras",
+    "policy",
 )
 
 
@@ -563,6 +564,115 @@ class CheckpointListTest(unittest.TestCase):
         upsert(SaladProfile(name="fourth", checkpoints=["b.safetensors"]), self.path)
         self.assertEqual(sorted(delete("third", self.path)), ["fourth"])
         self.assertEqual(sorted(load_all(self.path)), ["fourth"])
+
+
+class ProfilePolicyTest(unittest.TestCase):
+    """Each stored config keeps its own Salad group policy across a reload."""
+
+    def setUp(self) -> None:
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.path = Path(self._td.name) / "studio-profiles.json"
+
+    def _policy(
+        self,
+        image: str,
+        gpu_class: str,
+        country: str,
+        group_name: str = "klein-group",
+        version: int = 1,
+    ) -> dict:
+        """The dict salad_status.policy_from_group returns for a real group."""
+        probe = {
+            "path": "/health",
+            "port": 3000,
+            "initial_delay_seconds": 60,
+            "period_seconds": 10,
+            "timeout_seconds": 5,
+            "failure_threshold": 12,
+        }
+        return {
+            "group_name": group_name,
+            "version": version,
+            "image": image,
+            "gpu_classes": [gpu_class],
+            "country_codes": [country],
+            "startup": dict(probe),
+            "readiness": dict(probe, path="/ready"),
+        }
+
+    def _store_two(self) -> tuple[dict, dict]:
+        klein = self._policy("ghcr.io/x/klein:1", "rtx4090", "us")
+        snofs = self._policy("ghcr.io/x/snofs:2", "rtx5090", "ca", "snofs-group", 4)
+        upsert(SaladProfile(name="klein", policy=klein), self.path)
+        upsert(SaladProfile(name="klein5090", policy=snofs), self.path)
+        return klein, snofs
+
+    def test_each_profile_loads_back_its_own_policy(self) -> None:
+        klein, snofs = self._store_two()
+        loaded = load_all(self.path)
+        self.assertEqual(loaded["klein"].policy, klein)
+        self.assertEqual(loaded["klein5090"].policy, snofs)
+        self.assertNotEqual(loaded["klein"].policy, loaded["klein5090"].policy)
+        self.assertIsNot(loaded["klein"].policy, loaded["klein5090"].policy)
+        # Deep copy: no nested probe or list may be shared between two profiles.
+        self.assertIsNot(
+            loaded["klein"].policy["startup"], loaded["klein5090"].policy["startup"]
+        )
+        self.assertIsNot(
+            loaded["klein"].policy["gpu_classes"],
+            loaded["klein5090"].policy["gpu_classes"],
+        )
+
+    def test_a_record_with_no_policy_key_loads_as_empty(self) -> None:
+        doc = {
+            "profiles": {
+                "klein": {
+                    "name": "klein",
+                    "gateway": "https://example.salad.cloud",
+                    "checkpoints": ["flux-2-klein-base-9b-fp8.safetensors"],
+                }
+            },
+            "active": "klein",
+        }
+        self.path.write_text(json.dumps(doc), encoding="utf-8")
+        self.assertEqual(load_all(self.path)["klein"].policy, {})
+
+    def test_a_non_dict_policy_loads_as_empty(self) -> None:
+        for junk in ("junk", ["image", "gpu_classes"], 7, None):
+            with self.subTest(policy=junk):
+                doc = {
+                    "profiles": {"klein": {"name": "klein", "policy": junk}},
+                    "active": "klein",
+                }
+                self.path.write_text(json.dumps(doc), encoding="utf-8")
+                self.assertEqual(load_all(self.path)["klein"].policy, {})
+
+    def test_the_written_json_nests_each_policy_under_its_profile(self) -> None:
+        klein, snofs = self._store_two()
+        doc = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(doc["profiles"]["klein"]["policy"], klein)
+        self.assertEqual(doc["profiles"]["klein5090"]["policy"], snofs)
+        self.assertEqual(
+            doc["profiles"]["klein5090"]["policy"]["readiness"]["path"], "/ready"
+        )
+
+    def test_editing_one_loaded_policy_does_not_change_the_other(self) -> None:
+        klein, snofs = self._store_two()
+        loaded = load_all(self.path)
+        loaded["klein"].policy["image"] = "ghcr.io/x/klein:9"
+        loaded["klein"].policy["startup"]["timeout_seconds"] = 99
+        loaded["klein"].policy["gpu_classes"].append("rtx3090")
+        save_all(loaded, self.path)
+
+        again = load_all(self.path)
+        self.assertEqual(again["klein"].policy["image"], "ghcr.io/x/klein:9")
+        self.assertEqual(again["klein"].policy["startup"]["timeout_seconds"], 99)
+        self.assertEqual(again["klein"].policy["gpu_classes"], ["rtx4090", "rtx3090"])
+        self.assertEqual(again["klein5090"].policy, snofs)
+        self.assertEqual(again["klein5090"].policy["image"], snofs["image"])
+        self.assertEqual(again["klein5090"].policy["gpu_classes"], ["rtx5090"])
+        self.assertNotEqual(again["klein"].policy, klein)
 
 
 class RoutingByCheckpointListTest(unittest.TestCase):

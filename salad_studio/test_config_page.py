@@ -145,6 +145,111 @@ class ConfigPage(unittest.TestCase):
         self.assertEqual(self._listed(), ["fourth", "klein", "klein5090", "third"])
         self.assertEqual(len(app._status_targets()), 4)
 
+    # -- the config's own Salad policy ------------------------------------
+    def test_a_config_owns_its_policy_and_the_policy_page_is_gone(self) -> None:
+        """Each config stores and shows its own policy; no Policy tab, no global copy."""
+        app = self.app
+        labels = [app.nb.tab(t, "text") for t in app.nb.tabs()]
+        self.assertEqual(labels, list(self.app_mod.TAB_ORDER))
+        self.assertNotIn("Policy", labels, "the Policy page must be gone")
+        self.assertNotIn("Policy", self.app_mod.TAB_ORDER)
+        self.assertIs(app._policy_section.master, app._config, "the fields live on Config")
+
+        self._select("klein")
+        app.var_pol_image.set("docker.io/example/klein:tag1")
+        app.var_pol_us.set(True)
+        app._pol_vars["startup"]["initial_delay_seconds"].set("120")
+        app._pol_vars["startup"]["failure_threshold"].set("6")
+        app._pol_vars["readiness"]["failure_threshold"].set("4")
+        app._save_profile()
+
+        stored = self._stored("klein")["policy"]
+        self.assertEqual(stored["image"], "docker.io/example/klein:tag1")
+        self.assertEqual(stored["country_codes"], ["us"])
+        self.assertEqual(stored["startup"]["initial_delay_seconds"], "120")
+        self.assertEqual(stored["startup"]["failure_threshold"], "6")
+        self.assertEqual(stored["readiness"]["failure_threshold"], "4")
+        self.assertEqual(
+            self._stored("klein5090").get("policy"), {}, "the other config keeps its own"
+        )
+
+        self._select("klein5090")
+        self.assertEqual(app.var_pol_image.get(), "", "klein's policy must not follow")
+        self.assertFalse(app.var_pol_us.get())
+        self.assertEqual(app._pol_vars["startup"]["failure_threshold"].get(), "")
+
+        self._select("klein")
+        self.assertEqual(app.var_pol_image.get(), "docker.io/example/klein:tag1")
+        self.assertTrue(app.var_pol_us.get())
+        self.assertEqual(app._pol_vars["startup"]["failure_threshold"].get(), "6")
+
+        state = app._capture_ui_state()
+        self.assertEqual(
+            [key for key in state if "policy" in key],
+            [],
+            "the policy must not be kept in the window's own state",
+        )
+
+    def test_apply_to_salad_patches_this_configs_group_only(self) -> None:
+        """Apply sends the selected config's policy to that config's group."""
+        app = self.app
+        allp = profiles.load_all()
+        klein, other = allp["klein"], allp["klein5090"]
+        self._select("klein")
+        app.var_pol_image.set("docker.io/example/klein:tag2")
+        app.var_pol_us.set(True)
+        app._pol_vars["readiness"]["failure_threshold"].set("7")
+        app._pol_vars["readiness"]["period_seconds"].set("20")
+
+        calls: list[tuple[str, str, dict | None]] = []
+        group = {
+            "name": "flux2-klein2",
+            "version": 4,
+            "networking": {"dns": urlparse(klein.gateway).hostname},
+            "container": {
+                "image": "old:tag",
+                "resources": {"cpu": 2, "memory": 4096, "gpu_classes": ["old-class"]},
+            },
+            "current_state": {"status": "running"},
+        }
+
+        def _api(method, url, key, data=None):
+            calls.append((method, url, data))
+            if url.endswith("/containers"):
+                return 200, {"items": [group]}
+            return 200, group
+
+        tok.write_token("salad", "config-policy-key")
+        with mock.patch.object(
+            self.app_mod.salad_status, "_api_request", side_effect=_api
+        ), mock.patch("salad_studio.app.threading.Thread", _Inline):
+            app._apply_salad_policy()
+            _pump(app, lambda: any(call[0] == "PATCH" for call in calls))
+            _pump(app, lambda: "applied" in app.status.get())
+
+        patches = [call for call in calls if call[0] == "PATCH"]
+        self.assertEqual(len(patches), 1, f"exactly one PATCH: {calls}")
+        _method, url, body = patches[0]
+        assert body is not None
+        self.assertIn("flux2-klein2", url, "the PATCH must name this config's group")
+        self.assertNotIn(
+            urlparse(other.gateway).hostname,
+            " ".join(call[1] for call in calls),
+            "no call for the other config's group",
+        )
+        self.assertEqual(body["container"]["image"], "docker.io/example/klein:tag2")
+        self.assertNotIn("resources", body["container"], "no GPU classes were ticked")
+        self.assertEqual(body["country_codes"], ["us"])
+        self.assertEqual(body["readiness_probe"]["failure_threshold"], 7)
+        self.assertEqual(body["readiness_probe"]["period_seconds"], 20)
+        self.assertEqual(body["startup_probe"]["http"]["path"], "/health")
+        self.assertEqual(
+            self._stored("klein")["policy"]["image"],
+            "docker.io/example/klein:tag2",
+            "the config keeps what it applied",
+        )
+        self.assertEqual(self._stored("klein5090").get("policy"), {})
+
     # -- checkpoint list --------------------------------------------------
     def test_the_page_adds_and_removes_a_checkpoint(self) -> None:
         app = self.app

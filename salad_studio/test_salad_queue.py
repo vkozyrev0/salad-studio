@@ -384,6 +384,85 @@ class ManagementTest(unittest.TestCase):
         self.assertEqual(line.clear_finished(), 0, "nothing finished is left to clear")
 
 
+class DuplicateGuardTest(unittest.TestCase):
+    """A press that repeats the request at the head of the queue is refused."""
+
+    def test_the_checksum_ignores_key_order_and_follows_the_payload(self) -> None:
+        first = {"prompt": {"9": {"inputs": {"seed": 4}}}, "gateway": "https://a.example/"}
+        reordered = {"gateway": "https://a.example/", "prompt": {"9": {"inputs": {"seed": 4}}}}
+        self.assertEqual(q.request_checksum(first), q.request_checksum(reordered))
+        self.assertEqual(q.request_checksum(first), q.request_checksum(dict(first)))
+        changed = {"prompt": {"9": {"inputs": {"seed": 5}}}, "gateway": "https://a.example/"}
+        self.assertNotEqual(q.request_checksum(first), q.request_checksum(changed))
+        self.assertEqual(len(q.request_checksum(first)), 16)
+
+    def test_a_delivered_job_carries_the_checksum_of_its_request(self) -> None:
+        request = {"id": 1, "prompt": "a plate of salad"}
+        line, _gate, _logs = _queue()
+        job = line.deliver(request, lambda _job: q.Attempt(status=200, accepted=True))
+        self.assertEqual(job.state, q.ACCEPTED)
+        self.assertEqual(job.checksum, q.request_checksum(request))
+        self.assertTrue(job.checksum, "a delivered job must carry a digest")
+
+    def test_a_deliver_can_pass_its_own_digest_through_to_the_job(self) -> None:
+        line, _gate, _logs = _queue()
+        job = line.deliver(
+            {"id": 1},
+            lambda _job: q.Attempt(status=200, accepted=True),
+            checksum="digest-from-the-press",
+        )
+        self.assertEqual(job.checksum, "digest-from-the-press")
+
+    def test_an_identical_request_at_the_head_is_returned(self) -> None:
+        line, _gate, _logs = _queue()
+        request = {"id": 1, "prompt": "a plate of salad"}
+        head = line.enqueue(request, lambda _job: q.Attempt(status=200))
+        self.assertIs(line.head_of(), head, "the enqueued job is the queue's first item")
+        self.assertIs(line.jobs()[0], head)
+        self.assertIs(line.duplicate_of_head(request), head)
+        self.assertIs(line.duplicate_of_head(checksum=head.checksum), head)
+
+    def test_an_identical_request_behind_another_one_is_allowed(self) -> None:
+        line, _gate, _logs = _queue()
+        request = {"id": 1}
+        line.enqueue({"id": 2}, lambda _job: q.Attempt(status=200))
+        line.enqueue(request, lambda _job: q.Attempt(status=200))
+        self.assertIsNone(
+            line.duplicate_of_head(request),
+            "a request further down the queue is not the head, so the press is allowed",
+        )
+
+    def test_a_cancelled_head_does_not_refuse_the_press(self) -> None:
+        line, _gate, _logs = _queue()
+        request = {"id": 1}
+        head = line.enqueue(request, lambda _job: q.Attempt(status=200))
+        self.assertTrue(line.cancel(head))
+        self.assertIsNone(line.head_of(), "a cancelled row is skipped")
+        self.assertIsNone(
+            line.duplicate_of_head(request),
+            "a cancelled request never reached a container, so it is not a duplicate",
+        )
+
+        later = line.enqueue({"id": 2}, lambda _job: q.Attempt(status=200))
+        self.assertIs(line.head_of(), later, "the next live job is the head")
+
+    def test_an_empty_queue_refuses_nothing(self) -> None:
+        line, _gate, _logs = _queue()
+        self.assertIsNone(line.head_of())
+        self.assertIsNone(line.duplicate_of_head({"id": 1}))
+
+    def test_another_profiles_head_does_not_refuse_this_lines_request(self) -> None:
+        line, _gate, _logs = _queue()
+        request = {"id": 1, "profile": "klein"}
+        head = line.enqueue(request, lambda _job: q.Attempt(status=200), line="klein")
+        self.assertIs(line.duplicate_of_head(request, line="klein"), head)
+        self.assertIsNone(
+            line.duplicate_of_head(request, line="snofs"),
+            "the klein head is not the head of the snofs line",
+        )
+        self.assertIsNone(line.head_of("snofs"))
+
+
 class PerProfileDispatchTest(unittest.TestCase):
     """One line per profile: a blocked container holds only its own requests."""
 

@@ -323,13 +323,16 @@ def generate_from_payload(
     on_log: Any | None = None,
     queue: salad_queue.SaladQueue | None = None,
     line: str = "",
+    checksum: str = "",
 ) -> Path:
     """POST the Prompt Editor JSON to Salad ``/prompt`` and write a JPEG.
 
     The POST goes through ``queue`` (the process-wide one by default), on the
     line named by ``line``: the profile whose container serves this graph. Jobs
     on other lines run beside it, jobs on this line wait their turn, and one the
-    container cannot serve yet is retried there.
+    container cannot serve yet is retried there. ``checksum`` is the caller's
+    digest of the request, carried on the job so the press that submitted it can
+    recognise a repeat of the queue's head (see ``salad_queue.request_checksum``).
     """
     def _log(level: str, message: str) -> None:
         if on_log is not None:
@@ -463,6 +466,7 @@ def generate_from_payload(
         dispatch_once,
         line=line,
         ensure=False,
+        checksum=checksum,
     )
     attempt = job.result if isinstance(job.result, salad_queue.Attempt) else salad_queue.Attempt()
     if job.state != salad_queue.ACCEPTED:

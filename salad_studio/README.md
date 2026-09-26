@@ -18,7 +18,7 @@ compact container strip with the Salad probe, right-aligned: a green dot with
 the number of ready containers, an amber dot with the number still starting and
 a red dot with the number not started, separated by `|`; a press made while a
 render is in flight is queued, not dropped), **vertical tabs** on the left
-(**Config**, **Prompt Settings**, **Policy**, **Tokens**, **LoRAs**,
+(**Config**, **Prompt Settings**, **Tokens**, **LoRAs**,
 **Prompt Editor**, **Prompt Assist**, **Prompt Catalog**, **Import**,
 **Prompt History**, **Queue**, **Logs**).
 Bottom (always visible) = horizontal history strip with a tall button on
@@ -37,15 +37,21 @@ the left and right.
   checkpoint makes a graph that loads it routable with no code edit. Every profile
   is probed, and the three counts in the action bar's strip are sums over all of
   them: ready instances, instances that exist but are not serving yet, and the
-  configured replica count minus the instances that exist. Generate is
-  disabled until the *active* gateway is Ready. The prompt knobs live on
+  configured replica count minus the instances that exist. The prompt knobs live on
   **Prompt Settings**.
+
+  The same page owns each config's **Salad policy**: the group's **image tag**,
+  **GPU classes**, **US-only** country codes, the startup and readiness probe
+  fields, and **Reallocate** (confirm). The policy belongs to the selected
+  config — **Load from Salad** reads that config's group, **Apply to Salad**
+  PATCHes that config's group (Salad, not a Docker rebuild), and **Save
+  profile** stores the fields with that config, so selecting another config
+  swaps them for that config's own policy. There is one policy per config; no
+  window-wide copy is kept.
 - **Prompt Settings**. **Width**, **Height**, **Steps**, **CFG**, **Seed**,
   **Graph** (Flux.2 Klein / Flux.1 Dev), **Scheduler** (Flux2 / Simple), the
   **Checkpoint** (Base 9B / Distilled 9B) and the **LoRA** checkboxes. These are
   the values the Prompt Editor's JSON is rebuilt from.
-- **Policy**. Probes, **image tag**, **GPU classes**, **US-only**, and
-  **Reallocate** (confirm). Apply PATCHes Salad, not a Docker rebuild.
 - **Tokens**. Salad / Hugging Face / Civitai / DeepSeek keys in
   `studio-tokens.json` (gitignored). Empty slots copy from `~/.config`; the
   DeepSeek slot also reads `DEEPSEEK_API_KEY` from the environment when no
@@ -243,6 +249,18 @@ the left and right.
   retries; a request the container already accepted is never re-POSTed, so it is
   not retryable; **Clear finished** drops the terminal rows.
 
+  **Generate is never disabled by the queue or by the status word**: a request
+  already queued or in flight, a stopped container and a booting replica all
+  leave the button live, and the press queues behind the first request instead of
+  being blocked. The press is the gate — a replica that is gone is refused with
+  its reason when the press is made, not by greying the button out. A press that
+  repeats the request at the **head** of the queue adds nothing: the app digests
+  the request it is about to submit and, when the queue's first item carries the
+  same digest, it reports that the identical request is already queued (naming
+  that row, and pointing at **Retry selected** or **Clear finished** when that
+  row is finished). The identical request is still accepted when it is not the
+  head, so a second copy can be queued behind a different request.
+
   The queue also owns the containers' **lifecycle**, so nothing has to be started
   or stopped by hand. Before a request's first attempt, the queue asks Salad to
   **start** the group behind that profile's gateway when the group is stopped
@@ -374,7 +392,7 @@ the real freeze path the moment that gap is closed.
 Two test commands, and the second is not part of the first:
 
 ```
-python -m unittest discover -s salad_studio -p "test_*.py"   # 742 tests, ~6 min
+python -m unittest discover -s salad_studio -p "test_*.py"   # 759 tests, ~6 min
 python test_salad_comfy_live_findings.py                     # root structural checks
 ```
 
@@ -383,6 +401,7 @@ python test_salad_comfy_live_findings.py                     # root structural c
 Building the Salad container image, creating a group, and calling either the
 control-plane API or a running container are documented in one place:
 [`docs/workflow/23-salad-container-group-deployment.md`](../docs/workflow/23-salad-container-group-deployment.md).
-`salad_status.py` is the client it describes; the **Policy** tab is the UI over
-it (image PATCH, probes, GPU classes, US-only, Reallocate).
+`salad_status.py` is the client it describes; the Config page's policy section
+is the UI over it (image PATCH, probes, GPU classes, US-only, Reallocate), one
+policy per config.
 

@@ -44,6 +44,14 @@ def _pump(app, predicate, seconds: float = 15.0) -> bool:
     return predicate()
 
 
+def _destroy_quietly(app) -> None:
+    """Destroy a window, tolerating one a test already closed itself."""
+    try:
+        app.destroy()
+    except tk.TclError:
+        pass
+
+
 @unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
 class QueuePage(unittest.TestCase):
     def setUp(self) -> None:
@@ -153,7 +161,7 @@ class QueuePage(unittest.TestCase):
         self.app._tick_gen()
         self.assertEqual(
             self._row_state(job.id),
-            q.PENDING,
+            q.status_word(q.PENDING),
             "the waiting request must be on the page from the render tick",
         )
         self.assertEqual(self.app.queue_empty_lbl.winfo_manager(), "", "the empty state must go")
@@ -167,9 +175,9 @@ class QueuePage(unittest.TestCase):
         self._open_page()
 
         rows = [self._row(job.id) for job in (accepted, failed, queued)]
-        self.assertEqual(rows[0][2], q.ACCEPTED)
-        self.assertEqual(rows[1][2], q.FAILED)
-        self.assertEqual(rows[2][2], q.PENDING)
+        self.assertEqual(rows[0][2], q.status_word(q.ACCEPTED))
+        self.assertEqual(rows[1][2], q.status_word(q.FAILED))
+        self.assertEqual(rows[2][2], q.status_word(q.PENDING))
         self.assertEqual(rows[1][4], "400", "the last status must be on the row")
         self.assertIn("invalid graph node 94", rows[1][5])
         self.assertEqual(rows[1][3], "1", "the attempt count must be on the row")
@@ -180,7 +188,9 @@ class QueuePage(unittest.TestCase):
         self.assertEqual(rows[2][1], "(default)")
 
         # The rows are the queue's own records, not a second copy.
-        recorded = {str(job.id): job.state for job in self.app.gen_queue.jobs()}
+        recorded = {
+            str(job.id): q.status_word(job.state) for job in self.app.gen_queue.jobs()
+        }
         self.assertEqual(
             {str(self.app.queue_tree.item(i, "values")[0]): self.app.queue_tree.item(i, "values")[2]
              for i in self.app.queue_tree.get_children()},
@@ -188,7 +198,132 @@ class QueuePage(unittest.TestCase):
         )
         self.assertIn("failed: 1", self.app.var_queue_summary.get())
 
-    # -- controls ---------------------------------------------------------
+    # -- the words on the rows, and what the page keeps -------------------
+    def _row_item(self, job_id: int | str):
+        """The tree item whose # cell is that request id, or None.
+
+        A row the queue kept from an earlier session carries its own row key, so
+        the id is read off the cell rather than assumed to be the key.
+        """
+        for item in self.app.queue_tree.get_children():
+            if str(self.app.queue_tree.item(item, "values")[0]) == str(job_id):
+                return item
+        return None
+
+    def _row_cell(self, job_id: int | str, column: str) -> str:
+        """One cell of one row, read back off the tree."""
+        item = self._row_item(job_id)
+        if item is None:
+            return ""
+        cols = tuple(self.app.queue_tree.cget("columns"))
+        return str(self.app.queue_tree.item(item, "values")[cols.index(column)])
+
+    def _age_finished(self, finished_at: float) -> None:
+        """Rewrite the kept record's finish time, the way hours passing would."""
+        ledger = Path(q.LEDGER_PATH)
+        doc = json.loads(ledger.read_text(encoding="utf-8"))
+        for row in doc.get("finished") or []:
+            row["finished_at"] = finished_at
+        ledger.write_text(json.dumps(doc), encoding="utf-8")
+
+    def test_the_row_word_follows_the_request_through_its_stages(self) -> None:
+        """The state cell says where the request is: waiting, in progress, done, failed."""
+        app = self.app
+        self._open_page()
+        waiting = app.gen_queue.enqueue(
+            {"id": 9, "url": "https://gw.example/prompt", "bytes": 12, "profile": "klein"},
+            lambda _job: q.Attempt(status=200, accepted=True),
+            line="klein",
+        )
+        app._refresh_queue_page()
+        self.assertEqual(self._row_state(waiting.id), "waiting", "queued, not submitted yet")
+
+        started = threading.Event()
+        held = threading.Event()
+
+        def attempt(_job):
+            started.set()
+            held.wait(20)
+            return q.Attempt(status=200, accepted=True, result="plate")
+
+        def work() -> None:
+            app.gen_queue.deliver(
+                {"id": 10, "url": "https://gw.example/prompt", "bytes": 12, "profile": "klein5090"},
+                attempt,
+                line="klein5090",
+            )
+
+        runner = threading.Thread(target=work, daemon=True)
+        runner.start()
+        self.assertTrue(started.wait(20), "the request never reached its attempt")
+        submitted = app.gen_queue.jobs()[-1]
+        app._refresh_queue_page()
+        self.assertEqual(self._row_state(submitted.id), "in progress", "submitted and running")
+        held.set()
+        runner.join(20)
+        app._refresh_queue_page()
+        self.assertEqual(self._row_state(submitted.id), "done", "accepted")
+
+        failed = self._fail(11)
+        app._refresh_queue_page()
+        self.assertEqual(self._row_state(failed.id), "failed")
+        app.gen_queue.cancel(waiting)
+        app._refresh_queue_page()
+        self.assertEqual(self._row_state(waiting.id), "cancelled")
+
+    def test_a_finished_request_stays_on_the_page_until_the_window_ages_it_out(self) -> None:
+        """A done row survives a reopen, and drops only once it is older than the window."""
+        app = self.app
+        self._accept(1, line="klein")
+        self._open_page()
+        self.assertEqual(self._row_state(1), q.status_word(q.ACCEPTED))
+        kept = app.gen_queue.finished()
+        self.assertEqual([row["id"] for row in kept], [1], "the queue kept the record")
+        finished_at = float(kept[0]["finished_at"])
+
+        # A second window on the same paths is what a restart looks like.
+        other = self.app_mod.SaladStudio(show=False)
+        other.withdraw()
+        self.addCleanup(_destroy_quietly, other)
+        other.update_idletasks()
+        other._goto_tab("Queue")
+        other._refresh_queue_page()
+        rows = [
+            str(other.queue_tree.item(item, "values")[0])
+            for item in other.queue_tree.get_children()
+        ]
+        self.assertEqual(rows, ["1"], "the finished row must survive a reopen")
+        cols = tuple(other.queue_tree.cget("columns"))
+        values = other.queue_tree.item("kept-1", "values")
+        self.assertEqual(str(values[2]), q.status_word(q.ACCEPTED), "still shown as done")
+        self.assertTrue(str(values[cols.index("finished")]), "with the time it finished")
+
+        # Age it past the retention window: a window opening on that record drops it,
+        # and an unfinished request beside it is never dropped.
+        self._age_finished(finished_at - q.FINISHED_RETENTION_S - 60)
+        aged = self.app_mod.SaladStudio(show=False)
+        aged.withdraw()
+        self.addCleanup(_destroy_quietly, aged)
+        aged.update_idletasks()
+        aged._goto_tab("Queue")
+        aged._refresh_queue_page()
+        self.assertEqual(
+            [
+                str(aged.queue_tree.item(item, "values")[0])
+                for item in aged.queue_tree.get_children()
+            ],
+            [],
+            "a row older than the window must drop off",
+        )
+        waiting = aged.gen_queue.enqueue(
+            {"id": 2, "url": "https://gw.example/prompt", "bytes": 12, "profile": "klein"}
+        )
+        aged._refresh_queue_page()
+        self.assertEqual(
+            str(aged.queue_tree.item(str(waiting.id), "values")[2]),
+            q.status_word(q.PENDING),
+            "an unfinished request is never dropped by the window",
+        )
     def test_cancel_selected_drops_a_request_that_was_never_submitted(self) -> None:
         calls: list[int] = []
         queued = self.app.gen_queue.enqueue(
@@ -203,7 +338,11 @@ class QueuePage(unittest.TestCase):
         self.assertTrue(queued.terminal)
         self.assertEqual(queued.attempts, 0)
         self.assertEqual(calls, [], "the transport must never be called for a cancelled job")
-        self.assertEqual(self._row(1)[2], q.CANCELLED, "the row must follow the queue")
+        self.assertEqual(
+            self._row(1)[2],
+            q.status_word(q.CANCELLED),
+            "the row must follow the queue",
+        )
 
     def test_retry_selected_runs_off_the_tk_thread(self) -> None:
         calls: list[int] = []
@@ -231,14 +370,16 @@ class QueuePage(unittest.TestCase):
         self.assertIn("retrying", self.app.status.get())
         self.app._refresh_queue_page()
         self.assertEqual(
-            self._row_state(1), q.RUNNING, "the row shows the live retry, not the old failure"
+            self._row_state(1),
+            q.status_word(q.RUNNING),
+            "the row shows the live retry, not the old failure",
         )
 
         release.set()
         self.assertTrue(_pump(self.app, lambda: failed.terminal), "the retry never ended")
         self.assertEqual(failed.state, q.ACCEPTED)
         self.assertEqual(len(calls), 2, "the retry must ask the transport again")
-        self._pump_state(1, q.ACCEPTED)
+        self._pump_state(1, q.status_word(q.ACCEPTED))
 
     def test_clear_finished_drops_the_finished_rows(self) -> None:
         self._accept(1)
@@ -345,15 +486,15 @@ class QueuePage(unittest.TestCase):
                         _pump(self.app, entered.is_set, 30),
                         "the render never reached the transport",
                     )
-                    self._pump_state(1, q.RUNNING)
-                    self.assertEqual(self._row(1)[2], q.RUNNING)
+                    self._pump_state(1, q.status_word(q.RUNNING))
+                    self.assertEqual(self._row(1)[2], q.status_word(q.RUNNING))
                     self.assertEqual(self._row(1)[1], "klein", "the row names the profile")
                     release.set()
                     self.assertTrue(
                         _pump(self.app, lambda: not self.app._busy, 30),
                         "the render never finished",
                     )
-                    self._pump_state(1, q.ACCEPTED)
+                    self._pump_state(1, q.status_word(q.ACCEPTED))
                     self.assertEqual(self._row(1)[3], "1")
                 except BaseException as exc:  # noqa: BLE001 - re-raised below
                     outcome.append(exc)

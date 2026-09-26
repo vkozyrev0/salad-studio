@@ -352,6 +352,127 @@ class LiveFieldSync(unittest.TestCase):
             out |= LiveFieldSync._button_texts(child)
         return out
 
+    # --- the LoRA grid: the verified dot, the sort, the find box ---------
+    @staticmethod
+    def _lora_cell(app, lid: str, column: str) -> str:
+        """One cell of one grid row, read back off the tree."""
+        cols = tuple(app.lora_tree.cget("columns"))
+        return str(app.lora_tree.item(lid, "values")[cols.index(column)])
+
+    def _add_lora(self, ref: str, name: str, *, verified: bool) -> str:
+        """One library row with a state of its own, added through the shipped store.
+
+        The filename is distinct because the store keeps one row per Civitai
+        version, filename or visible name.
+        """
+        from salad_studio import lora_store
+
+        item = lora_store.add_lora(
+            ref,
+            name=name,
+            filename=f"{name.lower().replace(' ', '-')}.safetensors",
+            verify=False,
+            verified=verified,
+        )
+        self.app._refresh_lora_lists()
+        return str(item.get("id") or ref)
+
+    def test_the_verified_dot_comes_first_and_the_widget_carries_its_state(self) -> None:
+        """Verified leads the grid, its cell is a dot, and the row's tag is its colour."""
+        from salad_studio import theme
+
+        app = self.app
+        cols = tuple(app.lora_tree.cget("columns"))
+        self.assertEqual(cols[0], "verified", "the verified column must come first")
+        self.assertEqual(app.lora_tree.heading("verified", "text"), "Verified")
+        good = self._add_lora("civitai:9001@11", "Zeta verified", verified=True)
+        bad = self._add_lora("civitai:9002@12", "Alpha unverified", verified=False)
+
+        self.assertEqual(self._lora_cell(app, good, "verified"), "●")
+        self.assertEqual(self._lora_cell(app, bad, "verified"), "●")
+        self.assertEqual(
+            tuple(app.lora_tree.item(good, "tags")), ("verified",), "the row's own tag"
+        )
+        self.assertEqual(tuple(app.lora_tree.item(bad, "tags")), ("unverified",))
+        green = str(app.lora_tree.tag_configure("verified", "foreground"))
+        red = str(app.lora_tree.tag_configure("unverified", "foreground"))
+        self.assertEqual(green, theme.PALETTE["valid"])
+        self.assertEqual(red, theme.PALETTE["invalid"])
+        self.assertNotEqual(green, red, "the two states must not look alike")
+        for lid in app.lora_tree.get_children():
+            for cell in app.lora_tree.item(lid, "values"):
+                self.assertNotIn(str(cell).lower(), ("yes", "no"), "the dot replaced yes/no")
+
+    def test_a_heading_click_sorts_the_grid_and_again_reverses_it(self) -> None:
+        """A heading orders the rows by its column; the same heading reverses it."""
+        app = self.app
+        self._add_lora("civitai:9101@11", "Aaa first", verified=True)
+        self._add_lora("civitai:9102@12", "Zzz last", verified=False)
+
+        app._sort_lora_tree("name")
+        names = [self._lora_cell(app, lid, "name") for lid in app.lora_tree.get_children()]
+        self.assertEqual(names, sorted(names, key=str.lower), "ascending by name")
+        app._sort_lora_tree("name")
+        names = [self._lora_cell(app, lid, "name") for lid in app.lora_tree.get_children()]
+        self.assertEqual(
+            names, sorted(names, key=str.lower, reverse=True), "the second click reverses"
+        )
+
+        app._sort_lora_tree("verified")
+        tags = [
+            app.lora_tree.item(lid, "tags")[0] for lid in app.lora_tree.get_children()
+        ]
+        self.assertEqual(
+            tags,
+            sorted(tags, key=lambda tag: 0 if tag == "unverified" else 1),
+            "ascending puts the unverified rows first",
+        )
+        app._sort_lora_tree("verified")
+        tags = [
+            app.lora_tree.item(lid, "tags")[0] for lid in app.lora_tree.get_children()
+        ]
+        self.assertEqual(tags[0], "verified", "reversing puts the verified rows first")
+
+    def test_the_find_box_narrows_the_grid_by_name(self) -> None:
+        """Part of a name, any case, any position; clearing brings every row back."""
+        app = self.app
+        self._add_lora("civitai:9201@11", "Marmalade Klein", verified=True)
+        self._add_lora("civitai:9202@12", "Stone Lantern", verified=False)
+        every = list(app.lora_tree.get_children())
+
+        app.var_lora_find.set("MARMAL")
+        shown = list(app.lora_tree.get_children())
+        self.assertTrue(shown, "the fragment must match")
+        self.assertLess(len(shown), len(every), "and it must narrow the grid")
+        for lid in shown:
+            self.assertIn("marmal", self._lora_cell(app, lid, "name").lower())
+
+        app.var_lora_find.set("alade")  # a fragment from the middle of the name
+        self.assertEqual(len(list(app.lora_tree.get_children())), 1)
+
+        app.var_lora_find.set("")
+        self.assertEqual(
+            list(app.lora_tree.get_children()), every, "clearing brings every row back"
+        )
+
+    def test_the_find_box_and_a_heading_sort_compose(self) -> None:
+        """A narrowed grid still sorts, and a sorted grid still narrows."""
+        app = self.app
+        self._add_lora("civitai:9301@11", "Qz Compose Beta", verified=True)
+        self._add_lora("civitai:9302@12", "Qz Compose Alpha", verified=False)
+        self._add_lora("civitai:9303@13", "Qz Other Row", verified=False)
+        app._sort_lora_tree("name")
+        app.var_lora_find.set("compose")
+        names = [self._lora_cell(app, lid, "name") for lid in app.lora_tree.get_children()]
+        self.assertEqual(
+            names, ["Qz Compose Alpha", "Qz Compose Beta"], "filtered and ordered"
+        )
+        app._sort_lora_tree("name")
+        names = [self._lora_cell(app, lid, "name") for lid in app.lora_tree.get_children()]
+        self.assertEqual(
+            names, ["Qz Compose Beta", "Qz Compose Alpha"], "the sort still applies"
+        )
+
     def test_lora_tab_controls_exist_and_call_the_store(self) -> None:
         app = self.app
         labels = self._button_texts(app._loras)

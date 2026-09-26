@@ -171,15 +171,20 @@ class ConfigPage(unittest.TestCase):
         self.assertEqual(stored["startup"]["initial_delay_seconds"], "120")
         self.assertEqual(stored["startup"]["failure_threshold"], "6")
         self.assertEqual(stored["readiness"]["failure_threshold"], "4")
-        # The other config keeps its own policy: the document's SNOFS image, and
+        # The other config keeps its own policy: the document's SNOFS settings, and
         # none of the fields typed above.
         other = self._stored("klein5090")["policy"]
+        snofs = studio_meta.probe_settings_for_family("snofs", studio_meta.default())
         self.assertEqual(
             other["image"],
             studio_meta.image_for_family("snofs", studio_meta.default()),
         )
+        self.assertEqual(
+            other["startup"],
+            snofs["startup"],
+            "the other config carries its own family's documented probes",
+        )
         self.assertNotIn("country_codes", other)
-        self.assertNotIn("startup", other)
 
         self._select("klein5090")
         self.assertEqual(
@@ -189,7 +194,12 @@ class ConfigPage(unittest.TestCase):
         )
         self.assertNotEqual(app.var_pol_image.get(), "docker.io/example/klein:tag1")
         self.assertFalse(app.var_pol_us.get(), "klein's US-only must not follow")
-        self.assertEqual(app._pol_vars["startup"]["failure_threshold"].get(), "")
+        self.assertEqual(
+            app._pol_vars["startup"]["failure_threshold"].get(),
+            str(snofs["startup"]["failure_threshold"]),
+            "and its own family's documented probe, not klein's saved one",
+        )
+        self.assertNotEqual(app._pol_vars["startup"]["failure_threshold"].get(), "6")
 
         self._select("klein")
         self.assertEqual(app.var_pol_image.get(), "docker.io/example/klein:tag1")
@@ -323,11 +333,16 @@ class ConfigPage(unittest.TestCase):
         self.assertEqual(self._stored("klein")["policy"], klein_before)
         self.assertEqual(self._stored("klein5090")["policy"], other_before)
 
-    def test_a_failed_recheck_leaves_the_fields_standing_with_the_documents_image(self) -> None:
-        """A re-check that cannot read the group must not blank the fields."""
+    def test_a_failed_recheck_leaves_the_documents_settings_standing(self) -> None:
+        """A re-check that cannot read the group must not blank a field.
+
+        The config's own stored policy and the metadata document's documented
+        settings for its family are what is left on screen when the read fails.
+        """
         app = self.app
         klein = profiles.load_all()["klein"]
         doc_image = studio_meta.image_for_family("klein", studio_meta.default())
+        documented = studio_meta.probe_settings_for_family("klein", studio_meta.default())
         tok.write_token("salad", "failing-key")
 
         def _api(method, url, key, data=None):
@@ -341,7 +356,15 @@ class ConfigPage(unittest.TestCase):
         self.assertEqual(
             app.var_pol_image.get(), doc_image, "the document's image answers a failed read"
         )
-        self.assertEqual(app._pol_vars["startup"]["failure_threshold"].get(), "")
+        for kind in ("startup", "readiness"):
+            with self.subTest(kind=kind):
+                shown = {key: var.get() for key, var in app._pol_vars[kind].items()}
+                self.assertEqual(
+                    shown,
+                    {key: str(value) for key, value in documented[kind].items()},
+                    f"the document's documented {kind} settings must still be shown",
+                )
+                self.assertTrue(all(shown.values()), "and not one of them blank")
         self.assertEqual(
             self._stored("klein")["policy"]["image"], doc_image,
             "and the config keeps its own stored policy",
@@ -402,6 +425,97 @@ class ConfigPage(unittest.TestCase):
             self._stored("klein")["policy"], klein_saved, "a switch must write no record"
         )
         self.assertEqual(self._stored("klein5090")["policy"], other_saved)
+
+    def test_the_first_load_fills_every_policy_field_from_that_configs_group(self) -> None:
+        """Opening on a config fills all twelve probe fields, not just the image.
+
+        The window's first load is the case the user reported: the image came from
+        the document and the probe fields stayed blank until a read answered.
+        """
+        app = self.app
+        klein = profiles.load_all()["klein"]
+        group = self._group(
+            "flux2-klein2", urlparse(klein.gateway).hostname,
+            "docker.io/example/klein:first", "gpu-klein", [], 17, 18,
+        )
+        reads: list[str] = []
+
+        def _load(gw, key):
+            reads.append(str(gw))
+            return salad_status.policy_from_group(group), None
+
+        tok.write_token("salad", "first-load-key")
+        with mock.patch.object(
+            self.app_mod.salad_status, "load_policy", side_effect=_load
+        ), mock.patch.object(
+            self.app_mod.salad_status, "list_gpu_classes", return_value=[]
+        ), mock.patch.object(
+            self.app_mod.salad_status, "snapshot_gateway", return_value={"word": "Ready"}
+        ), mock.patch("salad_studio.app.threading.Thread", _Inline):
+            self._select("klein")
+            self.assertTrue(
+                _pump(app, lambda: app.var_pol_image.get() == "docker.io/example/klein:first"),
+                f"the first load never filled: {app.var_pol_image.get()!r}",
+            )
+        self.assertTrue(reads, "the first load must read the group")
+        self.assertEqual(
+            set(reads), {klein.gateway}, "every read names the selected config's group"
+        )
+        for kind, fail in (("startup", "17"), ("readiness", "18")):
+            with self.subTest(kind=kind):
+                shown = {key: var.get() for key, var in app._pol_vars[kind].items()}
+                self.assertTrue(all(shown.values()), f"every {kind} field must be filled: {shown}")
+                self.assertEqual(shown["failure_threshold"], fail, "the group's own value")
+                self.assertEqual(shown["path"], "/health" if kind == "startup" else "/ready")
+
+    def test_a_fresh_window_shows_the_documents_settings_before_any_read(self) -> None:
+        """A config the store has nothing for still shows every field at once."""
+        from salad_studio.app import SaladStudio
+
+        documented = studio_meta.probe_settings_for_family("klein", studio_meta.default())
+        self.app.destroy()
+        self.app = SaladStudio(show=False)
+        self.app.withdraw()
+        app = self.app
+        app.update_idletasks()
+        self.assertEqual(app.var_name.get().strip(), "klein", "the store's active config")
+        self.assertEqual(
+            app.var_pol_image.get(),
+            studio_meta.image_for_family("klein", studio_meta.default()),
+        )
+        for kind in ("startup", "readiness"):
+            with self.subTest(kind=kind):
+                shown = {key: var.get() for key, var in app._pol_vars[kind].items()}
+                self.assertEqual(
+                    shown, {key: str(value) for key, value in documented[kind].items()}
+                )
+
+    def test_the_restored_config_is_the_one_whose_policy_is_shown(self) -> None:
+        """A saved window state naming another config moves the fields with it."""
+        from salad_studio import ui_state
+        from salad_studio.app import SaladStudio
+
+        allp = profiles.load_all()
+        profiles.set_active("klein")
+        ui_state.save_state({"profile": "klein5090", "tab": "Config", "gateway": allp["klein5090"].gateway})
+        self.app.destroy()
+        self.app = SaladStudio(show=False)
+        self.app.withdraw()
+        app = self.app
+        app.update_idletasks()
+        self.assertEqual(
+            app.var_name.get().strip(), "klein5090", "the restore names the config"
+        )
+        self.assertEqual(
+            app.var_pol_image.get(),
+            studio_meta.image_for_family("snofs", studio_meta.default()),
+            "and the fields belong to that config, not to the store's active one",
+        )
+        self.assertEqual(
+            [str(v) for v in app.checkpoint_tree.item(app.checkpoint_tree.get_children()[0], "values")][:1],
+            [allp["klein5090"].primary_checkpoint],
+            "the checkpoint list belongs to it too",
+        )
 
     def test_apply_to_salad_patches_this_configs_group_only(self) -> None:
         """Apply sends the selected config's policy to that config's group."""

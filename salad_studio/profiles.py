@@ -197,13 +197,22 @@ def seeded_policy(
 ) -> dict[str, Any]:
     """The policy a config with nothing stored starts from.
 
-    The metadata document is where the image comes from until the config stores
-    its own or a live group is read, and the document's image is also the
-    fallback when neither supplies one. ``{}`` when the document names no image
-    for this profile's family, so nothing is invented here.
+    The metadata document is where the image and the two probes come from until
+    the config stores its own or a live group is read, and the document's values
+    are also the fallback when neither supplies one. Only what the document
+    documents is carried, so ``{}`` when it documents nothing for this profile's
+    family: nothing is invented here.
     """
     image = policy_image_for(profile, meta)
-    return {studio_meta.IMAGE: image} if image else {}
+    policy: dict[str, Any] = {studio_meta.IMAGE: image} if image else {}
+    try:
+        doc = studio_meta.default() if meta is None else meta
+        policy.update(
+            studio_meta.probe_settings_for_family(serving_family(profile, doc), doc)
+        )
+    except Exception:  # noqa: BLE001 - a broken document must not abort the caller
+        return policy
+    return policy
 
 
 def add_checkpoint(

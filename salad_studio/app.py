@@ -55,6 +55,72 @@ TAB_ORDER = (
     "Logs",
 )
 LORA_CHECK_COLUMNS = 3
+# The LoRA grid's columns, in the order they are shown: the verified dot first,
+# because that is the state a row is looked up for.
+LORA_COLUMNS: tuple[str, ...] = (
+    "verified",
+    "id",
+    "name",
+    "version",
+    "model",
+    "source",
+    "filename",
+)
+
+
+def lora_grid_row(item: dict) -> dict:
+    """One library row as the grid shows it: the cell text per column, and the row's data.
+
+    ``verified`` is a dot rather than the words yes/no, and the row's tag carries
+    the colour, so which state a row is in is readable off the widget itself.
+    """
+    source = item.get("source") or {}
+    lid = str(item.get("id") or "")
+    name = str(item.get("name") or "")
+    return {
+        "id": lid,
+        "name": name,
+        "verified": bool(item.get("verified")),
+        "item": item,
+        "cells": {
+            "verified": "●",
+            "id": lid,
+            "name": name,
+            "version": lora_store.version_label(item),
+            "model": lora_store.family_label(item),
+            "source": str(source.get("host") or ""),
+            "filename": lora_store.comfy_lora_name(item),
+        },
+    }
+
+
+def lora_rows_matching(rows: list[dict], needle: str) -> list[dict]:
+    """The rows whose name contains the typed text, anywhere in the name, any case."""
+    text = str(needle or "").strip().lower()
+    if not text:
+        return list(rows)
+    return [row for row in rows if text in row["name"].lower()]
+
+
+def lora_rows_sorted(
+    rows: list[dict], column: str = "", reverse: bool = False
+) -> list[dict]:
+    """The rows ordered by one column, the way a heading click asks for.
+
+    Every column sorts on the text it shows, so the order matches what can be
+    read off the grid; the verified column sorts on the state itself, with the
+    unverified rows first in ascending order because those are the ones to look
+    at. An unknown column leaves the rows as they came.
+    """
+    if column not in LORA_COLUMNS:
+        return list(rows)
+
+    def key(row: dict) -> tuple:
+        if column == "verified":
+            return (1 if row["verified"] else 0, row["name"].lower())
+        return (str(row["cells"].get(column) or "").lower(),)
+
+    return sorted(rows, key=key, reverse=bool(reverse))
 QUEUE_EMPTY_TEXT = "The queue is empty. Press Generate to submit a render."
 QUEUE_CANCEL_NOTE = (
     "Cancel drops a request that has not been submitted yet. A request the "
@@ -173,7 +239,9 @@ class SaladStudio(tk.Tk):
 
         self._load_profiles_into_ui()
         self._refresh_lora_lists()
-        if not self._restore_ui_state():
+        restored = self._restore_ui_state()
+        self._apply_restored_profile()
+        if not restored:
             self._sync_editor()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._hold_opened_size()
@@ -942,12 +1010,13 @@ class SaladStudio(tk.Tk):
     def _policy_for_display(self, prof: SaladProfile) -> dict:
         """What the fields show for a config before its group is read.
 
-        The config's own stored policy, with the metadata document's image for
-        its family when it stores none: a config that was never loaded must still
-        show an image, and a re-check that fails must leave these values standing.
+        Every field, from the config's own stored policy where it has a value and
+        the metadata document's documented settings for its family where it does
+        not: a config that was never loaded — or whose group cannot be read —
+        still shows an image and all twelve probe fields rather than blanks.
         """
-        return salad_status.shown_policy(
-            getattr(prof, "policy", None), profiles.policy_image_for(prof)
+        return salad_status.resolved_policy(
+            getattr(prof, "policy", None), None, profiles.seeded_policy(prof)
         )
 
     def _recheck_policy(self, prof: SaladProfile) -> None:
@@ -1022,7 +1091,7 @@ class SaladStudio(tk.Tk):
                 self.status.set("Gateway URL is empty.")
             return
         stored = dict(getattr(prof, "policy", None) or {}) if prof is not None else {}
-        document_image = profiles.policy_image_for(prof) if prof is not None else ""
+        document = profiles.seeded_policy(prof) if prof is not None else {}
 
         def work() -> None:
             err = ""
@@ -1051,17 +1120,19 @@ class SaladStudio(tk.Tk):
                     self.status.set(err or "Load policy failed")
                     self.log("error", f"Policy load: {err}")
                     return
-                live = dict(pol)
-                live["image"] = salad_status.resolve_policy_image(stored, live, document_image)
-                self._fill_gpu_checkboxes(gpus, list(live.get("gpu_classes") or []))
-                self._policy_to_form(live)
-                self.status.set(f"Loaded policy {live.get('group_name')} v{live.get('version')}")
+                # The read wins where it answers; the config's stored policy and
+                # the document's settings fill the rest, so a field the group does
+                # not carry is never left blank.
+                shown = salad_status.resolved_policy(stored, pol, document)
+                self._fill_gpu_checkboxes(gpus, list(shown.get("gpu_classes") or []))
+                self._policy_to_form(shown)
+                self.status.set(f"Loaded policy {shown.get('group_name')} v{shown.get('version')}")
                 self.log(
                     "ok",
-                    f"Policy loaded {live.get('group_name')} v{live.get('version')} "
-                    f"image={live.get('image')} "
-                    f"startup delay={live['startup'].get('initial_delay_seconds')}s "
-                    f"fail={live['startup'].get('failure_threshold')}",
+                    f"Policy loaded {shown.get('group_name')} v{shown.get('version')} "
+                    f"image={shown.get('image')} "
+                    f"startup delay={shown['startup'].get('initial_delay_seconds')}s "
+                    f"fail={shown['startup'].get('failure_threshold')}",
                 )
 
             self.after(0, done)
@@ -1314,24 +1385,45 @@ class SaladStudio(tk.Tk):
     def _build_loras_tab(self) -> None:
         self._loras = ttk.Frame(self.nb, padding=10)
         self._loras.columnconfigure(0, weight=1)
-        self._loras.rowconfigure(0, weight=1)
-        cols = ("id", "name", "version", "model", "source", "filename", "verified")
-        self.lora_tree = ttk.Treeview(self._loras, columns=cols, show="headings", height=12)
+        self._loras.rowconfigure(1, weight=1)
+        find = ttk.Frame(self._loras)
+        find.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        ttk.Label(find, text="Find by name").pack(side="left")
+        self.var_lora_find = tk.StringVar()
+        ttk.Entry(find, textvariable=self.var_lora_find, width=32).pack(
+            side="left", padx=6
+        )
+        ttk.Button(find, text="Clear", command=lambda: self.var_lora_find.set("")).pack(
+            side="left"
+        )
+        ttk.Label(find, text="a part of the name is enough").pack(side="left", padx=(8, 0))
+        self._lora_sort: tuple[str, bool] = ("", False)
+        self.lora_tree = ttk.Treeview(
+            self._loras, columns=LORA_COLUMNS, show="headings", height=12
+        )
         for col, heading, width in (
+            ("verified", "Verified", 80),
             ("id", "Id", 200),
             ("name", "Name", 160),
             ("version", "Version", 120),
             ("model", "Model", 110),
             ("source", "Source", 100),
             ("filename", "Comfy name", 180),
-            ("verified", "Verified", 70),
         ):
-            self.lora_tree.heading(col, text=heading)
+            # A heading click orders the grid by that column, and clicking it
+            # again reverses the order.
+            self.lora_tree.heading(
+                col, text=heading, command=lambda c=col: self._sort_lora_tree(c)
+            )
             self.lora_tree.column(col, width=width)
-        self.lora_tree.grid(row=0, column=0, sticky="nsew")
+        # The dot's colour rides the row's tag: Treeview colours a row, not a cell.
+        self.lora_tree.tag_configure("verified", foreground=theme.PALETTE["valid"])
+        self.lora_tree.tag_configure("unverified", foreground=theme.PALETTE["invalid"])
+        self.lora_tree.grid(row=1, column=0, sticky="nsew")
         self.lora_tree.bind("<<TreeviewSelect>>", self._on_lora_tree_select)
+        self.var_lora_find.trace_add("write", lambda *_a: self._refresh_lora_tree())
         add = ttk.LabelFrame(self._loras, text="Add / edit LoRA", padding=8)
-        add.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        add.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         add.columnconfigure(1, weight=1)
         ttk.Label(add, text="Civitai / HF URL / civitai:id@version / local path").grid(
             row=0, column=0, sticky="w"
@@ -2438,7 +2530,11 @@ class SaladStudio(tk.Tk):
             if raw and Image is not None and Path(raw).is_file():
                 try:
                     im = Image.open(raw)
-                    photo = ImageTk.PhotoImage(im)
+                    # The image belongs to this tree's interpreter: without an
+                    # explicit master Tkinter binds it to the process's default
+                    # root, which is a different (or already destroyed) window as
+                    # soon as a second window exists in the same process.
+                    photo = ImageTk.PhotoImage(im, master=tree)
                     self._hist_photos.append(photo)
                 except OSError:
                     photo = None
@@ -2558,7 +2654,7 @@ class SaladStudio(tk.Tk):
         ttk.Label(bar, textvariable=self.var_queue_summary, style="Status.TLabel").pack(
             side="left", padx=(12, 0)
         )
-        cols = ("id", "profile", "state", "attempts", "status", "reason", "request")
+        cols = ("id", "profile", "state", "attempts", "status", "reason", "request", "finished")
         self.queue_tree = ttk.Treeview(self._queue, columns=cols, show="headings", height=14)
         for col, heading, width, stretch in (
             ("id", "#", 40, False),
@@ -2566,8 +2662,9 @@ class SaladStudio(tk.Tk):
             ("state", "State", 90, False),
             ("attempts", "Attempts", 70, False),
             ("status", "Last status", 90, False),
-            ("reason", "Reason", 280, True),
-            ("request", "Request", 220, True),
+            ("reason", "Reason", 260, True),
+            ("request", "Request", 200, True),
+            ("finished", "Finished", 70, False),
         ):
             self.queue_tree.heading(col, text=heading)
             self.queue_tree.column(col, width=width, stretch=stretch, anchor="w")
@@ -2585,19 +2682,67 @@ class SaladStudio(tk.Tk):
         ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
         self._refresh_queue_page()
 
-    def _queue_rows(self) -> list[tuple[str, ...]]:
-        """One row per job, straight out of the queue's records."""
-        rows: list[tuple[str, ...]] = []
+    @staticmethod
+    def _finished_label(stamp: Any) -> str:
+        """The finish time a row shows, or "" while a request has not finished."""
+        try:
+            seconds = float(stamp or 0)
+        except (TypeError, ValueError):
+            return ""
+        if seconds <= 0:
+            return ""
+        return time.strftime("%H:%M", time.localtime(seconds))
+
+    def _queue_rows(self) -> list[tuple[str, tuple[str, ...]]]:
+        """One (row key, cells) per request: the queue's records, then the finished ones it kept.
+
+        Each row's state cell is the human word for the request's stage, so the
+        page says what is happening rather than naming an internal state. A
+        finished request the queue still holds a record for is shown once, with
+        the time it finished; a request from an earlier session - the queue keeps
+        those for the retention window - is shown from its record, because this
+        session has no job for it.
+        """
+        kept = self.gen_queue.finished()
+        finished_at = {
+            int(record.get("id") or 0): record.get("finished_at") for record in kept
+        }
+        rows: list[tuple[str, tuple[str, ...]]] = []
+        live: set[int] = set()
         for job in self.gen_queue.jobs():
+            live.add(int(job.id))
             rows.append(
                 (
                     str(job.id),
-                    job.line or "(default)",
-                    job.state,
-                    str(job.attempts),
-                    str(job.status) if job.status else "",
-                    job.reason or "",
-                    queue_request_label(job.request),
+                    (
+                        str(job.id),
+                        job.line or "(default)",
+                        salad_queue.status_word(job.state),
+                        str(job.attempts),
+                        str(job.status) if job.status else "",
+                        job.reason or "",
+                        queue_request_label(job.request),
+                        self._finished_label(finished_at.get(int(job.id))),
+                    ),
+                )
+            )
+        for record in kept:
+            rid = int(record.get("id") or 0)
+            if rid in live:
+                continue
+            rows.append(
+                (
+                    f"kept-{rid}",
+                    (
+                        str(rid),
+                        str(record.get("profile") or "(default)"),
+                        salad_queue.status_word(str(record.get("state") or "")),
+                        "",
+                        str(record.get("status") or ""),
+                        str(record.get("reason") or ""),
+                        "(earlier session)",
+                        self._finished_label(record.get("finished_at")),
+                    ),
                 )
             )
         return rows
@@ -2608,21 +2753,22 @@ class SaladStudio(tk.Tk):
             return
         selected = tuple(tree.selection())
         tree.delete(*tree.get_children())
-        for row in self._queue_rows():
-            tree.insert("", "end", iid=row[0], values=row)
+        rows = self._queue_rows()
+        for key, values in rows:
+            tree.insert("", "end", iid=key, values=values)
         for iid in selected:
             if tree.exists(iid):
                 tree.selection_add(iid)
-        jobs = self.gen_queue.jobs()
-        if jobs:
+        if rows:
             self.queue_empty_lbl.grid_remove()
         else:
             self.queue_empty_lbl.grid()
         counts: dict[str, int] = {}
-        for job in jobs:
-            counts[job.state] = counts.get(job.state, 0) + 1
+        for job in self.gen_queue.jobs():
+            word = salad_queue.status_word(job.state)
+            counts[word] = counts.get(word, 0) + 1
         pending = self.gen_queue.pending()
-        summary = f"{len(jobs)} request(s)"
+        summary = f"{len(rows)} request(s)"
         if pending:
             summary += f", {pending} not finished"
         busy_lines = self.gen_queue.lines()
@@ -2841,23 +2987,42 @@ class SaladStudio(tk.Tk):
                     row_i += 1
         finally:
             self._syncing_loras = False
-        for child in self.lora_tree.get_children():
-            self.lora_tree.delete(child)
-        for item in rows:
-            src = item.get("source") or {}
-            self.lora_tree.insert(
+        self._refresh_lora_tree(rows)
+
+    def _sort_lora_tree(self, column: str) -> None:
+        """Order the grid by a heading's column; the same heading again reverses it."""
+        current, reverse = self._lora_sort
+        self._lora_sort = (column, not reverse if current == column else False)
+        self._refresh_lora_tree()
+        self.log(
+            "debug",
+            f"LoRA grid sorted by {column} "
+            f"({'descending' if self._lora_sort[1] else 'ascending'})",
+        )
+
+    def _refresh_lora_tree(self, rows: list[dict] | None = None) -> None:
+        """Fill the grid: the find box narrows the rows, the last heading click orders them.
+
+        ``rows`` is the library's own list when a caller already has it; without
+        one the store is read, which is what the find box and a heading click do.
+        """
+        items = lora_store.list_loras() if rows is None else rows
+        shown = lora_rows_sorted(
+            lora_rows_matching(
+                [lora_grid_row(item) for item in items], self.var_lora_find.get()
+            ),
+            *self._lora_sort,
+        )
+        tree = self.lora_tree
+        for child in tree.get_children():
+            tree.delete(child)
+        for row in shown:
+            tree.insert(
                 "",
                 "end",
-                iid=str(item.get("id") or ""),
-                values=(
-                    item.get("id") or "",
-                    item.get("name") or "",
-                    lora_store.version_label(item),
-                    lora_store.family_label(item),
-                    src.get("host") or "",
-                    lora_store.comfy_lora_name(item),
-                    "yes" if item.get("verified") else "no",
-                ),
+                iid=row["id"],
+                values=tuple(row["cells"][column] for column in LORA_COLUMNS),
+                tags=("verified" if row["verified"] else "unverified",),
             )
 
     def _fill_lora_form(self, item: dict) -> None:
@@ -3743,6 +3908,22 @@ class SaladStudio(tk.Tk):
             active = names[0]
         self._apply_profile(allp[active])
         self._refresh_replica_strip()
+
+    def _apply_restored_profile(self) -> None:
+        """Make the profile box, the checkpoints and the policy agree after a restore.
+
+        The saved window state names the config the window was last on, and the
+        store's active config can be a different one. The fields must belong to
+        the config the box names, so that config's own parts are re-applied here;
+        the knobs (size, steps, seed, graph) are what the restore just put back.
+        """
+        name = (self.var_name.get() or "").strip()
+        prof = profiles.load_all().get(name)
+        if prof is None:
+            return
+        self._refresh_checkpoint_list(prof)
+        self._show_policy(self._policy_for_display(prof))
+        self._recheck_policy(prof)
 
     def _on_select_profile(self) -> None:
         name = self.var_name.get().strip()

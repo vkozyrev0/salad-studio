@@ -74,6 +74,24 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(q.reason_of(q.Attempt(status=404, body=b"")), "HTTP 404")
 
 
+class StatusWordTest(unittest.TestCase):
+    """The Queue page's word for a state, and a state it does not know."""
+
+    def test_every_state_has_its_word(self) -> None:
+        self.assertEqual(q.status_word(q.PENDING), "waiting")
+        self.assertEqual(q.status_word(q.RUNNING), "in progress")
+        self.assertEqual(q.status_word(q.ACCEPTED), "done")
+        self.assertEqual(q.status_word(q.FAILED), "failed")
+        self.assertEqual(q.status_word(q.CANCELLED), "cancelled")
+
+    def test_a_state_with_no_word_comes_back_as_itself(self) -> None:
+        self.assertEqual(q.status_word("held"), "held")
+        self.assertEqual(q.status_word(""), "", "an empty state is still not blanked")
+        self.assertEqual(
+            q.status_word("ACCEPTED"), "ACCEPTED", "an unknown spelling is shown as it is"
+        )
+
+
 class _Gate:
     """An injected clock, so no test waits 8 s for a backoff.
 
@@ -1036,6 +1054,231 @@ class ContainerLedgerTest(unittest.TestCase):
             second.containers(),
             {"klein": self.GW, "snofs": "https://snofs.example/"},
         )
+
+
+class FinishedRecordTest(unittest.TestCase):
+    """What just happened, kept for a few hours, in the ownership file.
+
+    The retention window is driven by moving the injected clock, so no test
+    waits for it, and every record is read back through ``finished()``.
+    """
+
+    GW = "https://klein.example/"
+
+    def setUp(self) -> None:
+        self._td = TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.ledger = Path(self._td.name) / "studio-queue.json"
+        self.gate = _Gate()
+        self.logs: list[str] = []
+
+    def _queue(self, **kw) -> q.SaladQueue:
+        return q.SaladQueue(
+            on_log=lambda level, message: self.logs.append(f"{level}:{message}"),
+            sleep=self.gate.sleep,
+            now=self.gate.now,
+            ledger_path=kw.pop("ledger_path", self.ledger),
+            **kw,
+        )
+
+    @staticmethod
+    def _accept(_job):
+        return q.Attempt(status=200, accepted=True, result="plate")
+
+    def _file_finished(self) -> list[dict]:
+        return json.loads(self.ledger.read_text(encoding="utf-8"))["finished"]
+
+    def test_an_accepted_request_is_recorded_with_its_profile_and_finish_time(self) -> None:
+        line = self._queue()
+        self.gate.t = 1_000.0
+        job = line.deliver(
+            {"gateway": self.GW, "profile": "klein"}, self._accept, line="klein"
+        )
+        self.assertEqual(job.state, q.ACCEPTED)
+        rows = line.finished()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(
+            rows[0],
+            {
+                "id": job.id,
+                "profile": "klein",
+                "state": q.ACCEPTED,
+                "status": 200,
+                "reason": "",
+                "finished_at": 1_000.0,
+            },
+        )
+        self.assertEqual(
+            self._file_finished(), rows, "the record goes in the ownership file"
+        )
+
+    def test_a_failed_request_is_recorded_with_its_status_and_reason(self) -> None:
+        line = self._queue()
+        self.gate.t = 2_000.0
+        job = line.deliver(
+            {"gateway": self.GW, "profile": "klein"},
+            lambda _job: q.Attempt(
+                status=400, body=b'{"error": {"message": "invalid graph node 94"}}'
+            ),
+            line="klein",
+        )
+        self.assertEqual(job.state, q.FAILED)
+        row = line.finished()[0]
+        self.assertEqual(row["id"], job.id)
+        self.assertEqual(row["state"], q.FAILED)
+        self.assertEqual(row["status"], 400)
+        self.assertIn("invalid graph node 94", row["reason"])
+        self.assertEqual(row["finished_at"], 2_000.0)
+
+    def test_a_cancelled_request_is_recorded(self) -> None:
+        line = self._queue()
+        self.gate.t = 3_000.0
+        job = line.enqueue({"gateway": self.GW, "profile": "klein"}, line="klein")
+        self.assertTrue(line.cancel(job))
+        row = line.finished()[0]
+        self.assertEqual(row["id"], job.id)
+        self.assertEqual(row["state"], q.CANCELLED)
+        self.assertEqual(row["finished_at"], 3_000.0)
+
+    def test_a_retried_request_ends_with_one_record_of_its_latest_state(self) -> None:
+        line = self._queue()
+        self.gate.t = 3_500.0
+        seen: list[int] = []
+
+        def transport(_job):
+            seen.append(1)
+            if len(seen) == 1:
+                return q.Attempt(status=400, body=b'{"error": {"message": "bad graph"}}')
+            return q.Attempt(status=200, accepted=True, result="plate")
+
+        job = line.deliver({"gateway": self.GW, "profile": "klein"}, transport, line="klein")
+        self.assertEqual(job.state, q.FAILED)
+        self.gate.t += 20
+        line.retry(job)
+        self.assertEqual(job.state, q.ACCEPTED)
+        rows = line.finished()
+        self.assertEqual(len(rows), 1, "the retried request keeps one row, not two")
+        self.assertEqual((rows[0]["state"], rows[0]["status"]), (q.ACCEPTED, 200))
+        self.assertEqual(rows[0]["finished_at"], 3_520.0)
+
+    def test_the_newest_finished_request_comes_first(self) -> None:
+        line = self._queue()
+        self.gate.t = 4_000.0
+        first = line.deliver({"gateway": self.GW, "profile": "klein"}, self._accept, line="klein")
+        self.gate.t += 30
+        second = line.deliver(
+            {"gateway": self.GW, "profile": "snofs"}, self._accept, line="snofs"
+        )
+        self.assertEqual([row["id"] for row in line.finished()], [second.id, first.id])
+
+    def test_a_request_that_has_not_finished_is_never_recorded(self) -> None:
+        line = self._queue()
+        self.gate.t = 5_000.0
+        queued = line.enqueue({"gateway": self.GW, "profile": "klein"}, line="klein")
+        self.assertEqual(queued.state, q.PENDING)
+        self.assertEqual(line.finished(), [], "nothing has finished yet")
+        self.gate.t += q.FINISHED_RETENTION_S * 4
+        self.assertEqual(line.finished(), [], "and a clock move cannot invent one")
+        self.assertEqual(queued.state, q.PENDING, "the pending request is untouched")
+        self.assertEqual(line.pending(), 1)
+
+    def test_a_pending_request_survives_the_pruning_of_a_finished_one(self) -> None:
+        line = self._queue()
+        self.gate.t = 6_000.0
+        done = line.deliver({"gateway": self.GW, "profile": "klein"}, self._accept, line="klein")
+        queued = line.enqueue({"gateway": self.GW, "profile": "snofs"}, line="snofs")
+        self.gate.t += q.FINISHED_RETENTION_S + 1
+        self.assertEqual(line.finished(), [], "the finished record aged out")
+        self.assertEqual(done.state, q.ACCEPTED)
+        self.assertEqual(queued.state, q.PENDING, "the live request is still in the queue")
+        self.assertEqual(line.pending(), 1)
+
+    def test_the_record_survives_a_new_queue_on_the_same_ledger(self) -> None:
+        first = self._queue()
+        self.gate.t = 7_000.0
+        job = first.deliver(
+            {"gateway": self.GW, "profile": "klein"}, self._accept, line="klein"
+        )
+        self.assertEqual(job.state, q.ACCEPTED)
+
+        # A new process: same file, no memory of the first queue at all.
+        self.gate.t += 60
+        second = self._queue()
+        rows = second.finished()
+        self.assertEqual(second.jobs(), [], "the rows themselves are not persisted")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["id"], rows[0]["profile"]), (job.id, "klein"))
+        self.assertEqual(rows[0]["state"], q.ACCEPTED)
+        self.assertEqual(rows[0]["finished_at"], 7_000.0)
+
+    def test_a_queue_with_no_ledger_still_keeps_the_history_in_memory(self) -> None:
+        line = self._queue(ledger_path=None)
+        self.gate.t = 8_000.0
+        line.deliver({"gateway": self.GW, "profile": "klein"}, self._accept, line="klein")
+        self.assertEqual([row["state"] for row in line.finished()], [q.ACCEPTED])
+        self.assertFalse(self.ledger.is_file(), "no ledger path means nothing is written")
+
+    def test_the_window_drops_the_record_and_the_file_no_longer_carries_it(self) -> None:
+        line = self._queue()
+        self.gate.t = 9_000.0
+        line.deliver({"gateway": self.GW, "profile": "klein"}, self._accept, line="klein")
+        self.assertEqual(len(line.finished()), 1)
+
+        self.gate.t += q.FINISHED_RETENTION_S
+        self.assertEqual(
+            line.finished(), [], "a record at exactly the window is dropped"
+        )
+        self.assertEqual(self._file_finished(), [], "the dropped record leaves the file")
+
+    def test_a_record_inside_the_window_stays_after_the_same_clock_move(self) -> None:
+        line = self._queue()
+        self.gate.t = 10_000.0
+        line.deliver({"gateway": self.GW, "profile": "klein"}, self._accept, line="klein")
+        self.gate.t += q.FINISHED_RETENTION_S - 1
+        rows = line.finished()
+        self.assertEqual(len(rows), 1, "one second short of the window")
+        self.assertEqual(len(self._file_finished()), 1, "and still in the file")
+
+    def test_clear_finished_empties_the_history_and_the_file(self) -> None:
+        line = self._queue()
+        self.gate.t = 11_000.0
+        line.deliver({"gateway": self.GW, "profile": "klein"}, self._accept, line="klein")
+        self.assertTrue(line.finished())
+        self.assertEqual(line.clear_finished(), 1)
+        self.assertEqual(line.finished(), [])
+        self.assertEqual(self._file_finished(), [], "the cleared history leaves the file")
+
+    def test_the_ownership_shape_is_unchanged(self) -> None:
+        line = self._queue()
+        self.gate.t = 12_000.0
+        line.deliver({"gateway": self.GW, "profile": "klein"}, self._accept, line="klein")
+        self.assertEqual(
+            line.records(),
+            {"klein": {"gateway": self.GW, "last_active": 12_000.0}},
+            "the container records keep their shape",
+        )
+        self.assertEqual(line.containers(), {"klein": self.GW})
+        data = json.loads(self.ledger.read_text(encoding="utf-8"))
+        self.assertEqual(data["version"], q.LEDGER_VERSION)
+        self.assertEqual(set(data), {"version", "containers", "finished"})
+        self.assertEqual(q.load_ledger(self.ledger), line.records())
+
+    def test_a_ledger_written_before_the_finished_list_still_loads(self) -> None:
+        self.ledger.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "containers": {"klein": {"gateway": self.GW, "last_active": 100.0}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        line = self._queue()
+        self.assertEqual(line.containers(), {"klein": self.GW})
+        self.assertEqual(
+            line.records(), {"klein": {"gateway": self.GW, "last_active": 100.0}}
+        )
+        self.assertEqual(line.finished(), [], "an older file simply has no history")
 
 
 class GeneratorThroughTheQueue(unittest.TestCase):

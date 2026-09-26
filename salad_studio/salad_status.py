@@ -240,6 +240,101 @@ def shown_policy(
     return shown
 
 
+# The probe fields a policy carries, per probe kind. The Config page shows all of
+# them, so "which source answers this field" is asked per field, not per policy.
+POLICY_PROBE_KINDS: tuple[str, str] = ("startup", "readiness")
+POLICY_PROBE_FIELDS: tuple[str, ...] = (
+    "path",
+    "port",
+    "initial_delay_seconds",
+    "period_seconds",
+    "timeout_seconds",
+    "failure_threshold",
+)
+
+
+def _policy_text(policy: Any, key: str) -> str:
+    """A string field of a policy dict, stripped; "" for anything unusable."""
+    if not isinstance(policy, dict):
+        return ""
+    value = policy.get(key)
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _policy_field(block: Any, field: str) -> str:
+    """One probe field as the window's entry wants it: text, or ""."""
+    if not isinstance(block, dict):
+        return ""
+    value = block.get(field)
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def resolved_policy(
+    stored: dict[str, Any] | None = None,
+    live: dict[str, Any] | None = None,
+    document: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The policy a config's fields show, field by field, from the first source that has it.
+
+    Per field: a fresh read of the config's own group, then the config's stored
+    policy, then the metadata document's documented settings for its family. The
+    read wins because it says what that container is running now (the website is
+    the other place a group gets edited); the stored policy answers when there is
+    no read, and for the fields a read does not carry; the document's settings
+    are last, which is what stops a config that never stored a policy from
+    showing blank probe fields on first load. A blank or whitespace-only value
+    counts as absent at every step, so a field saved empty cannot hide the one
+    behind it.
+
+    The result is a new dict whose nested dicts and lists are new too, so the
+    window may edit what it shows without reaching into the profile record, a
+    snapshot, or the metadata document.
+    """
+    sources = [s for s in (live, stored, document) if isinstance(s, dict)]
+
+    def first_text(key: str) -> str:
+        for source in sources:
+            text = _policy_text(source, key)
+            if text:
+                return text
+        return ""
+
+    def first_list(key: str) -> list[Any]:
+        for source in sources:
+            value = source.get(key)
+            if isinstance(value, list) and value:
+                return list(value)
+        return []
+
+    out: dict[str, Any] = {
+        "group_name": first_text("group_name"),
+        "version": next(
+            (
+                source.get("version")
+                for source in sources
+                if source.get("version") not in (None, "")
+            ),
+            None,
+        ),
+        "image": resolve_policy_image(stored, live, _policy_image(document)),
+        "gpu_classes": first_list("gpu_classes"),
+        "country_codes": [str(code).lower() for code in first_list("country_codes")],
+    }
+    for kind in POLICY_PROBE_KINDS:
+        block: dict[str, str] = {}
+        for field in POLICY_PROBE_FIELDS:
+            value = ""
+            for source in sources:
+                value = _policy_field(source.get(kind), field)
+                if value:
+                    break
+            block[field] = value
+        out[kind] = block
+    return out
+
+
 STARTUP_EXPLAIN = (
     "After the container process starts, Salad waits {delay}s, then GET {path} "
     "on port {port} every {period}s (each try may last up to {timeout}s). "

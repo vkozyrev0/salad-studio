@@ -270,6 +270,121 @@ class PolicyImageFromMetadataTest(unittest.TestCase):
         )
 
 
+class ProbeSettingsFromMetadataTest(unittest.TestCase):
+    """The document's per-family probes are the settings a container runs.
+
+    They are what a config with nothing stored starts from, and what the Config
+    page falls back to when neither its stored policy nor a live group read
+    answers, so a hand-edited document must not smuggle a key into a policy.
+    """
+
+    def setUp(self) -> None:
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.tmp = Path(self._td.name)
+
+    def _write(self, payload: dict) -> Path:
+        path = self.tmp / "meta.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def test_the_shipped_document_documents_both_probes_for_both_families(self) -> None:
+        doc = meta.load()
+        for family in ("snofs", "klein"):
+            with self.subTest(family=family):
+                documented = meta.families(doc)[family]
+                got = meta.probe_settings_for_family(family, doc)
+                self.assertEqual(sorted(got), [meta.READINESS, meta.STARTUP])
+                for kind, key in (
+                    (meta.STARTUP, meta.STARTUP_PROBE),
+                    (meta.READINESS, meta.READINESS_PROBE),
+                ):
+                    self.assertEqual(sorted(got[kind]), sorted(meta.PROBE_KEYS))
+                    self.assertEqual(got[kind], documented[key])
+
+    def test_the_shipped_document_states_the_probes_the_groups_run(self) -> None:
+        """The values the live groups are configured with, written down."""
+        doc = meta.load()
+        for family in ("snofs", "klein"):
+            with self.subTest(family=family):
+                got = meta.probe_settings_for_family(family, doc)
+                self.assertEqual(
+                    got[meta.STARTUP],
+                    {
+                        "path": "/health",
+                        "port": 3000,
+                        "initial_delay_seconds": 1200,
+                        "period_seconds": 120,
+                        "timeout_seconds": 10,
+                        "failure_threshold": 20,
+                    },
+                )
+                self.assertEqual(
+                    got[meta.READINESS],
+                    {
+                        "path": "/ready",
+                        "port": 3000,
+                        "initial_delay_seconds": 0,
+                        "period_seconds": 10,
+                        "timeout_seconds": 5,
+                        "failure_threshold": 20,
+                    },
+                )
+
+    def test_a_family_with_no_documented_probes_comes_back_empty(self) -> None:
+        doc = meta.load(path=self._write(_document()))
+        self.assertEqual(meta.probe_settings_for_family("klein", doc), {})
+        self.assertEqual(meta.probe_settings_for_family("nobody", doc), {})
+        self.assertEqual(
+            meta.probe_settings_for_family("klein", {"routing": {"families": {}}}), {}
+        )
+        self.assertEqual(meta.probe_settings_for_family("klein", None), {})
+
+    def test_a_stray_key_inside_a_probe_is_dropped(self) -> None:
+        path = self._write(
+            {
+                "routing": {
+                    "families": {
+                        "klein": {
+                            "unets": [KLEIN_UNET],
+                            "markers": ["klein"],
+                            "startup_probe": {
+                                "path": "/health",
+                                "port": 3000,
+                                "initial_delay_seconds": 1200,
+                                "period_seconds": 120,
+                                "timeout_seconds": 10,
+                                "failure_threshold": 20,
+                                "retries_left": 9,
+                            },
+                        }
+                    }
+                }
+            }
+        )
+        self.assertIn(
+            "retries_left",
+            path.read_text(encoding="utf-8"),
+            "the hand edit must be in the file this test drives",
+        )
+        got = meta.probe_settings_for_family("klein", meta.load(path=path))
+        self.assertEqual(sorted(got), [meta.STARTUP], "readiness is not documented")
+        self.assertEqual(sorted(got[meta.STARTUP]), sorted(meta.PROBE_KEYS))
+        self.assertEqual(got[meta.STARTUP]["port"], 3000)
+
+    def test_a_broken_or_empty_document_comes_back_empty_not_raising(self) -> None:
+        for broken in (
+            "junk",
+            [],
+            7,
+            {},
+            {"routing": "nope"},
+            {"routing": {"families": "nope"}},
+        ):
+            with self.subTest(doc=broken):
+                self.assertEqual(meta.probe_settings_for_family("klein", broken), {})
+
+
 class IdleTimeoutFromMetadataTest(unittest.TestCase):
     """The queue's idle timeout is the document's setting, with a safe default."""
 

@@ -9,7 +9,23 @@
         ],
         "markers": [
           "snofs"
-        ]
+        ],
+        "startup_probe": {
+          "path": "/health",
+          "port": 3000,
+          "initial_delay_seconds": 1200,
+          "period_seconds": 120,
+          "timeout_seconds": 10,
+          "failure_threshold": 20
+        },
+        "readiness_probe": {
+          "path": "/ready",
+          "port": 3000,
+          "initial_delay_seconds": 0,
+          "period_seconds": 10,
+          "timeout_seconds": 5,
+          "failure_threshold": 20
+        }
       },
       "klein": {
         "image": "docker.io/vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-klein",
@@ -19,7 +35,23 @@
         ],
         "markers": [
           "klein"
-        ]
+        ],
+        "startup_probe": {
+          "path": "/health",
+          "port": 3000,
+          "initial_delay_seconds": 1200,
+          "period_seconds": 120,
+          "timeout_seconds": 10,
+          "failure_threshold": 20
+        },
+        "readiness_probe": {
+          "path": "/ready",
+          "port": 3000,
+          "initial_delay_seconds": 0,
+          "period_seconds": 10,
+          "timeout_seconds": 5,
+          "failure_threshold": 20
+        }
       }
     }
   },

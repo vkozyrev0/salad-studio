@@ -649,10 +649,10 @@ class ProfilePolicyTest(unittest.TestCase):
             loaded.policy["image"],
             studio_meta.image_for_family("klein", studio_meta.default()),
         )
-        self.assertEqual(
-            loaded.policy,
-            seeded_policy(SaladProfile(name="klein", checkpoints=[self.KLEIN_UNET])),
-        )
+        # The load fills the image in and nothing else: the probes the Config
+        # page shows come from the document, not from the stored record.
+        seeded = seeded_policy(SaladProfile(name="klein", checkpoints=[self.KLEIN_UNET]))
+        self.assertEqual(loaded.policy, {"image": seeded["image"]})
 
     def test_an_empty_stored_policy_comes_back_carrying_the_documents_image(self) -> None:
         upsert(
@@ -793,11 +793,14 @@ class ProfilePolicyTest(unittest.TestCase):
             with self.subTest(meta=broken):
                 self.assertEqual(policy_image_for(klein, broken), "")
 
-    def test_seeded_policy_is_the_documents_image_or_nothing(self) -> None:
+    def test_seeded_policy_is_the_documents_settings_or_nothing(self) -> None:
         klein = SaladProfile(name="klein", checkpoints=[self.KLEIN_UNET])
-        image = studio_meta.image_for_family("klein", studio_meta.default())
+        doc = studio_meta.default()
+        image = studio_meta.image_for_family("klein", doc)
+        probes = studio_meta.probe_settings_for_family("klein", doc)
         self.assertTrue(image, "the shipped document names a klein image")
-        self.assertEqual(seeded_policy(klein), {"image": image})
+        self.assertTrue(probes, "the shipped document documents klein's probes")
+        self.assertEqual(seeded_policy(klein), {"image": image, **probes})
         self.assertEqual(seeded_policy(SaladProfile(name="empty")), {})
         self.assertEqual(seeded_policy(klein, {"routing": {"families": {}}}), {})
         self.assertEqual(
@@ -807,6 +810,62 @@ class ProfilePolicyTest(unittest.TestCase):
             ),
             {},
         )
+
+    def test_a_new_builtin_profile_starts_with_the_documents_probes(self) -> None:
+        doc = studio_meta.default()
+        for name, family in (("klein", "klein"), ("klein5090", "snofs")):
+            with self.subTest(profile=name):
+                profile = default_profile(name)
+                self.assertEqual(
+                    profile.policy,
+                    {
+                        "image": studio_meta.image_for_family(family, doc),
+                        **studio_meta.probe_settings_for_family(family, doc),
+                    },
+                )
+                self.assertEqual(sorted(profile.policy), ["image", "readiness", "startup"])
+
+    def test_the_two_families_seed_the_probes_their_own_entry_documents(self) -> None:
+        """Where the document tells the families apart, so do the seeded policies."""
+        klein_probe = {
+            "path": "/health",
+            "port": 3000,
+            "initial_delay_seconds": 900,
+            "period_seconds": 60,
+            "timeout_seconds": 10,
+            "failure_threshold": 7,
+        }
+        snofs_probe = dict(klein_probe, initial_delay_seconds=30, failure_threshold=2)
+        doc = {
+            "routing": {
+                "families": {
+                    "klein": {
+                        "image": "ghcr.io/x/klein:1",
+                        "unets": [self.KLEIN_UNET],
+                        "markers": ["klein"],
+                        "startup_probe": klein_probe,
+                        "readiness_probe": dict(klein_probe, path="/ready"),
+                    },
+                    "snofs": {
+                        "unets": [SNOFS_UNET],
+                        "markers": ["snofs"],
+                        "startup_probe": snofs_probe,
+                    },
+                }
+            }
+        }
+        klein = seeded_policy(
+            SaladProfile(name="klein", checkpoints=[self.KLEIN_UNET]), doc
+        )
+        snofs = seeded_policy(
+            SaladProfile(name="klein5090", checkpoints=[SNOFS_UNET]), doc
+        )
+        self.assertEqual(klein["startup"], klein_probe)
+        self.assertEqual(klein["readiness"], dict(klein_probe, path="/ready"))
+        self.assertNotEqual(klein["startup"], snofs["startup"])
+        self.assertEqual(snofs["startup"], snofs_probe)
+        # The document names no image and no readiness for snofs: neither is invented.
+        self.assertEqual(sorted(snofs), ["startup"])
 
     def test_the_written_json_nests_each_policy_under_its_profile(self) -> None:
         klein, snofs = self._store_two()

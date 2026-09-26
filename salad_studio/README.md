@@ -51,11 +51,17 @@ the left and right.
   current image, GPU classes, country codes and probes instead of whatever the
   last config left behind; the read fills the fields only and never rewrites a
   stored record, and a read that fails (no key, no network, no matching group)
-  leaves what is on screen standing. The **image** comes from the metadata
-  document's per-family `image` when the config has none of its own — that is
-  what the initial setup seeds a new config with, and what the image field falls
-  back to — while a live group's image and a stored image each win over it, in
-  that order. There is one policy per config; no window-wide copy is kept.
+  leaves what is on screen standing. Every field follows that order — the image
+  and all twelve probe fields — so the page shows a complete policy the moment
+  the window opens: the config's own stored policy where it has a value, the
+  metadata document's documented settings for its family where it does not
+  (its per-family `image`, `startup_probe` and `readiness_probe`), and a fresh
+  read of that config's group where the group answers. A live group's value wins
+  over the document's, and a blank or whitespace-only value counts as absent, so
+  a field saved empty cannot hide the one behind it. The window's saved state
+  names the config it was last on, and that config's policy and checkpoints are
+  what the page shows even when the store's active config is a different one.
+  There is one policy per config; no window-wide copy is kept.
 - **Prompt Settings**. **Width**, **Height**, **Steps**, **CFG**, **Seed**,
   **Graph** (Flux.2 Klein / Flux.1 Dev), **Scheduler** (Flux2 / Simple), the
   **Checkpoint** (Base 9B / Distilled 9B) and the **LoRA** checkboxes. These are
@@ -74,7 +80,13 @@ the left and right.
   Studio/HTTP events (secrets redacted).
 - **LoRAs**. Known catalog LoRAs plus extras you add from a Civitai
   page / `civitai:id@version`, Hugging Face URL, local `.safetensors`
-  path, or a direct download URL.
+  path, or a direct download URL. The grid leads with **Verified**: a dot per
+  row, green when the row is verified and red when it is not (the row's own tag
+  carries the colour, since a `Treeview` colours a row and not a cell). Clicking
+  a **heading** orders the grid by that column and clicking it again reverses the
+  order, and **Find by name** narrows it to the rows whose name contains what you
+  type — any part of the name, any case; **Clear** brings every row back, and a
+  narrowed grid still sorts.
 - **Prompt Editor**. The JSON body POSTed to Salad `/prompt`. The
   node graph is **JointJS in a WebView2 pane** (manhattan wires that
   route around cards; no Graphviz `dot`). WebView2 cache lives in
@@ -242,12 +254,23 @@ the left and right.
   JSON + prompt.
 - **Queue**. The Salad request queue, rendered from `salad_queue`'s own
   records: one row per request with its **Profile** (the container profile it is
-  dispatched to), **State** (queued / running / accepted / failed / cancelled),
-  **Attempts**, **Last status**, **Reason** and **Request** (gateway host and
-  POST size, never a token), plus a summary of the states and an explicit empty
+  dispatched to), **State** — the human word for the request's stage: **waiting**
+  (queued, not submitted yet), **in progress** (submitted and running), **done**,
+  **failed**, **cancelled** — **Attempts**, **Last status**, **Reason**,
+  **Request** (gateway host and POST size, never a token) and **Finished** (the
+  time it finished), plus a summary of the states and an explicit empty
   state when nothing is queued. The rows refresh on the existing 15 s tick and on
   every queue event, so a render in flight and its recorded outcome both show up
-  without a manual refresh. There is **one line per profile**: a request waits
+  without a manual refresh, and the word on a row changes as the request moves.
+  **A finished request stays on the page for four hours**
+  (`salad_queue.FINISHED_RETENTION_S`), including after the window is closed and
+  reopened: the queue writes a finished request's row (id, profile, state,
+  status, reason and finish time) beside its container record in
+  `~/.config/salad/studio-queue.json` and drops it once it is older than that
+  window, so the next request keeps the id numbering and a kept row is never
+  overwritten. A request that has not finished is never in that record, so the
+  window can never drop one; **Clear finished** clears the page and the kept
+  rows together. There is **one line per profile**: a request waits
   behind the other requests for *its* container, and runs beside a request for a
   different profile, because one container runs one Comfy instance. **Cancel
   selected** drops a request that has **not been submitted yet** (a request the
@@ -367,7 +390,12 @@ and the reason is carried in the document's `error` field.
   check matches), the `markers` that catch a variant, and the `image` that group
   runs. That image is the source a config's policy image is seeded from, and the
   fallback when neither its own stored policy nor its live group names one, so
-  editing it here changes what a new config starts with. **Which profile serves
+  editing it here changes what a new config starts with. `startup_probe` and
+  `readiness_probe` document the six settings each probe runs
+  (`path`, `port`, `initial_delay_seconds`, `period_seconds`, `timeout_seconds`,
+  `failure_threshold`): they are what a new config's policy starts from and what
+  the Config page falls back to, so the page shows a full set of probe fields the
+  moment the window opens instead of waiting for a read. **Which profile serves
   which checkpoint is not here**: it
   is each profile's own `checkpoints` list, edited on the **Config** page, and
   routing sends a graph to the profile that lists the checkpoint it loads. A
@@ -408,7 +436,7 @@ the real freeze path the moment that gap is closed.
 Two test commands, and the second is not part of the first:
 
 ```
-python -m unittest discover -s salad_studio -p "test_*.py"   # 792 tests, ~6 min
+python -m unittest discover -s salad_studio -p "test_*.py"   # 824 tests, ~6 min
 python test_salad_comfy_live_findings.py                     # root structural checks
 ```
 

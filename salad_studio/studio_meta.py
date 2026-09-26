@@ -9,6 +9,12 @@ One JSON document carries the two things that used to be code literals:
   ``checkpoints`` list (:mod:`profiles`), so growing it is a Config-page edit.
   This section is the seed a new built-in profile starts from and the table that
   tells two checkpoints apart when a list is checked for mixing families.
+- ``routing.families.<family>.startup_probe`` / ``readiness_probe`` — the probe
+  settings that family's container runs: its ``path``, ``port``,
+  ``initial_delay_seconds``, ``period_seconds``, ``timeout_seconds`` and
+  ``failure_threshold``. They are what a config with nothing stored starts from,
+  and what the Config page falls back to when neither its stored policy nor a
+  live group read answers.
 - ``queue.idle_stop_s`` — how long a container may sit idle before the queue
   stops it, in seconds (one hour by default).
 - ``prompt`` — the instruction the AI layer sends: role, task, house rules and
@@ -36,6 +42,22 @@ DEFAULT_PATH = Path(__file__).resolve().parent / "studio-metadata.json"
 IMAGE = "image"
 UNETS = "unets"
 MARKERS = "markers"
+
+# Per-family probe settings: the document's names for the two probes, the
+# policy's names for what it carries (``startup`` / ``readiness``), and the six
+# settings each one is made of.
+STARTUP_PROBE = "startup_probe"
+READINESS_PROBE = "readiness_probe"
+STARTUP = "startup"
+READINESS = "readiness"
+PROBE_KEYS = (
+    "path",
+    "port",
+    "initial_delay_seconds",
+    "period_seconds",
+    "timeout_seconds",
+    "failure_threshold",
+)
 
 # The queue's idle-stop timeout, in seconds, when the document does not say.
 DEFAULT_IDLE_STOP_S = 3600
@@ -85,6 +107,18 @@ def _text_list(value: Any) -> list[str]:
     return out
 
 
+def _probe(raw: Any) -> dict[str, Any]:
+    """One probe's documented settings, and only those.
+
+    A hand-edited document can carry a key the policy has never heard of, so
+    only the six named settings pass through; a probe the document does not
+    describe at all reads as ``{}``.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    return {key: raw[key] for key in PROBE_KEYS if key in raw}
+
+
 def _families(raw: Any) -> dict[str, dict[str, Any]]:
     if not isinstance(raw, dict):
         return {}
@@ -98,6 +132,8 @@ def _families(raw: Any) -> dict[str, dict[str, Any]]:
             IMAGE: _text(data.get(IMAGE)),
             UNETS: _text_list(data.get(UNETS)),
             MARKERS: _text_list(data.get(MARKERS)),
+            STARTUP_PROBE: _probe(data.get(STARTUP_PROBE)),
+            READINESS_PROBE: _probe(data.get(READINESS_PROBE)),
         }
     return out
 
@@ -174,7 +210,7 @@ def load(path: Path | None = None) -> dict[str, Any]:
 
 
 def families(doc: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
-    """The routing table: family name to its group, image, unets and markers."""
+    """The routing table: family name to its group, image, unets, markers and probes."""
     routing = (doc or {}).get("routing")
     if not isinstance(routing, dict):
         return {}
@@ -241,13 +277,44 @@ def family_for_unet(unet: str, doc: dict[str, Any] | None) -> str:
 
 
 def entry_for_family(family: str, doc: dict[str, Any] | None) -> dict[str, Any]:
-    """The family's entry: its checkpoints, markers and image, or an empty one."""
-    return families(doc).get(family, {IMAGE: "", UNETS: [], MARKERS: []})
+    """The family's entry: its checkpoints, markers, image and probes, or an empty one."""
+    return families(doc).get(
+        family,
+        {
+            IMAGE: "",
+            UNETS: [],
+            MARKERS: [],
+            STARTUP_PROBE: {},
+            READINESS_PROBE: {},
+        },
+    )
 
 
 def image_for_family(family: str, doc: dict[str, Any] | None) -> str:
     """The container image recorded for ``family``, informational."""
     return _text(entry_for_family(family, doc).get(IMAGE))
+
+
+def probe_settings_for_family(
+    family: str, doc: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """The documented probe settings for ``family``: ``startup`` and ``readiness``.
+
+    Each kind carries the six settings the document names and only those, so a
+    stray key in a hand-edited document never reaches a policy. A kind the
+    document does not document is left out, and a family it does not name comes
+    back ``{}``: a broken document must leave the Config page's fields empty, not
+    abort the page reading them.
+    """
+    if not isinstance(doc, dict):
+        return {}
+    entry = entry_for_family(_text(family), doc)
+    out: dict[str, Any] = {}
+    for kind, key in ((STARTUP, STARTUP_PROBE), (READINESS, READINESS_PROBE)):
+        probe = _probe(entry.get(key))
+        if probe:
+            out[kind] = probe
+    return out
 
 
 def idle_stop_seconds(doc: dict[str, Any] | None) -> int:

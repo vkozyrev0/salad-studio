@@ -831,6 +831,35 @@ class LiveFieldSync(unittest.TestCase):
         app._on_click_outside_graph(event)
         self.assertEqual(released, ["parent"])
 
+    def test_a_click_event_naming_a_widget_by_path_does_not_raise(self) -> None:
+        """`bind_all` hands the WebView's click in as a path name, not a widget.
+
+        The handler used to call ``focus_set`` on that string, and Tk logged an
+        AttributeError and abandoned the callback.
+        """
+        from unittest import mock
+
+        app = self.app
+        released: list[str] = []
+        app.graph_pane._web.focus_parent = lambda: released.append("parent")
+        named = type("E", (), {"widget": str(app.editor_text)})()
+        with mock.patch.object(app.editor_text, "focus_set") as focus:
+            app._on_click_outside_graph(named)
+        self.assertEqual(released, ["parent"], "the graph's keyboard was not released")
+        self.assertTrue(focus.called, "the named widget must get the focus back")
+
+        # A name that resolves to nothing (a destroyed widget) is ignored.
+        stale = type("E", (), {"widget": ".!nosuchwidget"})()
+        app._on_click_outside_graph(stale)
+        nothing = type("E", (), {"widget": None})()
+        app._on_click_outside_graph(nothing)
+
+        # A click inside the graph pane still leaves the focus alone.
+        inside = type("E", (), {"widget": app.graph_pane})()
+        with mock.patch.object(app.editor_text, "focus_set") as focus2:
+            app._on_click_outside_graph(inside)
+        self.assertFalse(focus2.called)
+
     def test_prompt_edit_keeps_loaded_json_graph(self) -> None:
         app = self.app
         body = rj.build_request(
@@ -1721,8 +1750,8 @@ class NewPagesAndPlacement(unittest.TestCase):
         allp = profiles.load_all()
         klein, snofs = allp["klein"], allp["klein5090"]
         self.assertNotEqual(klein.gateway, snofs.gateway)
-        self.assertEqual(profiles.unet_family(klein.unet), "klein")
-        self.assertEqual(profiles.unet_family(snofs.unet), "snofs")
+        self.assertEqual(profiles.checkpoint_family(klein.primary_checkpoint), "klein")
+        self.assertEqual(profiles.checkpoint_family(snofs.primary_checkpoint), "snofs")
 
         used = self._generate_gateway(
             self._graph_with_unet(profiles.SNOFS_UNET), klein.gateway
@@ -1733,7 +1762,7 @@ class NewPagesAndPlacement(unittest.TestCase):
         from salad_studio import profiles
 
         klein = profiles.load_all()["klein"]
-        used = self._generate_gateway(self._graph_with_unet(klein.unet), klein.gateway)
+        used = self._generate_gateway(self._graph_with_unet(klein.primary_checkpoint), klein.gateway)
         self.assertEqual(used, klein.gateway)
 
     def test_generate_leaves_an_unknown_gateway_alone(self) -> None:

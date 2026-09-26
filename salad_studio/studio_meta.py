@@ -1,18 +1,23 @@
-"""The Studio metadata document: the routing table and the AI layer's prompt hints.
+"""The Studio metadata document: what a unet family is, and the AI layer's hints.
 
 One JSON document carries the two things that used to be code literals:
 
-- ``routing.families`` — unet family to Salad container group, keyed by the
-  checkpoint the graph loads. One container holds one unet family in VRAM (a
-  second ~9 GB unet beside the 8.66 GB Qwen encoder makes Comfy stream weights
-  from host memory, turning a 3 s render into minutes), so this table is what
-  decides which gateway a graph goes to.
+- ``routing.families`` — what counts as a unet family: the checkpoints that
+  belong to it (``unets``), the substrings that catch a variant (``markers``),
+  and the container image that runs it (``image``, informational). **Which
+  profile serves which checkpoint is not here**: that is each profile's own
+  ``checkpoints`` list (:mod:`profiles`), so growing it is a Config-page edit.
+  This section is the seed a new built-in profile starts from and the table that
+  tells two checkpoints apart when a list is checked for mixing families.
+- ``queue.idle_stop_s`` — how long a container may sit idle before the queue
+  stops it, in seconds (one hour by default).
 - ``prompt`` — the instruction the AI layer sends: role, task, house rules and
   the reply contract.
 
 Search order: the user's document (``~/.config/salad/studio-metadata.json``)
 when it is present and usable, else the shipped default beside this module.
-Editing either one changes routing and the AI instruction with no code edit.
+Editing either one changes the family table and the AI instruction with no code
+edit.
 
 Both consumers take the loaded document as a parameter, so a test points at a
 temp file and observes the effect without monkeypatching.
@@ -28,11 +33,13 @@ USER_PATH = CONFIG_HOME / "salad" / "studio-metadata.json"
 DEFAULT_PATH = Path(__file__).resolve().parent / "studio-metadata.json"
 
 # Routing keys, in the document's own vocabulary.
-GROUP = "group"
 IMAGE = "image"
-GATEWAY = "gateway"
 UNETS = "unets"
 MARKERS = "markers"
+
+# The queue's idle-stop timeout, in seconds, when the document does not say.
+DEFAULT_IDLE_STOP_S = 3600
+IDLE_STOP = "idle_stop_s"
 
 
 def _empty(source: str, error: str) -> dict[str, Any]:
@@ -40,10 +47,25 @@ def _empty(source: str, error: str) -> dict[str, Any]:
     return {
         "version": 0,
         "routing": {"families": {}},
+        "queue": {IDLE_STOP: DEFAULT_IDLE_STOP_S},
         "prompt": {"role": "", "task": "", "rules": [], "reply_contract": ""},
         "source": source,
         "error": error,
     }
+
+
+def idle_stop_s(value: Any) -> int:
+    """A positive idle timeout in seconds, or the one-hour default.
+
+    A hand-edited ``0``, a negative number or a word would either stop a
+    container the moment it went quiet or never stop it, so anything that is not
+    a positive whole number reads as the default.
+    """
+    try:
+        seconds = int(float(value))
+    except (TypeError, ValueError):
+        return DEFAULT_IDLE_STOP_S
+    return seconds if seconds > 0 else DEFAULT_IDLE_STOP_S
 
 
 def _text(value: Any) -> str:
@@ -73,9 +95,7 @@ def _families(raw: Any) -> dict[str, dict[str, Any]]:
             continue
         data = entry if isinstance(entry, dict) else {}
         out[name] = {
-            GROUP: _text(data.get(GROUP)),
             IMAGE: _text(data.get(IMAGE)),
-            GATEWAY: _text(data.get(GATEWAY)),
             UNETS: _text_list(data.get(UNETS)),
             MARKERS: _text_list(data.get(MARKERS)),
         }
@@ -85,6 +105,7 @@ def _families(raw: Any) -> dict[str, dict[str, Any]]:
 def normalise(data: dict[str, Any], *, source: str = "") -> dict[str, Any]:
     """A parsed document in one shape, with the fields a hand-edit can break filled in."""
     routing = data.get("routing") if isinstance(data.get("routing"), dict) else {}
+    queue = data.get("queue") if isinstance(data.get("queue"), dict) else {}
     prompt = data.get("prompt") if isinstance(data.get("prompt"), dict) else {}
     version = data.get("version")
     try:
@@ -94,6 +115,7 @@ def normalise(data: dict[str, Any], *, source: str = "") -> dict[str, Any]:
     return {
         "version": version,
         "routing": {"families": _families(routing.get("families"))},
+        "queue": {IDLE_STOP: idle_stop_s(queue.get(IDLE_STOP))},
         "prompt": {
             "role": _text(prompt.get("role")),
             "task": _text(prompt.get("task")),
@@ -219,30 +241,21 @@ def family_for_unet(unet: str, doc: dict[str, Any] | None) -> str:
 
 
 def entry_for_family(family: str, doc: dict[str, Any] | None) -> dict[str, Any]:
-    """The routing entry for ``family``, or an empty one."""
-    return families(doc).get(
-        family, {GROUP: "", IMAGE: "", GATEWAY: "", UNETS: [], MARKERS: []}
-    )
-
-
-def group_for_family(family: str, doc: dict[str, Any] | None) -> str:
-    """The Salad container group (the saved profile) that serves ``family``."""
-    return _text(entry_for_family(family, doc).get(GROUP))
-
-
-def gateway_for_family(family: str, doc: dict[str, Any] | None) -> str:
-    """The gateway the document names for ``family``, or ``""`` for the profile's.
-
-    Empty is the normal case: the routed profile carries the gateway, so an
-    edit to ``~/.config/salad/gateway-*`` keeps working. Naming one here is how
-    the document moves a family to a different host without a code edit.
-    """
-    return _text(entry_for_family(family, doc).get(GATEWAY))
+    """The family's entry: its checkpoints, markers and image, or an empty one."""
+    return families(doc).get(family, {IMAGE: "", UNETS: [], MARKERS: []})
 
 
 def image_for_family(family: str, doc: dict[str, Any] | None) -> str:
     """The container image recorded for ``family``, informational."""
     return _text(entry_for_family(family, doc).get(IMAGE))
+
+
+def idle_stop_seconds(doc: dict[str, Any] | None) -> int:
+    """The queue's idle-stop timeout from the document, one hour by default."""
+    queue = (doc or {}).get("queue")
+    if not isinstance(queue, dict):
+        return DEFAULT_IDLE_STOP_S
+    return idle_stop_s(queue.get(IDLE_STOP))
 
 
 def instruction(doc: dict[str, Any] | None) -> str:

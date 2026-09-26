@@ -23,6 +23,7 @@ for _p in (HERE, HERE.parent):
 
 import generator  # noqa: E402
 import salad_queue as q  # noqa: E402
+import studio_meta  # noqa: E402
 
 
 class ClassifyTest(unittest.TestCase):
@@ -381,6 +382,409 @@ class ManagementTest(unittest.TestCase):
         self.assertEqual(line.pending(), 1)
         self.assertTrue(any("cleared" in line_ for line_ in logs))
         self.assertEqual(line.clear_finished(), 0, "nothing finished is left to clear")
+
+
+class PerProfileDispatchTest(unittest.TestCase):
+    """One line per profile: a blocked container holds only its own requests."""
+
+    def test_another_profiles_request_runs_while_one_is_blocked(self) -> None:
+        line, _gate, _logs = _queue()
+        entered = threading.Event()
+        release = threading.Event()
+        calls: list[tuple[str, str]] = []
+
+        def transport(request):
+            calls.append((request["profile"], request["gateway"]))
+            if request["profile"] == "klein":
+                entered.set()
+                release.wait(timeout=15)
+                return q.Attempt(status=200, accepted=True, result="plate-klein")
+            return q.Attempt(status=200, accepted=True, result="plate-snofs")
+
+        done: dict[str, q.Job] = {}
+
+        def deliver(rid: str, profile: str, gateway: str) -> None:
+            done[rid] = line.deliver(
+                {"id": rid, "profile": profile, "gateway": gateway},
+                lambda _job: transport({"profile": profile, "gateway": gateway}),
+                line=profile,
+            )
+
+        first = threading.Thread(
+            target=deliver, args=("a1", "klein", "https://klein.example/"), daemon=True
+        )
+        first.start()
+        self.assertTrue(entered.wait(timeout=15), "the first request never reached the transport")
+
+        same = threading.Thread(
+            target=deliver, args=("a2", "klein", "https://klein.example/"), daemon=True
+        )
+        other = threading.Thread(
+            target=deliver, args=("b1", "snofs", "https://snofs.example/"), daemon=True
+        )
+        same.start()
+        other.start()
+
+        deadline = time.time() + 15
+        while time.time() < deadline and not any(p == "snofs" for p, _g in calls):
+            time.sleep(0.01)
+        self.assertTrue(
+            any(p == "snofs" for p, _g in calls),
+            "a request for another profile waited behind the blocked one",
+        )
+        klein_jobs = [job for job in line.jobs() if job.line == "klein"]
+        self.assertEqual(
+            [job.state for job in klein_jobs],
+            [q.RUNNING, q.PENDING],
+            "a second request for the same profile must still wait its turn",
+        )
+        self.assertEqual(
+            len([p for p, _g in calls if p == "klein"]),
+            1,
+            "one container takes one POST at a time",
+        )
+        self.assertEqual(line.lines(), {"klein": 2}, "the other line has drained")
+
+        release.set()
+        for thread in (first, same, other):
+            thread.join(timeout=15)
+        self.assertEqual(done["a1"].state, q.ACCEPTED)
+        self.assertEqual(done["a2"].state, q.ACCEPTED)
+        self.assertEqual(done["b1"].state, q.ACCEPTED)
+        self.assertEqual(done["a1"].result.result, "plate-klein")
+        self.assertEqual(done["a2"].result.result, "plate-klein")
+        self.assertEqual(done["b1"].result.result, "plate-snofs")
+        self.assertEqual(
+            dict(calls),
+            {"klein": "https://klein.example/", "snofs": "https://snofs.example/"},
+            "every transport call carried its own profile's gateway",
+        )
+        self.assertEqual(line.lines(), {})
+
+    def test_a_retry_rejoins_its_own_profiles_line(self) -> None:
+        def transport(_request):
+            return q.Attempt(status=400, body=b'{"error": {"message": "bad graph"}}')
+
+        line, _gate, _logs = _queue()
+        job = line.deliver({"id": 1}, transport, line="klein")
+        self.assertEqual(job.state, q.FAILED)
+        self.assertEqual(job.line, "klein")
+        self.assertTrue(job.retryable)
+        line.retry(job)
+        self.assertEqual(job.state, q.FAILED)
+        self.assertEqual(job.line, "klein", "a retry stays on the profile that owns it")
+
+
+class _FakeLifecycle:
+    """The container handle the queue is given, with every call recorded."""
+
+    def __init__(
+        self,
+        running: dict[str, bool | None] | None = None,
+        *,
+        start_code: int = 202,
+        stop_code: int = 202,
+        start_message: str = "",
+    ) -> None:
+        self.running = dict(running or {})
+        self.start_code = start_code
+        self.stop_code = stop_code
+        self.start_message = start_message
+        self.calls: list[tuple[str, str, str]] = []
+
+    def is_running(self, profile: str, gateway: str) -> bool | None:
+        self.calls.append(("is_running", profile, gateway))
+        return self.running.get(profile)
+
+    def start(self, profile: str, gateway: str) -> tuple[int, str]:
+        self.calls.append(("start", profile, gateway))
+        return self.start_code, self.start_message
+
+    def stop(self, profile: str, gateway: str) -> tuple[int, str]:
+        self.calls.append(("stop", profile, gateway))
+        return self.stop_code, ""
+
+    def actions(self, name: str) -> list[tuple[str, str, str]]:
+        return [call for call in self.calls if call[0] == name]
+
+
+class LifecycleStartTest(unittest.TestCase):
+    """The queue starts the container a request needs, once."""
+
+    KLEIN_GW = "https://klein.example/"
+    SNOFS_GW = "https://snofs.example/"
+
+    def _accept(self, calls: list[str]):
+        def transport(job):
+            # The queue hands the attempt the job, not the request payload.
+            profile = str((job.request or {}).get("profile") or "")
+            calls.append(profile)
+            return q.Attempt(status=200, accepted=True, result=f"plate-{profile}")
+
+        return transport
+
+    def test_a_stopped_container_is_started_once_and_the_request_runs(self) -> None:
+        life = _FakeLifecycle({"klein": False})
+        line, _gate, logs = _queue(lifecycle=life)
+        calls: list[str] = []
+        job = line.deliver(
+            {"gateway": self.KLEIN_GW, "profile": "klein"},
+            self._accept(calls),
+            line="klein",
+        )
+        self.assertEqual(job.state, q.ACCEPTED)
+        self.assertEqual(job.result.result, "plate-klein")
+        self.assertEqual(
+            life.actions("start"),
+            [("start", "klein", self.KLEIN_GW)],
+            "exactly one start, naming that profile's gateway",
+        )
+        self.assertEqual(calls, ["klein"], "the request ran after the start")
+        self.assertEqual(line.containers(), {"klein": self.KLEIN_GW})
+        self.assertTrue(any("asked Salad to start" in entry for entry in logs))
+
+    def test_a_running_container_is_not_started(self) -> None:
+        life = _FakeLifecycle({"klein": True})
+        line, _gate, _logs = _queue(lifecycle=life)
+        calls: list[str] = []
+        job = line.deliver(
+            {"gateway": self.KLEIN_GW, "profile": "klein"}, self._accept(calls), line="klein"
+        )
+        self.assertEqual(job.state, q.ACCEPTED)
+        self.assertEqual(life.actions("start"), [], "a running container is left alone")
+        self.assertEqual(life.actions("is_running"), [("is_running", "klein", self.KLEIN_GW)])
+
+    def test_an_unknown_state_is_left_alone(self) -> None:
+        life = _FakeLifecycle({"klein": None})
+        line, _gate, logs = _queue(lifecycle=life)
+        calls: list[str] = []
+        job = line.deliver(
+            {"gateway": self.KLEIN_GW, "profile": "klein"}, self._accept(calls), line="klein"
+        )
+        self.assertEqual(job.state, q.ACCEPTED)
+        self.assertEqual(life.actions("start"), [], "never start on a guess")
+        self.assertTrue(any("state unknown" in entry for entry in logs))
+
+    def test_two_profiles_each_start_their_own_container(self) -> None:
+        life = _FakeLifecycle({"klein": False, "snofs": False})
+        line, _gate, _logs = _queue(lifecycle=life)
+        calls: list[str] = []
+        klein = line.deliver(
+            {"gateway": self.KLEIN_GW, "profile": "klein"}, self._accept(calls), line="klein"
+        )
+        snofs = line.deliver(
+            {"gateway": self.SNOFS_GW, "profile": "snofs"}, self._accept(calls), line="snofs"
+        )
+        self.assertEqual(klein.state, q.ACCEPTED)
+        self.assertEqual(snofs.state, q.ACCEPTED)
+        self.assertEqual(
+            life.actions("start"),
+            [("start", "klein", self.KLEIN_GW), ("start", "snofs", self.SNOFS_GW)],
+        )
+        self.assertEqual(
+            line.containers(), {"klein": self.KLEIN_GW, "snofs": self.SNOFS_GW}
+        )
+
+    def test_a_rejected_start_ends_the_request_with_the_reason(self) -> None:
+        life = _FakeLifecycle({"klein": False}, start_code=403, start_message="quota exceeded")
+        line, _gate, _logs = _queue(lifecycle=life)
+        calls: list[str] = []
+        job = line.deliver(
+            {"gateway": self.KLEIN_GW, "profile": "klein"}, self._accept(calls), line="klein"
+        )
+        self.assertEqual(job.state, q.FAILED)
+        self.assertIn("HTTP 403", job.reason)
+        self.assertIn("quota exceeded", job.reason)
+        self.assertEqual(calls, [], "the request never reached the transport")
+        self.assertEqual(line.containers(), {}, "a container that failed to start is not tracked")
+
+    def test_the_start_is_asked_once_however_many_attempts_the_request_makes(self) -> None:
+        life = _FakeLifecycle({"klein": False})
+        line, gate, _logs = _queue(lifecycle=life)
+        seen: list[int] = []
+
+        def transport(_request):
+            seen.append(1)
+            if len(seen) == 1:
+                return q.Attempt(status=503, body=b'{"title": "replica unavailable"}')
+            return q.Attempt(status=200, accepted=True, result="plate")
+
+        job = line.deliver(
+            {"gateway": self.KLEIN_GW, "profile": "klein"}, transport, line="klein"
+        )
+        self.assertEqual(job.state, q.ACCEPTED)
+        self.assertEqual(job.attempts, 2, "the busy attempt was retried")
+        self.assertEqual(len(life.actions("start")), 1, "one start, not one per attempt")
+        self.assertEqual(gate.slept, [8])
+
+    def test_a_retry_does_not_start_the_container_again(self) -> None:
+        life = _FakeLifecycle({"klein": False})
+        line, _gate, _logs = _queue(lifecycle=life)
+        seen: list[int] = []
+
+        def transport(_request):
+            seen.append(1)
+            if len(seen) == 1:
+                return q.Attempt(status=400, body=b'{"error": {"message": "bad graph"}}')
+            return q.Attempt(status=200, accepted=True, result="plate")
+
+        job = line.deliver(
+            {"gateway": self.KLEIN_GW, "profile": "klein"}, transport, line="klein"
+        )
+        self.assertEqual(job.state, q.FAILED)
+        self.assertEqual(len(life.actions("start")), 1)
+        line.retry(job)
+        self.assertEqual(job.state, q.ACCEPTED)
+        self.assertEqual(len(life.actions("start")), 1, "the retry reuses the running container")
+
+    def test_a_queue_without_a_lifecycle_still_delivers(self) -> None:
+        line, _gate, _logs = _queue()
+        calls: list[str] = []
+        job = line.deliver(
+            {"gateway": self.KLEIN_GW, "profile": "klein"}, self._accept(calls), line="klein"
+        )
+        self.assertEqual(job.state, q.ACCEPTED)
+        self.assertEqual(line.containers(), {})
+
+
+class LifecycleIdleTest(unittest.TestCase):
+    """A container is stopped after the configured idle timeout, and once."""
+
+    GW = "https://klein.example/"
+    REQUEST = {"gateway": "https://klein.example/", "profile": "klein"}
+
+    def _run_one(self, line, *, gate, line_name: str = "klein") -> q.Job:
+        def transport(_request):
+            return q.Attempt(status=200, accepted=True, result="plate")
+
+        return line.deliver(
+            {"gateway": self.GW, "profile": line_name}, transport, line=line_name
+        )
+
+    def test_no_stop_before_the_timeout_and_one_after_it(self) -> None:
+        life = _FakeLifecycle({"klein": False})
+        line, gate, logs = _queue(lifecycle=life, idle_stop_s=3600)
+        job = self._run_one(line, gate=gate)
+        self.assertEqual(job.state, q.ACCEPTED)
+
+        gate.t += 3599
+        self.assertEqual(line.idle_check(), [], "not idle long enough to stop")
+        self.assertEqual(life.actions("stop"), [])
+
+        gate.t += 2
+        self.assertEqual(line.idle_check(), ["klein"])
+        self.assertEqual(life.actions("stop"), [("stop", "klein", self.GW)])
+        self.assertEqual(line.containers(), {}, "a stopped container leaves the books")
+        self.assertTrue(any("stopped klein after 3600s idle" in entry for entry in logs))
+
+    def test_a_second_check_does_not_stop_it_twice(self) -> None:
+        life = _FakeLifecycle({"klein": False})
+        line, gate, _logs = _queue(lifecycle=life, idle_stop_s=3600)
+        self._run_one(line, gate=gate)
+        gate.t += 3601
+        self.assertEqual(line.idle_check(), ["klein"])
+        self.assertEqual(line.idle_check(), [], "nothing left to stop")
+        self.assertEqual(len(life.actions("stop")), 1)
+
+    def test_a_request_in_flight_holds_the_container_open(self) -> None:
+        life = _FakeLifecycle({"klein": False})
+        line, gate, _logs = _queue(lifecycle=life, idle_stop_s=60)
+        entered = threading.Event()
+        release = threading.Event()
+
+        def transport(_request):
+            entered.set()
+            release.wait(timeout=15)
+            return q.Attempt(status=200, accepted=True, result="plate")
+
+        done: dict[str, q.Job] = {}
+        thread = threading.Thread(
+            target=lambda: done.setdefault(
+                "job",
+                line.deliver(
+                    {"gateway": self.GW, "profile": "klein"}, transport, line="klein"
+                ),
+            ),
+            daemon=True,
+        )
+        thread.start()
+        self.assertTrue(entered.wait(timeout=15), "the request never reached the transport")
+
+        gate.t += 600
+        self.assertEqual(line.idle_check(), [], "a request in flight holds the container")
+        self.assertEqual(life.actions("stop"), [])
+
+        release.set()
+        thread.join(timeout=15)
+        self.assertEqual(done["job"].state, q.ACCEPTED)
+        gate.t += 61
+        self.assertEqual(line.idle_check(), ["klein"], "idle again once the request finished")
+        self.assertEqual(len(life.actions("stop")), 1)
+
+    def test_a_queued_request_holds_the_container_open(self) -> None:
+        life = _FakeLifecycle({"klein": False})
+        line, gate, _logs = _queue(lifecycle=life, idle_stop_s=60)
+        self._run_one(line, gate=gate)
+        queued = line.enqueue({"gateway": self.GW, "profile": "klein"}, line="klein")
+        gate.t += 600
+        self.assertEqual(line.idle_check(), [], "a queued request holds the container")
+        self.assertEqual(queued.state, q.PENDING)
+        self.assertEqual(life.actions("stop"), [])
+
+    def test_the_timeout_comes_from_the_metadata_document(self) -> None:
+        life = _FakeLifecycle({"klein": False})
+        with TemporaryDirectory() as td:
+            path = Path(td) / "studio-metadata.json"
+            path.write_text(json.dumps({"queue": {"idle_stop_s": 45}}), encoding="utf-8")
+            doc = studio_meta.load(path=path)
+            line, gate, _logs = _queue(lifecycle=life, meta=doc)
+            self.assertEqual(line.idle_timeout_s(), 45, "the document, not a literal")
+            self._run_one(line, gate=gate)
+            gate.t += 44
+            self.assertEqual(line.idle_check(), [])
+            gate.t += 2
+            self.assertEqual(line.idle_check(), ["klein"], "the document's timeout")
+
+        # The shipped document says one hour, so the same run would not stop yet.
+        shipped = _FakeLifecycle({"klein": False})
+        line2, gate2, _logs2 = _queue(lifecycle=shipped, meta=studio_meta.load())
+        self.assertEqual(line2.idle_timeout_s(), studio_meta.DEFAULT_IDLE_STOP_S)
+        self._run_one(line2, gate=gate2)
+        gate2.t += 46
+        self.assertEqual(line2.idle_check(), [])
+
+    def test_a_rejected_stop_is_reported_and_not_retried_immediately(self) -> None:
+        life = _FakeLifecycle({"klein": False}, stop_code=500)
+        line, gate, logs = _queue(lifecycle=life, idle_stop_s=60)
+        self._run_one(line, gate=gate)
+        gate.t += 61
+        self.assertEqual(line.idle_check(), [], "the stop failed")
+        self.assertEqual(len(life.actions("stop")), 1)
+        self.assertEqual(line.containers(), {"klein": self.GW}, "still on the books")
+        self.assertTrue(any("could not stop klein" in entry for entry in logs))
+
+        gate.t += 1
+        self.assertEqual(line.idle_check(), [], "not retried on the next tick")
+        self.assertEqual(len(life.actions("stop")), 1)
+        gate.t += 60
+        self.assertEqual(line.idle_check(), [], "and not while the stop keeps failing")
+        self.assertEqual(len(life.actions("stop")), 2, "retried after another full timeout")
+
+    def test_a_container_that_was_already_running_is_stopped_when_idle(self) -> None:
+        life = _FakeLifecycle({"klein": True})
+        line, gate, _logs = _queue(lifecycle=life, idle_stop_s=60)
+        self._run_one(line, gate=gate)
+        self.assertEqual(life.actions("start"), [], "it was already up")
+        gate.t += 61
+        self.assertEqual(line.idle_check(), ["klein"])
+        self.assertEqual(life.actions("stop"), [("stop", "klein", self.GW)])
+
+    def test_a_profile_the_queue_never_touched_is_not_stopped(self) -> None:
+        life = _FakeLifecycle({"klein": False})
+        line, gate, _logs = _queue(lifecycle=life, idle_stop_s=60)
+        gate.t += 10_000
+        self.assertEqual(line.idle_check(), [])
+        self.assertEqual(life.calls, [], "no container of ours to stop")
 
 
 class GeneratorThroughTheQueue(unittest.TestCase):

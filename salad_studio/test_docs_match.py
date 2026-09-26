@@ -41,10 +41,47 @@ class TabListMatchesTheApp(unittest.TestCase):
         )
 
     def test_the_manual_documents_the_queue_page(self) -> None:
-        text = MANUAL.read_text(encoding="utf-8")
+        text = " ".join(MANUAL.read_text(encoding="utf-8").split())
         self.assertIn("- **Queue**.", text)
         for word in ("Cancel selected", "Retry selected", "Clear finished"):
             self.assertIn(word, text)
+
+    def test_the_manual_documents_the_container_lifecycle(self) -> None:
+        """The queue's start/stop behaviour and the document's setting are named."""
+        from salad_studio import salad_status
+
+        manual = " ".join(MANUAL.read_text(encoding="utf-8").split())
+        queue_bullet = manual.split("- **Queue**.", 1)[1].split("Klein group,", 1)[0]
+        self.assertIn(
+            studio_meta.IDLE_STOP,
+            manual,
+            "the manual must name the document's idle setting",
+        )
+        self.assertIn(f"{studio_meta.DEFAULT_IDLE_STOP_S}", manual)
+        for action in ("start", "stop"):
+            self.assertTrue(
+                hasattr(salad_status, f"{action}_container_group"),
+                f"salad_status no longer ships {action}_container_group",
+            )
+            self.assertIn(action, queue_bullet.lower())
+        self.assertIn("idle", queue_bullet.lower())
+        self.assertTrue(hasattr(q.SaladQueue, "idle_check"))
+        self.assertTrue(hasattr(q.SaladQueue, "idle_timeout_s"))
+
+    def test_the_manual_documents_profile_management(self) -> None:
+        """The controls the Config page ships are the ones the manual names."""
+        manual = " ".join(MANUAL.read_text(encoding="utf-8").split())
+        source = (HERE / "app.py").read_text(encoding="utf-8")
+        for label in (
+            "Add profile",
+            "Delete profile",
+            "Save profile",
+            "Checkpoints this profile serves",
+            "Remove selected",
+        ):
+            self.assertIn(label, source, f"the Config page no longer ships {label!r}")
+            self.assertIn(label, manual, f"the manual never names {label!r}")
+        self.assertIn("one line per profile", manual.lower())
 
 
 class LayerMapMatchesTheModules(unittest.TestCase):
@@ -72,19 +109,27 @@ class LayerMapMatchesTheModules(unittest.TestCase):
 
 
 class RootReadmeTestCount(unittest.TestCase):
-    def test_the_stated_test_count_is_the_real_one(self) -> None:
-        text = ROOT_README.read_text(encoding="utf-8")
-        match = re.search(r"#\s*(\d+)\s+tests", text)
-        self.assertIsNotNone(match, "the quick start no longer states a test count")
-        stated = int(match.group(1))
+    def _real_count(self) -> int:
         real = 0
         for path in sorted(HERE.glob("test_*.py")):
             real += len(re.findall(r"^\s+def test_", path.read_text(encoding="utf-8"), re.M))
-        self.assertEqual(
-            stated,
-            real,
-            f"the root README says {stated} tests; the suite has {real}",
-        )
+        return real
+
+    def test_every_stated_test_count_is_the_real_one(self) -> None:
+        """Both manuals state the count, and both have drifted before."""
+        real = self._real_count()
+        for path in (ROOT_README, MANUAL):
+            text = path.read_text(encoding="utf-8")
+            match = re.search(r"#\s*(\d+)\s+tests", text)
+            self.assertIsNotNone(
+                match, f"{path.name} no longer states a test count"
+            )
+            assert match is not None
+            self.assertEqual(
+                int(match.group(1)),
+                real,
+                f"{path.name} says {match.group(1)} tests; the suite has {real}",
+            )
 
 
 AUDIT = TOOLS / "docs" / "history" / "59-salad-studio-audit-2026-09-26.md"

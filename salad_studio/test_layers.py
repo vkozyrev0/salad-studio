@@ -64,15 +64,19 @@ print(f"logging: {line.strip()} | {explained[:60]}")
 # --- Salad communication layer: route a graph, queue a request -----------
 doc = studio_meta.load()
 family = studio_meta.family_for_unet(profiles.SNOFS_UNET, doc)
-group = studio_meta.group_for_family(family, doc)
-assert family == "snofs" and group, (family, group)
+seed = profiles.seed_checkpoints("klein5090", doc)
+assert family == "snofs" and seed == [profiles.SNOFS_UNET], (family, seed)
 line_q = salad_queue.SaladQueue(sleep=lambda _s: None, now=lambda: 0.0)
 job = line_q.deliver(
     {"url": "https://example.salad.test/prompt"},
     lambda _job: salad_queue.Attempt(status=200, accepted=True, result="plate"),
+    line="klein5090",
 )
 assert job.state == salad_queue.ACCEPTED, job.state
-print(f"salad: {profiles.SNOFS_UNET} -> {family}/{group}, queued job {job.state}")
+print(
+    f"salad: {profiles.SNOFS_UNET} -> {family}, "
+    f"profile klein5090 serves {len(seed)} checkpoint(s), queued job {job.state}"
+)
 
 # --- AI communication layer: build the request, parse a reply ------------
 payload = ai_helper.build_payload(editor_positive="a plate")

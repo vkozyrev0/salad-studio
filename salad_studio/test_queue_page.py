@@ -67,17 +67,19 @@ class QueuePage(unittest.TestCase):
         self.addCleanup(self.app.destroy)
         self.app.update_idletasks()
 
-    def _accept(self, job_id: int = 1):
+    def _accept(self, job_id: int = 1, line: str = ""):
         return self.app.gen_queue.deliver(
-            {"id": job_id, "url": "https://gw.example/prompt", "bytes": 12},
+            {"id": job_id, "url": "https://gw.example/prompt", "bytes": 12, "profile": line},
             lambda _job: q.Attempt(status=200, accepted=True, result="plate"),
+            line=line,
         )
 
-    def _fail(self, job_id: int = 2, message: str = "bad graph"):
+    def _fail(self, job_id: int = 2, message: str = "bad graph", line: str = ""):
         body = json.dumps({"error": {"message": message}}).encode()
         return self.app.gen_queue.deliver(
-            {"id": job_id, "url": "https://gw.example/prompt", "bytes": 12},
+            {"id": job_id, "url": "https://gw.example/prompt", "bytes": 12, "profile": line},
             lambda _job: q.Attempt(status=400, body=body),
+            line=line,
         )
 
     def _row(self, job_id: int) -> tuple[str, ...]:
@@ -90,7 +92,7 @@ class QueuePage(unittest.TestCase):
         item = str(job_id)
         if not self.app.queue_tree.exists(item):
             return ""
-        return str(self.app.queue_tree.item(item, "values")[1])
+        return str(self.app.queue_tree.item(item, "values")[2])
 
     def _pump_state(self, job_id: int, want: str, seconds: float = 15.0) -> None:
         """Refresh the page until it shows ``want`` for that job."""
@@ -133,25 +135,30 @@ class QueuePage(unittest.TestCase):
         self.assertEqual(self.app.queue_empty_lbl.winfo_manager(), "", "the empty state must go")
 
     def test_the_page_renders_each_job_from_the_queues_records(self) -> None:
-        accepted = self._accept(1)
-        failed = self._fail(2, message="invalid graph node 94")
-        queued = self.app.gen_queue.enqueue({"id": 3, "url": "https://gw.example/prompt", "bytes": 12})
+        accepted = self._accept(1, line="klein5090")
+        failed = self._fail(2, message="invalid graph node 94", line="klein")
+        queued = self.app.gen_queue.enqueue(
+            {"id": 3, "url": "https://gw.example/prompt", "bytes": 12}
+        )
         self._open_page()
 
         rows = [self._row(job.id) for job in (accepted, failed, queued)]
-        self.assertEqual(rows[0][1], q.ACCEPTED)
-        self.assertEqual(rows[1][1], q.FAILED)
-        self.assertEqual(rows[2][1], q.PENDING)
-        self.assertEqual(rows[1][3], "400", "the last status must be on the row")
-        self.assertIn("invalid graph node 94", rows[1][4])
-        self.assertEqual(rows[1][2], "1", "the attempt count must be on the row")
-        self.assertIn("gw.example", rows[1][5], "the request must be on the row")
-        self.assertIn("12 bytes", rows[1][5])
+        self.assertEqual(rows[0][2], q.ACCEPTED)
+        self.assertEqual(rows[1][2], q.FAILED)
+        self.assertEqual(rows[2][2], q.PENDING)
+        self.assertEqual(rows[1][4], "400", "the last status must be on the row")
+        self.assertIn("invalid graph node 94", rows[1][5])
+        self.assertEqual(rows[1][3], "1", "the attempt count must be on the row")
+        self.assertIn("gw.example", rows[1][6], "the request must be on the row")
+        self.assertIn("12 bytes", rows[1][6])
+        self.assertEqual(rows[0][1], "klein5090", "the row carries the profile it dispatches to")
+        self.assertEqual(rows[1][1], "klein")
+        self.assertEqual(rows[2][1], "(default)")
 
         # The rows are the queue's own records, not a second copy.
         recorded = {str(job.id): job.state for job in self.app.gen_queue.jobs()}
         self.assertEqual(
-            {str(self.app.queue_tree.item(i, "values")[0]): self.app.queue_tree.item(i, "values")[1]
+            {str(self.app.queue_tree.item(i, "values")[0]): self.app.queue_tree.item(i, "values")[2]
              for i in self.app.queue_tree.get_children()},
             recorded,
         )
@@ -172,7 +179,7 @@ class QueuePage(unittest.TestCase):
         self.assertTrue(queued.terminal)
         self.assertEqual(queued.attempts, 0)
         self.assertEqual(calls, [], "the transport must never be called for a cancelled job")
-        self.assertEqual(self._row(1)[1], q.CANCELLED, "the row must follow the queue")
+        self.assertEqual(self._row(1)[2], q.CANCELLED, "the row must follow the queue")
 
     def test_retry_selected_runs_off_the_tk_thread(self) -> None:
         calls: list[int] = []
@@ -259,7 +266,7 @@ class QueuePage(unittest.TestCase):
         self.assertGreater(dump["page_req_height"], 1, "the page frame has no height")
         self.assertGreaterEqual(dump["page_req_width"], 600)
         for row in dump["rows"]:
-            self.assertTrue(row[1] and row[2] and row[3], f"a row is unreadable: {row}")
+            self.assertTrue(row[2] and row[3] and row[4], f"a row is unreadable: {row}")
         self.assertIn("Queue", dump["nav_labels"])
 
     def test_a_render_in_flight_appears_on_the_page(self) -> None:
@@ -286,7 +293,7 @@ class QueuePage(unittest.TestCase):
                     "prompt": {
                         "70": {
                             "class_type": "UNETLoader",
-                            "inputs": {"unet_name": profiles.load_all()["klein"].unet},
+                            "inputs": {"unet_name": profiles.load_all()["klein"].primary_checkpoint},
                         }
                     }
                 }
@@ -315,14 +322,15 @@ class QueuePage(unittest.TestCase):
                         "the render never reached the transport",
                     )
                     self._pump_state(1, q.RUNNING)
-                    self.assertEqual(self._row(1)[1], q.RUNNING)
+                    self.assertEqual(self._row(1)[2], q.RUNNING)
+                    self.assertEqual(self._row(1)[1], "klein", "the row names the profile")
                     release.set()
                     self.assertTrue(
                         _pump(self.app, lambda: not self.app._busy, 30),
                         "the render never finished",
                     )
                     self._pump_state(1, q.ACCEPTED)
-                    self.assertEqual(self._row(1)[2], "1")
+                    self.assertEqual(self._row(1)[3], "1")
                 except BaseException as exc:  # noqa: BLE001 - re-raised below
                     outcome.append(exc)
                 finally:

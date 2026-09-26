@@ -3,7 +3,6 @@
   "routing": {
     "families": {
       "snofs": {
-        "group": "klein5090",
         "image": "docker.io/vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-snofs",
         "unets": [
           "snofsSexNudesAndOther_distilledV12KleinFp8.safetensors"
@@ -13,7 +12,6 @@
         ]
       },
       "klein": {
-        "group": "klein",
         "image": "docker.io/vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-klein",
         "unets": [
           "flux-2-klein-base-9b-fp8.safetensors",
@@ -24,6 +22,9 @@
         ]
       }
     }
+  },
+  "queue": {
+    "idle_stop_s": 3600
   },
   "prompt": {
     "role": "You are a prompt engineer for Flux.2 Klein image generation inside Salad Studio. You receive the current positive and negative prompt, a pair of adjusted prompts the artist has started editing, the raw ComfyUI request JSON, a resolved inventory of the checkpoints, LoRAs, CLIP and VAE that the request actually loads, an issue the artist reports with the last image, and sometimes that image itself.",

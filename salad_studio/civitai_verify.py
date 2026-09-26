@@ -206,25 +206,23 @@ def record_import_code_change(
 def studio_gateway_targets(
     load_all_fn: Callable[[], dict[str, Any]] | None = None,
 ) -> list[tuple[str, str]]:
-    """(profile_id, gateway) for the same klein + klein5090 pair Studio opens."""
+    """(profile name, gateway) for every profile the store holds.
+
+    The same list Studio's badges show, so a verify run probes the profiles the
+    app would render on rather than a fixed pair. A profile with no gateway
+    falls back to the published one for a built-in name.
+    """
     load = load_all_fn or profiles.load_all
     try:
         allp = load()
     except Exception:
         allp = {}
     out: list[tuple[str, str]] = []
-    for pid, fallback in (
-        ("klein", profiles.KLEIN_GATEWAY),
-        ("klein5090", profiles.KLEIN_5090_GATEWAY),
-    ):
-        gw = fallback
-        prof = allp.get(pid) if isinstance(allp, dict) else None
-        saved = ""
-        if prof is not None:
-            saved = str(getattr(prof, "gateway", "") or "").strip()
-        if saved:
-            gw = saved
-        out.append((pid, gw))
+    for pid in sorted(allp) if isinstance(allp, dict) else []:
+        prof = allp[pid]
+        gw = str(getattr(prof, "gateway", "") or "").strip() or profiles.fallback_gateway(pid)
+        if gw:
+            out.append((pid, gw))
     return out
 
 

@@ -269,18 +269,20 @@ def generate_from_payload(
     out_dir: Path,
     on_log: Any | None = None,
     queue: salad_queue.SaladQueue | None = None,
+    line: str = "",
 ) -> Path:
     """POST the Prompt Editor JSON to Salad ``/prompt`` and write a JPEG.
 
-    The POST goes through ``queue`` (the process-wide one by default), so a
-    request submitted while another render is in flight waits its turn instead
-    of being dropped, and one the container cannot serve yet is retried there.
+    The POST goes through ``queue`` (the process-wide one by default), on the
+    line named by ``line``: the profile whose container serves this graph. Jobs
+    on other lines run beside it, jobs on this line wait their turn, and one the
+    container cannot serve yet is retried there.
     """
     def _log(level: str, message: str) -> None:
         if on_log is not None:
             on_log(level, message)
 
-    line = queue if queue is not None else salad_queue.shared()
+    line_queue = queue if queue is not None else salad_queue.shared()
 
     if isinstance(payload, str):
         body_obj = parse_request_json(payload)
@@ -373,9 +375,10 @@ def generate_from_payload(
             )
         return salad_queue.Attempt(status=code, body=body, accepted=True, result=raw)
 
-    job = line.deliver(
-        {"gateway": gateway, "url": url, "bytes": len(blob)},
+    job = line_queue.deliver(
+        {"gateway": gateway, "url": url, "bytes": len(blob), "profile": line},
         lambda _job: render_once(),
+        line=line,
     )
     attempt = job.result if isinstance(job.result, salad_queue.Attempt) else salad_queue.Attempt()
     if job.state != salad_queue.ACCEPTED:

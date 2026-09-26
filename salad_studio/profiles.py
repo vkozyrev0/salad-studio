@@ -2,15 +2,15 @@
 
 Secrets stay on disk at ``key_path``; this module stores the path, never the key.
 
-The unet family to container group table is not here: it lives in the metadata
-document (:mod:`studio_meta`), so routing changes without a code edit. What
-stays here is reading the graph and comparing it to the group it would be sent
-to.
+A profile owns the **checkpoints its container serves**, and that list is the
+routing table: a graph goes to the profile that lists the checkpoint it loads.
+The metadata document (:mod:`studio_meta`) keeps what a family *is* (its markers)
+and the seed list a new built-in profile starts from.
 """
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
@@ -54,17 +54,26 @@ class SaladProfile:
     cfg: float = 5
     seed: int = 1
     scheduler: str = "flux2"
-    unet: str = "flux-2-klein-base-9b-fp8.safetensors"
+    # Every checkpoint this container serves. One container holds one unet
+    # family in VRAM, so this list is what routing matches a graph against; the
+    # Config page adds to it and removes from it.
+    checkpoints: list[str] = field(default_factory=list)
     use_loras: bool = True
     selected_loras: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        self.checkpoints = [c for c in (str(c).strip() for c in self.checkpoints) if c]
         if self.selected_loras:
             self.use_loras = True
         elif self.use_loras:
             self.selected_loras = list(DEFAULT_KLEIN_LORA_IDS)
         else:
             self.selected_loras = []
+
+    @property
+    def primary_checkpoint(self) -> str:
+        """The first checkpoint in the list, or ``""`` when it lists none."""
+        return self.checkpoints[0] if self.checkpoints else ""
 
 
 # ---------------------------------------------------------------------------
@@ -84,8 +93,10 @@ class SaladProfile:
 # group serves exactly one family, and a graph that asks for the wrong one is
 # refused here rather than silently degrading every render on that group.
 #
-# Which family is which, and which group serves it, comes from the metadata
-# document. This module only reads the graph.
+# Which checkpoints a container serves is the profile's own ``checkpoints``
+# list, so growing that list is a Config-page edit and no code change. The
+# metadata document keeps what a family *is* (its markers) and the seed list a
+# new built-in profile starts from.
 SNOFS_MARKER = "snofs"
 # Mirrors request_json.UNET_SNOFS, duplicated on purpose: this module is
 # stdlib-only and request_json imports salad_gen + lora_store.
@@ -93,13 +104,27 @@ SNOFS_UNET = "snofsSexNudesAndOther_distilledV12KleinFp8.safetensors"
 
 
 def unet_family(unet_name: str, meta: dict[str, Any] | None = None) -> str:
-    """``"snofs"``, ``"klein"``, or ``""`` when the metadata has no entry.
+    """``"snofs"``, ``"klein"``, or ``""`` when the metadata does not classify it.
 
-    The family table lives in the metadata document; a checkpoint it does not
-    list has no family, and routing refuses it rather than guessing a group.
+    The family table lives in the metadata document. Routing does not need it
+    (the profile's list decides); it is what tells two checkpoints apart when a
+    profile's list is checked for mixing families.
     """
     doc = studio_meta.default() if meta is None else meta
     return studio_meta.family_for_unet(unet_name, doc)
+
+
+def checkpoint_family(unet_name: str, meta: dict[str, Any] | None = None) -> str:
+    """The family a checkpoint belongs to, falling back to its own name.
+
+    A checkpoint the metadata does not classify is its own family, so a profile
+    that lists only it is consistent, and a checkpoint that does not exist yet
+    needs no metadata edit to be routable.
+    """
+    name = (unet_name or "").strip()
+    if not name:
+        return ""
+    return unet_family(name, meta) or name.lower()
 
 
 def payload_unets(payload: dict[str, Any] | None) -> list[str]:
@@ -117,24 +142,73 @@ def payload_unets(payload: dict[str, Any] | None) -> list[str]:
     return out
 
 
-def serving_family(profile: SaladProfile) -> str:
-    """The unet family this profile's group serves (its own ``unet`` declares it)."""
-    return unet_family(profile.unet)
+def profile_families(profile: SaladProfile, meta: dict[str, Any] | None = None) -> set[str]:
+    """Every unet family the profile's checkpoint list spans."""
+    return {checkpoint_family(name, meta) for name in profile.checkpoints if name.strip()}
 
 
-def _with_metadata_gateway(
-    profile: SaladProfile, family: str, doc: dict[str, Any]
-) -> SaladProfile:
-    """``profile``, moved to the gateway the document names for ``family``.
+def mixed_family_reason(
+    profile: SaladProfile, meta: dict[str, Any] | None = None
+) -> str:
+    """Why this profile's list spans more than one family, or ``""``.
 
-    The profile's own gateway is the normal case (an edit to
-    ``~/.config/salad/gateway-*`` must keep working), so the document's entry
-    only wins when it names one.
+    One container holds one unet family in VRAM, so a list that mixes families
+    cannot be served by one group: the second unet forces Comfy to stream
+    weights from host memory and a seconds-long render becomes minutes.
     """
-    named = studio_meta.gateway_for_family(family, doc)
-    if not named or same_gateway(named, profile.gateway):
-        return profile
-    return replace(profile, gateway=named)
+    families = sorted(f for f in profile_families(profile, meta) if f)
+    if len(families) <= 1:
+        return ""
+    return (
+        f"Profile {profile.name!r} lists checkpoints from {len(families)} unet "
+        f"families ({', '.join(families)}). One container holds one unet family in "
+        "VRAM, so split the list across one profile per family."
+    )
+
+
+def serving_family(profile: SaladProfile, meta: dict[str, Any] | None = None) -> str:
+    """The unet family this profile serves (the first checkpoint it lists)."""
+    return checkpoint_family(profile.primary_checkpoint, meta)
+
+
+def add_checkpoint(
+    profile: SaladProfile, unet: str, meta: dict[str, Any] | None = None
+) -> str:
+    """Append ``unet`` to the profile's list. Returns ``""`` or a refusal reason."""
+    name = (unet or "").strip()
+    if not name:
+        return "Type a checkpoint filename or pick a label first."
+    if name in profile.checkpoints:
+        return f"{name} is already in {profile.name!r}."
+    mine = checkpoint_family(name, meta)
+    listed = sorted(f for f in profile_families(profile, meta) if f)
+    if listed and mine not in listed:
+        return (
+            f"{name} is a {mine} checkpoint and {profile.name!r} serves "
+            f"{listed[0]}. One container holds one unet family in VRAM, so add it "
+            "to a profile for that family instead."
+        )
+    profile.checkpoints.append(name)
+    return ""
+
+
+def remove_checkpoint(profile: SaladProfile, unet: str) -> bool:
+    """Drop ``unet`` from the profile's list. True when it was there."""
+    name = (unet or "").strip()
+    if not name or name not in profile.checkpoints:
+        return False
+    profile.checkpoints = [c for c in profile.checkpoints if c != name]
+    return True
+
+
+def profiles_for_checkpoint(
+    unet: str, all_profiles: dict[str, SaladProfile]
+) -> list[str]:
+    """The names of the profiles that list this checkpoint, sorted."""
+    name = (unet or "").strip()
+    if not name:
+        return []
+    return sorted(p.name for p in all_profiles.values() if name in p.checkpoints)
 
 
 def route_payload(
@@ -142,29 +216,28 @@ def route_payload(
     all_profiles: dict[str, SaladProfile],
     meta: dict[str, Any] | None = None,
 ) -> tuple[str, SaladProfile] | None:
-    """Which group should render this graph, by the unet it loads.
+    """Which profile should render this graph, by the checkpoint it loads.
 
-    The group is the metadata document's entry for the graph's unet family, so
-    editing the document moves the graph without a code edit. None means "no
-    group serves that family", or the document has no entry for the checkpoint;
-    the caller refuses rather than sending it somewhere it would thrash.
+    The profile's own list decides, so adding a checkpoint to a profile on the
+    Config page makes a graph loading it routable with no code edit. None means
+    "no profile serves it": nothing lists the checkpoint, two profiles do and
+    the choice would be a coin toss, or the one that lists it mixes families.
     """
     unets = payload_unets(payload)
     if not unets:
         return None
-    doc = studio_meta.default() if meta is None else meta
-    family = studio_meta.family_for_unet(unets[0], doc)
-    if not family:
+    names = profiles_for_checkpoint(unets[0], all_profiles)
+    if len(names) != 1:
         return None
-    name = studio_meta.group_for_family(family, doc)
-    if not name or name not in all_profiles:
+    profile = all_profiles[names[0]]
+    if mixed_family_reason(profile, meta):
         return None
-    return name, _with_metadata_gateway(all_profiles[name], family, doc)
+    return names[0], profile
 
 
 @dataclass(frozen=True)
 class Route:
-    """Where a graph belongs: the group that serves the unet it loads."""
+    """Where a graph belongs: the profile that lists the checkpoint it loads."""
 
     family: str
     name: str
@@ -181,16 +254,17 @@ def plan_route(
     """The route this graph needs, and the reason to refuse it instead.
 
     ``(None, "")`` means "send it where the form points": the graph loads no
-    unet, the form points at a gateway that is not one of our groups (a
-    hand-typed gateway is the user's own), or that group already serves this
-    family. ``(None, reason)`` means refuse and say why. A route means the
-    form's group cannot serve this graph, and carries where it goes.
+    unet, the form points at a gateway that is not one of our profiles (a
+    hand-typed gateway is the user's own), or the profile the form points at is
+    the one that lists this checkpoint. ``(None, reason)`` means refuse and say
+    why. A route means the form's profile cannot serve this graph, and carries
+    the profile that can.
 
-    The comparison is against the group the form's GATEWAY belongs to, not
-    against the form's unet: loading a JSON into the editor rewrites that field
-    from the graph, so comparing the graph's family to it compares the graph
-    with itself and can never fire, which is how a SNOFS graph reached the klein
-    group (2026-09-22).
+    The comparison is against the profile the form's GATEWAY belongs to, not
+    against the form's checkpoint: loading a JSON into the editor rewrites that
+    field from the graph, so comparing the graph's checkpoint to it compares the
+    graph with itself and can never fire, which is how a SNOFS graph reached the
+    klein group (2026-09-22).
     """
     unets = payload_unets(payload)
     if not unets:
@@ -199,30 +273,30 @@ def plan_route(
     if here is None:
         return None, ""
     doc = studio_meta.default() if meta is None else meta
-    family = studio_meta.family_for_unet(unets[0], doc)
-    if not family:
+    checkpoint = unets[0]
+    names = profiles_for_checkpoint(checkpoint, all_profiles)
+    if not names:
         return None, (
-            f"{unets[0]} has no entry in the routing metadata, so no group is known "
-            "to serve it. Add the checkpoint to routing.families in the metadata "
-            f"document ({studio_meta.USER_PATH} or {studio_meta.DEFAULT_PATH})."
+            f"No profile lists {checkpoint}, so nothing is known to serve it. Add the "
+            "checkpoint to a profile's list on the Config page."
         )
-    if serving_family(here) == family:
+    if len(names) > 1:
+        return None, (
+            f"{checkpoint} is listed by {len(names)} profiles ({', '.join(names)}), so "
+            "which container should render it is ambiguous. Leave it on one profile."
+        )
+    target = all_profiles[names[0]]
+    mixed = mixed_family_reason(target, doc)
+    if mixed:
+        return None, mixed
+    if target.name == here.name:
         return None, ""
-    name = studio_meta.group_for_family(family, doc)
-    target = all_profiles.get(name) if name else None
-    if target is None:
-        return None, (
-            f"The routing metadata sends the {family} unet family to group "
-            f"{name or '(unset)'}, which is not a saved profile. This graph loads "
-            f"{unets[0]}, and profile {here.name!r} serves {here.unet} "
-            f"({serving_family(here) or 'no family'})."
-        )
-    moved = _with_metadata_gateway(target, family, doc)
+    family = checkpoint_family(checkpoint, doc)
     return (
         Route(
             family=family,
-            name=name,
-            profile=moved,
+            name=target.name,
+            profile=target,
             image=studio_meta.image_for_family(family, doc),
         ),
         "",
@@ -310,6 +384,22 @@ def _coerce(value: Any, cast: Callable[[Any], Any], default: Any) -> Any:
         return default
 
 
+def _coerce_checkpoints(data: dict[str, Any]) -> list[str]:
+    """The profile's checkpoint list, migrating a single-checkpoint record.
+
+    A file written before the list existed carries one ``unet``; it loads as a
+    one-entry list so an existing profile keeps working.
+    """
+    raw = data.get("checkpoints")
+    listed: list[str] = []
+    if isinstance(raw, list):
+        listed = [str(x).strip() for x in raw if str(x).strip()]
+    if listed:
+        return listed
+    legacy = str(data.get("unet") or "").strip()
+    return [legacy] if legacy else []
+
+
 def _profile_from_dict(name: str, data: object) -> SaladProfile:
     if not isinstance(data, dict):
         data = {}
@@ -330,7 +420,7 @@ def _profile_from_dict(name: str, data: object) -> SaladProfile:
         cfg=_coerce(data.get("cfg", 5) or 5, float, 5),
         seed=_coerce(data.get("seed", 1) or 1, int, 1),
         scheduler=str(data.get("scheduler") or "flux2"),
-        unet=str(data.get("unet") or "flux-2-klein-base-9b-fp8.safetensors"),
+        checkpoints=_coerce_checkpoints(data),
         use_loras=use_loras if "selected_loras" not in data else bool(selected),
         selected_loras=selected,
     )
@@ -362,16 +452,28 @@ def _save_doc(
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def default_profile(name: str = "klein") -> SaladProfile:
-    """A built-in profile. ``klein5090`` serves the SNOFS family, so its ``unet``
-    is the SNOFS cut. That field is what routing reads to pick a group."""
+def seed_checkpoints(name: str, meta: dict[str, Any] | None = None) -> list[str]:
+    """The checkpoints a new profile starts from, seeded by the metadata document.
+
+    ``klein5090`` serves the SNOFS family and every other name the plain Klein
+    cuts, so a new profile starts able to serve what its group was built for.
+    The list is the profile's own from then on; this is only the seed.
+    """
+    doc = studio_meta.default() if meta is None else meta
+    family = "snofs" if (name or "").strip() == "klein5090" else "klein"
+    entry = studio_meta.entry_for_family(family, doc)
+    listed = [str(x).strip() for x in (entry.get(studio_meta.UNETS) or []) if str(x).strip()]
+    return listed
+
+
+def default_profile(name: str = "klein", meta: dict[str, Any] | None = None) -> SaladProfile:
+    """A built-in profile: its checkpoint list is the metadata document's seed
+    for the family its group serves, and that list is what routing reads."""
     key = (name or "klein").strip() or "klein"
     if key == "klein5090":
         gw = _read_optional_text(GATEWAY_KLEIN_5090_PATH) or KLEIN_5090_GATEWAY
-        unet = SNOFS_UNET
     else:
         gw = _read_optional_text(GATEWAY_KLEIN_PATH) or KLEIN_GATEWAY
-        unet = "flux-2-klein-base-9b-fp8.safetensors"
     return SaladProfile(
         name=key,
         gateway=gw,
@@ -380,10 +482,24 @@ def default_profile(name: str = "klein") -> SaladProfile:
         width=1024,
         height=1024,
         steps=20,
-        unet=unet,
+        checkpoints=seed_checkpoints(key, meta),
         use_loras=True,
         selected_loras=list(DEFAULT_KLEIN_LORA_IDS),
     )
+
+
+def fallback_gateway(name: str) -> str:
+    """The published gateway for a built-in profile name, or ``""``.
+
+    Used when a stored profile carries no gateway, so the badges and the status
+    probe still have somewhere to point.
+    """
+    key = (name or "").strip()
+    if key == "klein5090":
+        return KLEIN_5090_GATEWAY
+    if key == "klein":
+        return KLEIN_GATEWAY
+    return ""
 
 
 def write_gateway_file(path: Path, url: str) -> None:

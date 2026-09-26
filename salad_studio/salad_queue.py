@@ -1,15 +1,16 @@
-"""The Salad request queue: hold a request while the container is busy.
+"""The Salad request queue: hold a request while its container is busy.
 
-One Salad container runs one Comfy instance, so requests are serialized here: a
-request submitted while another is in flight waits its turn instead of being
-dropped, and a request the transport reports as "not available yet" is retried
-automatically (no second click).
+A container runs one Comfy instance, so requests are serialized **per profile**:
+the queue keeps one line per container profile, a request joins the line of the
+profile that serves its checkpoint, and a request for another profile runs
+beside it instead of waiting. A request the transport reports as "not available
+yet" is retried automatically (no second click).
 
 Two decisions, both pure and both tested on their own:
 
 - :func:`classify` reads one attempt as ``ok``, ``busy`` or ``failed``. ``busy``
   means the container is not up yet (502/503/520/521/522/523, or a transport
-  that never answered) and returns the request to the queue. 504 and 524 are
+  that never answered) and returns the request to its line. 504 and 524 are
   **terminal**: Cloudflare gives up at ~100 s while the job is still running, so
   a re-POST submits a *duplicate* render (docs/workflow/21, measured 2026-09-22).
   A request the container already accepted is never re-POSTed at all, so a
@@ -17,7 +18,7 @@ Two decisions, both pure and both tested on their own:
 - :func:`next_action` says what to do about that outcome on attempt *n*:
   ``accept``, ``retry`` or ``fail``.
 
-:class:`SaladQueue` owns the order and the retries. The transport and the clock
+:class:`SaladQueue` owns the lines and the retries. The transport and the clock
 are injected, so a test drives real retries without sleeping.
 """
 from __future__ import annotations
@@ -27,6 +28,8 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
+
+import studio_meta
 
 OK = "ok"
 BUSY = "busy"
@@ -93,6 +96,13 @@ def next_action(outcome: str, attempt: int, *, max_attempts: int = MAX_ATTEMPTS)
     return FAIL
 
 
+def request_gateway(request: Any) -> str:
+    """The gateway a queued request will POST to, when the request carries one."""
+    if isinstance(request, dict):
+        return str(request.get("gateway") or "").strip()
+    return ""
+
+
 def reason_of(attempt: Attempt) -> str:
     """Why a failed attempt failed, in the server's own words when it sent any."""
     if attempt.error:
@@ -147,7 +157,9 @@ class Job:
     """One queued request, the work it was submitted with, and its outcome.
 
     ``work`` is the attempt callable, kept so a failed job can be retried from
-    the queue page without the caller that submitted it.
+    the queue page without the caller that submitted it. ``line`` is the profile
+    whose container serves this request: jobs on different lines run at the same
+    time, jobs on one line take turns.
     """
 
     id: int
@@ -161,6 +173,7 @@ class Job:
     waited_s: float = 0.0
     accepted: bool = False
     work: Callable[[Job], Attempt] | None = None
+    line: str = ""
 
     @property
     def terminal(self) -> bool:
@@ -187,7 +200,7 @@ class Job:
 
 
 class SaladQueue:
-    """Requests in order, one at a time, retried while the container is busy.
+    """One line per container profile: same line takes turns, lines run beside.
 
     ``send`` is not used directly: the caller passes an ``attempt(job)``
     callable to :meth:`deliver`, which performs one attempt and returns an
@@ -202,16 +215,30 @@ class SaladQueue:
         now: Callable[[], float] | None = None,
         retry_sleep_s: float = RETRY_SLEEP_S,
         max_attempts: int = MAX_ATTEMPTS,
+        lifecycle: Any | None = None,
+        idle_stop_s: int | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> None:
         self.on_log = on_log
         self._sleep = sleep or time.sleep
         self._now = now or time.monotonic
         self.retry_sleep_s = retry_sleep_s
         self.max_attempts = max(1, int(max_attempts))
+        # The container handle: is_running / start / stop. None means this queue
+        # never touches containers, which is how the headless tests run.
+        self.lifecycle = lifecycle
+        # None means "read the timeout from the metadata document".
+        self._idle_stop_s = idle_stop_s
+        self.meta = meta
         self._cond = threading.Condition()
-        self._line: list[Job] = []
+        self._lines: dict[str, list[Job]] = {}
         self._jobs: list[Job] = []
         self._next_id = 1
+        # Per profile: the container we asked for, its gateway, and when its last
+        # request finished. The idle check reads these and nothing else.
+        self._started: set[str] = set()
+        self._gateways: dict[str, str] = {}
+        self._last_active: dict[str, float] = {}
 
     # -- the line ---------------------------------------------------------
     def _log(self, level: str, message: str) -> None:
@@ -221,17 +248,33 @@ class SaladQueue:
             except Exception:  # noqa: BLE001 - a log sink must never break the queue
                 pass
 
-    def enqueue(self, request: Any = None, work: Callable[[Job], Attempt] | None = None) -> Job:
-        """Append a request to the line and return its job."""
+    def _line_of(self, line: str) -> list[Job]:
+        """The jobs waiting for that profile's container, in submission order."""
+        return self._lines.setdefault(line, [])
+
+    def enqueue(
+        self,
+        request: Any = None,
+        work: Callable[[Job], Attempt] | None = None,
+        *,
+        line: str = "",
+    ) -> Job:
+        """Append a request to its profile's line and return its job."""
         with self._cond:
-            job = Job(id=self._next_id, request=request, work=work)
+            job = Job(id=self._next_id, request=request, work=work, line=str(line))
             self._next_id += 1
-            self._line.append(job)
+            waiting = self._line_of(job.line)
+            waiting.append(job)
             self._jobs.append(job)
+            gateway = request_gateway(request)
+            if gateway and job.line:
+                self._gateways[job.line] = gateway
             self._cond.notify_all()
+            ahead = len(waiting) - 1
             self._log(
                 "info",
-                f"queue: request {job.id} queued ({self.pending() - 1} ahead of it)",
+                f"queue: request {job.id} queued on {job.line or 'the default line'}"
+                + (f" ({ahead} ahead of it)" if ahead else ""),
             )
             return job
 
@@ -239,27 +282,44 @@ class SaladQueue:
         started = self._now()
         with self._cond:
             # A cancelled job is terminal, so the waiter returns instead of
-            # waiting for a turn it will never get.
-            while not job.terminal and self._line and self._line[0] is not job:
+            # waiting for a turn it will never get. Only this job's own line
+            # matters: another profile's container is a different container.
+            while (
+                not job.terminal
+                and self._lines.get(job.line)
+                and self._lines[job.line][0] is not job
+            ):
                 self._cond.wait(0.25)
         job.waited_s = max(0.0, self._now() - started)
         if job.waited_s >= 0.05:
-            self._log("info", f"queue: request {job.id} starting after {job.waited_s:.1f}s")
+            self._log(
+                "info",
+                f"queue: request {job.id} starting on {job.line or 'the default line'} "
+                f"after {job.waited_s:.1f}s",
+            )
 
     def _release(self, job: Job) -> None:
         with self._cond:
-            self._line = [queued for queued in self._line if queued is not job]
+            waiting = self._lines.get(job.line)
+            if waiting is not None:
+                self._lines[job.line] = [queued for queued in waiting if queued is not job]
             self._cond.notify_all()
 
     # -- running ----------------------------------------------------------
-    def deliver(self, request: Any, attempt: Callable[[Job], Attempt]) -> Job:
-        """Queue ``request``, wait for its turn, run it, and return its job.
+    def deliver(
+        self,
+        request: Any,
+        attempt: Callable[[Job], Attempt],
+        *,
+        line: str = "",
+    ) -> Job:
+        """Queue ``request`` on its profile's line, wait for its turn, run it.
 
         ``attempt(job)`` performs one transport attempt and returns an
         :class:`Attempt`; the queue calls it again only while the outcome is
         ``busy``, so the transport sees one call per real POST.
         """
-        job = self.enqueue(request, attempt)
+        job = self.enqueue(request, attempt, line=line)
         try:
             self._wait_turn(job)
             if job.terminal:
@@ -268,10 +328,125 @@ class SaladQueue:
                     f"queue: request {job.id} was cancelled before it was submitted",
                 )
                 return job
+            refusal = self._ensure_running(job)
+            if refusal:
+                job.state = FAILED
+                job.reason = refusal
+                self._log("error", f"queue: request {job.id} failed: {refusal}")
+                return job
             self._run(job, attempt)
         finally:
             self._release(job)
+        self._note_activity(job)
         return job
+
+    # -- container lifecycle ----------------------------------------------
+    def _ensure_running(self, job: Job) -> str:
+        """Ask for this request's container once, before its first attempt.
+
+        Returns ``""`` when the request may go ahead, or the reason it must not:
+        a start the control plane rejected. A container that is already running
+        is left alone, an unknown state is left alone (starting on a guess could
+        double-start), and a profile whose start was already asked for is not
+        asked again, however many attempts or retries the request makes.
+        """
+        if self.lifecycle is None or not job.line or job.line in self._started:
+            return ""
+        gateway = request_gateway(job.request)
+        if not gateway:
+            return ""
+        running = self.lifecycle.is_running(job.line, gateway)
+        if running is True:
+            self._started.add(job.line)
+            return ""
+        if running is None:
+            self._log(
+                "warn",
+                f"queue: {job.line} container state unknown; not starting it",
+            )
+            return ""
+        code, message = self.lifecycle.start(job.line, gateway)
+        code = int(code)
+        if 200 <= code < 300:
+            self._started.add(job.line)
+            self._log(
+                "info",
+                f"queue: asked Salad to start {job.line} (HTTP {code}); the "
+                "request waits for it to become ready",
+            )
+            return ""
+        refusal = f"could not start the container for {job.line}: HTTP {code}"
+        if message:
+            refusal += f" ({message})"
+        return refusal
+
+    def _note_activity(self, job: Job) -> None:
+        """Remember when this profile last had a request finish."""
+        if not job.line or not job.terminal:
+            return
+        with self._cond:
+            self._last_active[job.line] = self._now()
+
+    def idle_timeout_s(self) -> int:
+        """The idle-stop timeout: the injected value, else the metadata document."""
+        if self._idle_stop_s is not None:
+            return int(self._idle_stop_s)
+        doc = self.meta if self.meta is not None else studio_meta.default()
+        return studio_meta.idle_stop_seconds(doc)
+
+    def idle_check(self) -> list[str]:
+        """Stop every profile's container that has been idle past the timeout.
+
+        Returns the profiles it asked Salad to stop. The app's tick calls this,
+        and a headless caller calls it directly; the clock and the lifecycle
+        client are injected, so neither the timeout nor the call is waited on.
+        A profile with a request queued or in flight is never stopped, a stopped
+        profile leaves the idle set so a second check cannot stop it twice, and a
+        stop the control plane rejects is retried only after another full
+        timeout has passed.
+        """
+        if self.lifecycle is None:
+            return []
+        seconds = self.idle_timeout_s()
+        with self._cond:
+            busy = {job.line for job in self._jobs if not job.terminal}
+            due = [
+                line
+                for line in sorted(self._started)
+                if line not in busy
+                and line in self._last_active
+                and self._now() - self._last_active[line] >= seconds
+            ]
+        stopped: list[str] = []
+        for line in due:
+            if self._stop_idle(line, seconds):
+                stopped.append(line)
+        return stopped
+
+    def _stop_idle(self, line: str, seconds: int) -> bool:
+        gateway = self._gateways.get(line, "")
+        code, message = self.lifecycle.stop(line, gateway)
+        code = int(code)
+        if 200 <= code < 300:
+            with self._cond:
+                self._started.discard(line)
+                self._last_active.pop(line, None)
+            self._log(
+                "info",
+                f"queue: stopped {line} after {seconds}s idle (HTTP {code})",
+            )
+            return True
+        with self._cond:
+            # Keep the container on the books but do not hammer the API: the next
+            # attempt waits another full timeout.
+            self._last_active[line] = self._now()
+        self._log("warn", f"queue: could not stop {line}: HTTP {code} {message}".strip())
+        return False
+
+    def containers(self) -> dict[str, str]:
+        """The profiles whose container this queue started, and their gateways."""
+        with self._cond:
+            return {line: self._gateways.get(line, "") for line in sorted(self._started)}
 
     def _run(self, job: Job, attempt: Callable[[Job], Attempt]) -> None:
         job.state = RUNNING
@@ -335,13 +510,15 @@ class SaladQueue:
                 return False
             job.state = CANCELLED
             job.reason = "cancelled before it was submitted"
-            self._line = [queued for queued in self._line if queued is not job]
+            waiting = self._lines.get(job.line)
+            if waiting is not None:
+                self._lines[job.line] = [queued for queued in waiting if queued is not job]
             self._cond.notify_all()
             self._log("info", f"queue: request {job.id} cancelled")
             return True
 
     def retry(self, job: Job) -> Job:
-        """Run a failed job's own work again, through this queue.
+        """Run a failed job's own work again, on its own profile's line.
 
         Blocks until the job is terminal again, so the caller reports the new
         outcome; the queue page calls this on a worker thread. Only a failed
@@ -362,7 +539,7 @@ class SaladQueue:
             job.result = None
             job.accepted = False
             job.waited_s = 0.0
-            self._line.append(job)
+            self._line_of(job.line).append(job)
             self._cond.notify_all()
             self._log("info", f"queue: request {job.id} retrying")
         try:
@@ -372,6 +549,7 @@ class SaladQueue:
             self._run(job, job.work)
         finally:
             self._release(job)
+        self._note_activity(job)
         return job
 
     def clear_finished(self) -> int:
@@ -401,6 +579,11 @@ class SaladQueue:
         """Jobs queued or running, including the one being delivered."""
         with self._cond:
             return sum(1 for job in self._jobs if not job.terminal)
+
+    def lines(self) -> dict[str, int]:
+        """Jobs waiting on each profile's line, by line name (running included)."""
+        with self._cond:
+            return {line: len(jobs) for line, jobs in self._lines.items() if jobs}
 
     def busy(self) -> bool:
         with self._cond:

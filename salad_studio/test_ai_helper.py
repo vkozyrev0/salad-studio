@@ -196,6 +196,25 @@ class IssueAndImage(unittest.TestCase):
         self.assertIn("issue", system.lower())
         self.assertIn("image", system.lower())
 
+    def test_system_prompt_carries_the_house_klein_anatomy_rules(self) -> None:
+        """The standing instruction, not just the per-press context.
+
+        The rules live in the metadata document (origin:
+        docs/workflow/19-two-body-prompt-playbook.md); a rewrite that loses them
+        goes back to prompts that omit the act. test_studio_meta.py drives the
+        document side of the same contract.
+        """
+        system = ai.build_payload()["messages"][0]["content"]
+        for rule in (
+            "Klein anatomy rules",
+            "missionary",
+            "clinical anatomical words",
+            "style-only",
+            "REPLACE_THIS_PROMPT",
+            "count limbs",
+        ):
+            self.assertIn(rule, system)
+
     def test_no_image_keeps_the_plain_text_content(self) -> None:
         payload = ai.build_payload(editor_positive="X")
         self.assertIsInstance(payload["messages"][1]["content"], str)

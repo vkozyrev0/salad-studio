@@ -27,16 +27,16 @@ Tests are `unittest`, and there are two commands. The second is not part of
 the first:
 
 ```
-python -m unittest discover -s salad_studio -p "test_*.py"   # 566 tests, ~3 min
+python -m unittest discover -s salad_studio -p "test_*.py"   # 628 tests, ~4 min
 python test_salad_comfy_live_findings.py                     # root structural checks
 ```
 
 ## Requirements
 
-Python 3.14 with `pillow`, `requests`, and `tkinterweb` (plus `tkinterweb-tkhtml`),
-and Tk from the standard library. The app is Windows-only: it uses WebView2 for
-the graph pane, `%LOCALAPPDATA%\SaladStudio\WebView2` for the browser cache, and
-`os.startfile` to open plates.
+Python 3.14 with `pillow` and `tkwry` (the WebView2 embed the graph pane
+uses), and Tk from the standard library. The app is Windows-only: it uses
+WebView2 for the graph pane, `%LOCALAPPDATA%\SaladStudio\WebView2` for the
+browser cache, and `os.startfile` to open plates.
 
 Generation needs a running SaladCloud ComfyUI container group and a Salad API
 key. Building the container needs Docker.
@@ -48,7 +48,7 @@ key. Building the container needs Docker.
 | `salad_studio/` | The Tkinter app and its test suite. [`salad_studio/README.md`](salad_studio/README.md) is the real manual, tabs, knobs, and the import rules in detail. |
 | `salad_klein/` | Docker image, `prefetch.py` entrypoint, and Klein prompt recipes. [`salad_klein/README.md`](salad_klein/README.md) is the build-context short form. |
 | `docs/workflow/` | The build and generation playbooks. Start at [23](docs/workflow/23-salad-container-group-deployment.md) for deployment, [21](docs/workflow/21-klein-image-handoff.md) for the Klein handoff, [16](docs/workflow/16-salad-studio-prompt-graph.md) for the graph pane. |
-| `docs/history/` | Dated audits of the studio ([57](docs/history/57-salad-studio-audit-2026-09.md), [58](docs/history/58-salad-studio-audit-2026-09-22.md)). |
+| `docs/history/` | Dated audits of the studio ([57](docs/history/57-salad-studio-audit-2026-09.md), [58](docs/history/58-salad-studio-audit-2026-09-22.md), [59](docs/history/59-salad-studio-audit-2026-09-26.md)). |
 | `model_catalog.py` | Local LoRA/checkpoint cache with Civitai provenance. `fetch-klein --stage` warms the Docker build. |
 | `salad_gen.py` | One-shot SaladCloud ComfyUI Flux generate. |
 | `salad_probe_klein.py`, `salad_probe_sdxl.py` | Probe faces, bodies, pregnancies, and events on a Salad group. |

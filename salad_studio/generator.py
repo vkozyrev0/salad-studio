@@ -30,13 +30,15 @@ from studio_log import (  # noqa: E402
     summarize_payload,
 )
 
+# Top-level, like studio_log and request_json above: the app and the tests must
+# share ONE salad_queue module object, or an Attempt made in one copy of the
+# module is not an Attempt to the other.
+import salad_queue  # noqa: E402
+
 _RETRY_CODES = (502, 503, 504, 521, 522, 523, 524)
-# One attempt: no client-side retry loop. A 524 means Cloudflare gave up at 100 s
-# but the container is still running the job, so a retry submits a *duplicate*
-# rather than resuming. Each attempt costs up to _PROMPT_TIMEOUT_S and piles more
-# onto the replica's queue. Clicking Generate again is faster and clearer. (2026-09-22)
-_RETRY_TRIES = 1
-_RETRY_SLEEP_S = 8
+# The GET /ready probe retries on every one of those, 504 and 524 included: a
+# probe submits no work, so asking again cannot duplicate a render. The POST is
+# different and goes through salad_queue, which treats 504/524 as terminal.
 _PROMPT_TIMEOUT_S = 180
 _READY_TRIES = 8
 _READY_SLEEP_S = 8
@@ -251,6 +253,14 @@ def check_lora_urls(
     return unconfirmed
 
 
+def _attempt_error(attempt: salad_queue.Attempt, url: str, job: salad_queue.Job) -> str:
+    """Why a queued request produced no plate."""
+    if attempt.status:
+        msg = explain_http(attempt.status, attempt.body, url)
+        return f"{msg}  ({attempt.error})" if attempt.error else msg
+    return f"POST {url} never answered: {attempt.error or job.reason or 'no response'}"
+
+
 def generate_from_payload(
     *,
     gateway: str,
@@ -258,11 +268,19 @@ def generate_from_payload(
     payload: dict[str, Any] | str,
     out_dir: Path,
     on_log: Any | None = None,
+    queue: salad_queue.SaladQueue | None = None,
 ) -> Path:
-    """POST the Prompt Editor JSON to Salad ``/prompt`` and write a JPEG."""
+    """POST the Prompt Editor JSON to Salad ``/prompt`` and write a JPEG.
+
+    The POST goes through ``queue`` (the process-wide one by default), so a
+    request submitted while another render is in flight waits its turn instead
+    of being dropped, and one the container cannot serve yet is retried there.
+    """
     def _log(level: str, message: str) -> None:
         if on_log is not None:
             on_log(level, message)
+
+    line = queue if queue is not None else salad_queue.shared()
 
     if isinstance(payload, str):
         body_obj = parse_request_json(payload)
@@ -303,53 +321,68 @@ def generate_from_payload(
     blob = salad_gen.json.dumps(body_obj).encode()
     url = prompt_url(gateway)
     _log("http", f"POST {url}  {len(blob)} bytes  {summarize_payload(body_obj)}")
-    code = 0
-    body: bytes | str = b""
-    for attempt in range(_RETRY_TRIES):
-        _log("http", f"attempt {attempt + 1}/{_RETRY_TRIES}  timeout={_PROMPT_TIMEOUT_S}s")
-        code, body = salad_gen._req(url, key, data=blob, timeout=_PROMPT_TIMEOUT_S)
-        if code == 200:
-            _log("ok", f"HTTP 200 from {url}")
-            break
-        msg = explain_http(int(code), body, url)
-        if code in _RETRY_CODES:
-            # Do not advertise (or take) a backoff sleep there is no room for.
-            if attempt + 1 < _RETRY_TRIES:
-                _log("warn", msg + f"  retry in {_RETRY_SLEEP_S}s")
-                salad_gen.time.sleep(_RETRY_SLEEP_S)
-            continue
-        _log("error", msg)
-        raise RuntimeError(msg)
-    else:
-        msg = explain_http(int(code), body, url)
-        _log("error", msg)
-        raise RuntimeError(msg)
 
-    try:
-        data = salad_gen.json.loads(body.decode("utf-8", "replace"))
-    except json.JSONDecodeError:
-        msg = explain_http(int(code), body, url) + "  (response is not JSON)"
-        _log("error", msg)
-        raise RuntimeError(msg) from None
-    _log("debug", f"/prompt keys={list(data)[:16] if isinstance(data, dict) else type(data)}")
-    raw = first_image_b64(data)
-    if not raw and isinstance(data, dict) and data.get("prompt_id"):
-        pid = str(data.get("prompt_id"))
-        errs = data.get("node_errors") or {}
-        if errs:
-            msg = f"Comfy node_errors for {pid}: {json.dumps(errs)[:800]}"
-            _log("error", msg)
-            raise RuntimeError(msg)
-        _log("info", f"Comfy queued prompt_id={pid}; polling /history (wrapper returned no images[])")
-        raw = wait_history_image(gateway, key, pid, on_log=_log)
-    if not raw:
-        keys = list(data)[:16] if isinstance(data, dict) else type(data)
-        msg = (
-            explain_http(int(code), body, url)
-            + f"  (no images in response; keys={keys})"
+    def render_once() -> salad_queue.Attempt:
+        """One submission: POST /prompt, then resolve the image it accepted.
+
+        ``accepted`` turns True the moment the container answers 200, which is
+        what stops the queue from POSTing the job a second time: a re-POST of an
+        accepted prompt renders a duplicate plate. Everything after that answer
+        is therefore reported as an accepted failure, never as a retry.
+        """
+        _log("http", f"POST {url}  timeout={_PROMPT_TIMEOUT_S}s")
+        code, body = salad_gen._req(url, key, data=blob, timeout=_PROMPT_TIMEOUT_S)
+        code = int(code)
+        if code != 200:
+            return salad_queue.Attempt(status=code, body=body)
+        _log("ok", f"HTTP 200 from {url}")
+        try:
+            data = salad_gen.json.loads(body.decode("utf-8", "replace"))
+        except json.JSONDecodeError:
+            return salad_queue.Attempt(
+                status=code, body=body, accepted=True, error="the response is not JSON"
+            )
+        _log(
+            "debug",
+            f"/prompt keys={list(data)[:16] if isinstance(data, dict) else type(data)}",
         )
+        raw = first_image_b64(data)
+        if not raw and isinstance(data, dict) and data.get("prompt_id"):
+            pid = str(data.get("prompt_id"))
+            errs = data.get("node_errors") or {}
+            if errs:
+                return salad_queue.Attempt(
+                    status=code,
+                    body=body,
+                    accepted=True,
+                    error=f"Comfy node_errors for {pid}: {json.dumps(errs)[:800]}",
+                )
+            _log(
+                "info",
+                f"Comfy queued prompt_id={pid}; polling /history "
+                "(wrapper returned no images[])",
+            )
+            raw = wait_history_image(gateway, key, pid, on_log=_log)
+        if not raw:
+            keys = list(data)[:16] if isinstance(data, dict) else type(data)
+            return salad_queue.Attempt(
+                status=code,
+                body=body,
+                accepted=True,
+                error=f"no images in the response; keys={keys}",
+            )
+        return salad_queue.Attempt(status=code, body=body, accepted=True, result=raw)
+
+    job = line.deliver(
+        {"gateway": gateway, "url": url, "bytes": len(blob)},
+        lambda _job: render_once(),
+    )
+    attempt = job.result if isinstance(job.result, salad_queue.Attempt) else salad_queue.Attempt()
+    if job.state != salad_queue.ACCEPTED:
+        msg = _attempt_error(attempt, url, job)
         _log("error", msg)
         raise RuntimeError(msg)
+    raw = attempt.result
     if isinstance(raw, str) and raw.startswith("data:"):
         raw = raw.split(",", 1)[-1]
     out_dir = Path(out_dir)

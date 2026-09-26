@@ -39,6 +39,10 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+# Top-level, the way this package's leaf modules are imported (studio_log,
+# request_json): one module object per process, shared with the app and tests.
+import studio_meta  # noqa: E402
+
 ENDPOINT = "https://api.deepseek.com/chat/completions"
 # /models on this key lists deepseek-flash and deepseek-v4-pro; the retired
 # deepseek-chat alias is gone, so keep the id here where it is easy to change.
@@ -73,33 +77,15 @@ LOCAL_BASE_URL = "http://localhost:1234/v1"
 LOCAL_MODEL_URL_TIMEOUT_S = 15
 LOCAL_TIMEOUT_S = 600
 
-SYSTEM_PROMPT = (
-    "You are a prompt engineer for Flux.2 Klein image generation inside Salad "
-    "Studio. You receive the current positive and negative prompt, a pair of "
-    "adjusted prompts the artist has started editing, the raw ComfyUI request "
-    "JSON, a resolved inventory of the checkpoints, LoRAs, CLIP and VAE that "
-    "the request actually loads, an issue the artist reports with the last "
-    "image, and sometimes that image itself.\n"
-    "Rewrite the two adjusted prompts so the image matches the artist's intent "
-    "while staying faithful to the loaded models:\n"
-    "- THE REPORTED ISSUE IS THE HIGHEST PRIORITY. The rewritten prompts must "
-    "directly fix it: describe what should be there, and add the failure to the "
-    "negative prompt. Never write a prompt that could reproduce the reported "
-    "defect.\n"
-    "- If an image is attached, look at it first: name the visible defect you "
-    "actually see, then target that defect (not a guess).\n"
-    "- Keep the trigger words and style tokens the LoRAs need; if a LoRA's "
-    "trigger is unknown, do not invent one.\n"
-    "- Use only LoRAs and checkpoints listed as resolved and compatible with "
-    "the replica. If an entry is unresolved or flagged incompatible, say so in "
-    "the negative prompt's spirit rather than relying on it.\n"
-    "- Keep the artist's own wording where it already works; improve, do not "
-    "replace wholesale.\n"
-    "- The negative prompt lists what to avoid; keep it short and specific.\n"
-    'Reply with ONLY a JSON object of the form {"issue": "what is wrong with '
-    'the image, or an empty string when none was given", "positive": "...", '
-    '"negative": "..."} and no other text.'
-)
+def system_instruction(meta: dict[str, Any] | None = None) -> str:
+    """The system message for one request, assembled from the metadata document.
+
+    The role, the house rules and the reply contract live in
+    ``studio-metadata.json`` (see :mod:`studio_meta`), not here: editing that
+    document changes the instruction this layer actually sends.
+    """
+    return studio_meta.instruction(studio_meta.default() if meta is None else meta)
+
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.S)
 # The prompt keys, best match first. A bare "prompt" is the last resort: the
@@ -193,6 +179,7 @@ def build_payload(
     image_data_url: str = "",
     model: str = MODEL,
     max_tokens: int = MAX_TOKENS,
+    meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The DeepSeek chat-completions body for one Help press.
 
@@ -224,7 +211,7 @@ def build_payload(
     return {
         "model": model,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_instruction(meta)},
             {"role": "user", "content": content},
         ],
         "max_tokens": max_tokens,
@@ -819,6 +806,7 @@ def help_with_prompts(
     image_path: Any | None = None,
     send: Callable[[urllib.request.Request, int], tuple[int, bytes]] | None = None,
     timeout: int = TIMEOUT_S,
+    meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One Help round trip against DeepSeek: build, ask, parse."""
     image = image_data_url(image_path) if image_path else ""
@@ -831,6 +819,7 @@ def help_with_prompts(
         findings=findings,
         issue=issue,
         image_data_url=image,
+        meta=meta,
     )
     raw, continuations, _info = _ask_deepseek_full(
         api_key, payload, send=send, timeout=timeout
@@ -1082,6 +1071,7 @@ def help_with_prompts_local(
     image_path: Any | None = None,
     send: Callable[[urllib.request.Request, int], tuple[int, bytes]] | None = None,
     timeout: int = LOCAL_TIMEOUT_S,
+    meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One Help round trip against the local LM Studio server.
 
@@ -1109,6 +1099,7 @@ def help_with_prompts_local(
         issue=issue,
         image_data_url=image,
         model=chosen,
+        meta=meta,
     )
     raw, continuations, _info = _ask_local_full(
         payload, base=base, send=send, timeout=timeout

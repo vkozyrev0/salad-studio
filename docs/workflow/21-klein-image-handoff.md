@@ -102,18 +102,28 @@ build-time `KLEIN_UNET_SET` so each image ships only its own unets
 (`prefetch6-klein` = base + distilled, `prefetch6-snofs` = SNOFS).
 
 **How routing decides.** Salad Studio routes at **Generate**, from the graph's
-`UNETLoader.unet_name`, before the POST:
+`UNETLoader.unet_name`, before the POST. The family table itself is the
+**metadata document** (`salad_studio/studio-metadata.json`, or your copy at
+`~/.config/salad/studio-metadata.json`), not code:
 
 ```
-profiles.unet_family(unet_name)     -> "snofs" if "snofs" is in the name, else "klein"
-profiles.route_payload(payload)     -> the profile whose group serves that family
-profiles.profile_for_gateway(gw)    -> the group the form would POST to
+studio_meta.family_for_unet(unet_name, doc)  -> the family whose unets/markers match
+profiles.plan_route(payload, form_profile, all_profiles)
+                                            -> (Route | None, refusal reason)
+profiles.route_payload(payload, all_profiles)
+                                            -> (group name, profile) for that family
+profiles.profile_for_gateway(gateway, all_profiles)
+                                            -> the group the form would POST to
 ```
 
-The guard compares the graph's family to **the family the current gateway's group
-serves**. If they differ it swaps the profile and logs
+A checkpoint with no entry in `routing.families` is **refused with a stated
+reason** rather than sent to a group that cannot serve it. The guard compares the
+graph's family to **the family the current gateway's group serves**. If they
+differ it swaps the profile and logs
 `Routed to profile 'klein5090' (gateway …)`. A hand-typed gateway that is not one
-of the saved profiles is left alone.
+of the saved profiles is left alone. Changing the document's `group` (or its
+optional `gateway`) moves a family with no code edit; `test_studio_meta.py` holds
+that behaviour.
 
 > **Fixed 2026-09-22.** The guard used to compare the graph's family to the
 > **form's** unet. Loading a JSON into the Prompt Editor rewrites that field from

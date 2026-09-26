@@ -172,6 +172,104 @@ class FamiliesFromMetadataTest(unittest.TestCase):
         return {"prompt": {"70": {"class_type": "UNETLoader", "inputs": {"unet_name": unet}}}}
 
 
+class PolicyImageFromMetadataTest(unittest.TestCase):
+    """The document's per-family image is where a config's Salad image starts.
+
+    The config stores its own once it has one; until then, and as the fallback
+    when neither it nor a live group supplies one, this is the image it has.
+    """
+
+    def setUp(self) -> None:
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.tmp = Path(self._td.name)
+
+    def _write(self, doc: dict) -> Path:
+        path = self.tmp / "meta.json"
+        path.write_text(json.dumps(doc), encoding="utf-8")
+        return path
+
+    def _doc(self) -> dict:
+        return meta.load(path=self._write(_document()))
+
+    def test_a_new_profile_starts_with_its_familys_image(self) -> None:
+        doc = self._doc()
+        klein = profiles.default_profile("klein", doc)
+        snofs = profiles.default_profile("klein5090", doc)
+        self.assertEqual(klein.policy, {"image": meta.image_for_family("klein", doc)})
+        self.assertEqual(snofs.policy, {"image": meta.image_for_family("snofs", doc)})
+        self.assertNotEqual(klein.policy["image"], snofs.policy["image"])
+        self.assertEqual(
+            profiles.policy_image_for(klein, doc), meta.image_for_family("klein", doc)
+        )
+        self.assertEqual(
+            profiles.seeded_policy(klein, doc),
+            {"image": meta.image_for_family("klein", doc)},
+        )
+
+    def test_editing_only_the_document_changes_the_image_a_config_starts_from(self) -> None:
+        """Same code, same family: the file decides the image."""
+        profile = profiles.SaladProfile(name="klein", checkpoints=[KLEIN_UNET])
+        before = self._doc()
+        after = meta.load(
+            path=self._write(
+                {
+                    "routing": {
+                        "families": {
+                            "klein": {
+                                "image": "docker.io/other/klein:9",
+                                "unets": [KLEIN_UNET],
+                                "markers": ["klein"],
+                            }
+                        }
+                    }
+                }
+            )
+        )
+        self.assertNotEqual(
+            profiles.policy_image_for(profile, before),
+            profiles.policy_image_for(profile, after),
+        )
+        self.assertEqual(
+            profiles.policy_image_for(profile, after),
+            meta.image_for_family("klein", after),
+        )
+        self.assertEqual(
+            profiles.seeded_policy(profile, after),
+            {"image": meta.image_for_family("klein", after)},
+        )
+
+    def test_a_family_the_document_gives_no_image_is_imageless(self) -> None:
+        doc = meta.load(
+            path=self._write(
+                {
+                    "routing": {
+                        "families": {
+                            "klein": {"unets": [KLEIN_UNET], "markers": ["klein"]}
+                        }
+                    }
+                }
+            )
+        )
+        profile = profiles.SaladProfile(name="klein", checkpoints=[KLEIN_UNET])
+        self.assertEqual(meta.image_for_family("klein", doc), "")
+        self.assertEqual(profiles.policy_image_for(profile, doc), "")
+        self.assertEqual(profiles.seeded_policy(profile, doc), {})
+        self.assertEqual(profiles.default_profile("klein", doc).policy, {})
+
+    def test_a_profile_with_no_checkpoints_has_no_family_to_take_an_image_from(self) -> None:
+        doc = self._doc()
+        empty = profiles.SaladProfile(name="empty")
+        self.assertEqual(profiles.policy_image_for(empty, doc), "")
+        self.assertEqual(profiles.seeded_policy(empty, doc), {})
+        # ... while a profile that does list one has the document's image.
+        self.assertTrue(
+            profiles.policy_image_for(
+                profiles.SaladProfile(name="klein", checkpoints=[KLEIN_UNET]), doc
+            )
+        )
+
+
 class IdleTimeoutFromMetadataTest(unittest.TestCase):
     """The queue's idle timeout is the document's setting, with a safe default."""
 

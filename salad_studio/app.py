@@ -928,9 +928,9 @@ class SaladStudio(tk.Tk):
             var.set(gid in selected)
 
     def _show_policy(self, policy: dict) -> None:
-        """Show a config's stored policy in the fields, with no network call.
+        """Show a policy in the fields, with no network call.
 
-        The GPU classes that config stores are rendered by id until a Load brings
+        The GPU classes the policy carries are rendered by id until a Load brings
         the live list's names; that is what keeps selecting a config from
         silently dropping a class.
         """
@@ -938,6 +938,32 @@ class SaladStudio(tk.Tk):
             [], [str(x) for x in (policy.get("gpu_classes") or [])]
         )
         self._policy_to_form(policy)
+
+    def _policy_for_display(self, prof: SaladProfile) -> dict:
+        """What the fields show for a config before its group is read.
+
+        The config's own stored policy, with the metadata document's image for
+        its family when it stores none: a config that was never loaded must still
+        show an image, and a re-check that fails must leave these values standing.
+        """
+        return salad_status.shown_policy(
+            getattr(prof, "policy", None), profiles.policy_image_for(prof)
+        )
+
+    def _recheck_policy(self, prof: SaladProfile) -> None:
+        """Re-read the selected config's group and refill the fields from it.
+
+        Every selection does this, the window's first one included: the fields a
+        config shows are its own group's current values, not whatever the last
+        config left behind. It fills the fields only — no config's stored record
+        is written here — and a read that fails leaves the fields as they are.
+        The read is scheduled rather than started here, so it runs after the
+        selection has settled and never inside the widget work that selected it.
+        """
+        try:
+            self.after(0, lambda: self._load_salad_policy(prof, quiet=True))
+        except tk.TclError:
+            return
 
     def _store_policy(self, policy: dict) -> None:
         """Write the fields shown onto the selected config's record.
@@ -981,11 +1007,22 @@ class SaladStudio(tk.Tk):
             self._pol_gpu_vars[gid] = var
             self._pol_gpu_names[gid] = name
 
-    def _load_salad_policy(self) -> None:
-        gw = self.var_gateway.get().strip()
+    def _load_salad_policy(self, prof: SaladProfile | None = None, *, quiet: bool = False) -> None:
+        """Read a config's group and fill the fields from it.
+
+        ``prof`` is the config to read (the selected one when the button is
+        pressed). ``quiet`` is the switch-time re-check: a failure is a log line,
+        not a status change, because the fields already show the config's stored
+        policy and a missing key or a down API must not look like a blank config.
+        """
+        name = (prof.name if prof is not None else (self.var_name.get() or "")).strip()
+        gw = (prof.gateway if prof is not None else self.var_gateway.get()).strip()
         if not gw:
-            self.status.set("Gateway URL is empty.")
+            if not quiet:
+                self.status.set("Gateway URL is empty.")
             return
+        stored = dict(getattr(prof, "policy", None) or {}) if prof is not None else {}
+        document_image = profiles.policy_image_for(prof) if prof is not None else ""
 
         def work() -> None:
             err = ""
@@ -1002,18 +1039,29 @@ class SaladStudio(tk.Tk):
                 err = str(e)
 
             def done() -> None:
+                if name and (self.var_name.get() or "").strip() != name:
+                    # The window moved on to another config; this read is not the
+                    # one on screen, so it must not fill the fields.
+                    self.log("debug", f"Policy read for {name!r} dropped: another config is selected")
+                    return
                 if err or pol is None:
+                    if quiet:
+                        self.log("warn", f"Policy re-check for {name!r}: {err or 'no group'}")
+                        return
                     self.status.set(err or "Load policy failed")
                     self.log("error", f"Policy load: {err}")
                     return
-                self._fill_gpu_checkboxes(gpus, list(pol.get("gpu_classes") or []))
-                self._policy_to_form(pol)
-                self.status.set(f"Loaded policy {pol.get('group_name')} v{pol.get('version')}")
+                live = dict(pol)
+                live["image"] = salad_status.resolve_policy_image(stored, live, document_image)
+                self._fill_gpu_checkboxes(gpus, list(live.get("gpu_classes") or []))
+                self._policy_to_form(live)
+                self.status.set(f"Loaded policy {live.get('group_name')} v{live.get('version')}")
                 self.log(
                     "ok",
-                    f"Policy loaded {pol.get('group_name')} v{pol.get('version')} "
-                    f"startup delay={pol['startup'].get('initial_delay_seconds')}s "
-                    f"fail={pol['startup'].get('failure_threshold')}",
+                    f"Policy loaded {live.get('group_name')} v{live.get('version')} "
+                    f"image={live.get('image')} "
+                    f"startup delay={live['startup'].get('initial_delay_seconds')}s "
+                    f"fail={live['startup'].get('failure_threshold')}",
                 )
 
             self.after(0, done)
@@ -3669,8 +3717,10 @@ class SaladStudio(tk.Tk):
             self._refresh_lora_lists()
         self._refresh_checkpoint_list(p)
         # This config's own policy, not a window-wide copy: selecting another
-        # config swaps these fields with that config's stored policy.
-        self._show_policy(getattr(p, "policy", None) or {})
+        # config swaps these fields with that config's policy, then re-reads that
+        # config's group so what is shown is the group's current values.
+        self._show_policy(self._policy_for_display(p))
+        self._recheck_policy(p)
         self._sync_editor()
         self.log(
             "info",

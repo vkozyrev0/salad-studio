@@ -184,6 +184,62 @@ def policy_from_group(group: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _policy_image(policy: Any) -> str:
+    """The image a policy dict carries, stripped; "" for anything else."""
+    if not isinstance(policy, dict):
+        return ""
+    image = policy.get("image")
+    return image.strip() if isinstance(image, str) else ""
+
+
+def resolve_policy_image(
+    stored: dict[str, Any] | None,
+    live: dict[str, Any] | None,
+    document_image: str = "",
+) -> str:
+    """The image a config's fields should show, or "" when nothing names one.
+
+    A fresh read of the group says what Salad is running, so the live image
+    wins: the website is the other place a group gets edited, and a stored
+    policy only remembers what this app last wrote. The stored image answers
+    when that read is missing or failed. The document's image for the family is
+    last, because it is the tag the family ships with and what a config that
+    never stored one should start from. Blank and whitespace-only strings count
+    as absent at every step, so a half-written field cannot blank the ones
+    behind it.
+    """
+    for policy in (live, stored):
+        image = _policy_image(policy)
+        if image:
+            return image
+    return document_image.strip() if isinstance(document_image, str) else ""
+
+
+def shown_policy(
+    stored: dict[str, Any] | None, document_image: str = ""
+) -> dict[str, Any]:
+    """The policy fields to show for a config that has no live read to show.
+
+    The stored policy is the base, since it is what the user wrote, but its
+    ``image`` goes through :func:`resolve_policy_image`, so an empty or
+    imageless policy still shows the document's image rather than blanking the
+    field. The result is a copy the window may edit: the dict is new, and its
+    nested dicts and lists are new too, so an edit to a shown ``startup`` or
+    ``readiness`` cannot reach back into the profile record.
+    """
+    base = stored if isinstance(stored, dict) else {}
+    shown: dict[str, Any] = {}
+    for key, value in base.items():
+        if isinstance(value, dict):
+            shown[key] = dict(value)
+        elif isinstance(value, list):
+            shown[key] = list(value)
+        else:
+            shown[key] = value
+    shown["image"] = resolve_policy_image(stored, None, document_image)
+    return shown
+
+
 STARTUP_EXPLAIN = (
     "After the container process starts, Salad waits {delay}s, then GET {path} "
     "on port {port} every {period}s (each try may last up to {timeout}s). "

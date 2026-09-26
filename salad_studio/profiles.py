@@ -177,6 +177,35 @@ def serving_family(profile: SaladProfile, meta: dict[str, Any] | None = None) ->
     return checkpoint_family(profile.primary_checkpoint, meta)
 
 
+def policy_image_for(profile: SaladProfile, meta: dict[str, Any] | None = None) -> str:
+    """The metadata document's container image for the family this profile serves.
+
+    ``""`` means the document names none: the profile lists no checkpoint, the
+    document does not classify what it lists, or that family carries no image.
+    Nothing here may raise — a hand-made or broken document must leave a config
+    imageless, not abort the page reading it.
+    """
+    try:
+        doc = studio_meta.default() if meta is None else meta
+        return studio_meta.image_for_family(serving_family(profile, doc), doc)
+    except Exception:  # noqa: BLE001 - a broken document must not abort the caller
+        return ""
+
+
+def seeded_policy(
+    profile: SaladProfile, meta: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """The policy a config with nothing stored starts from.
+
+    The metadata document is where the image comes from until the config stores
+    its own or a live group is read, and the document's image is also the
+    fallback when neither supplies one. ``{}`` when the document names no image
+    for this profile's family, so nothing is invented here.
+    """
+    image = policy_image_for(profile, meta)
+    return {studio_meta.IMAGE: image} if image else {}
+
+
 def add_checkpoint(
     profile: SaladProfile, unet: str, meta: dict[str, Any] | None = None
 ) -> str:
@@ -429,7 +458,7 @@ def _profile_from_dict(name: str, data: object) -> SaladProfile:
     )
     if "selected_loras" not in data and use_loras and not selected:
         selected = list(DEFAULT_KLEIN_LORA_IDS)
-    return SaladProfile(
+    profile = SaladProfile(
         name=str(data.get("name") or name),
         gateway=str(data.get("gateway", "")),
         key_path=str(data.get("key_path") or DEFAULT_KEY_PATH),
@@ -445,6 +474,15 @@ def _profile_from_dict(name: str, data: object) -> SaladProfile:
         selected_loras=selected,
         policy=_coerce_policy(data.get("policy")),
     )
+    # A store written before the policy existed, or one whose policy carries no
+    # image, loads with the document's image for its family so no config is
+    # imageless. Only the image is filled in: a stored probe or placement the
+    # config already has stays, and a stored image is the config's own.
+    if not str(profile.policy.get(studio_meta.IMAGE) or "").strip():
+        image = policy_image_for(profile)
+        if image:
+            profile.policy = {**profile.policy, studio_meta.IMAGE: image}
+    return profile
 
 
 def _profiles_from_doc(doc: dict) -> dict[str, SaladProfile]:
@@ -489,13 +527,14 @@ def seed_checkpoints(name: str, meta: dict[str, Any] | None = None) -> list[str]
 
 def default_profile(name: str = "klein", meta: dict[str, Any] | None = None) -> SaladProfile:
     """A built-in profile: its checkpoint list is the metadata document's seed
-    for the family its group serves, and that list is what routing reads."""
+    for the family its group serves, and that list is what routing reads. Its
+    policy image is the same document's, so a new config is never imageless."""
     key = (name or "klein").strip() or "klein"
     if key == "klein5090":
         gw = _read_optional_text(GATEWAY_KLEIN_5090_PATH) or KLEIN_5090_GATEWAY
     else:
         gw = _read_optional_text(GATEWAY_KLEIN_PATH) or KLEIN_GATEWAY
-    return SaladProfile(
+    profile = SaladProfile(
         name=key,
         gateway=gw,
         key_path=DEFAULT_KEY_PATH,
@@ -507,6 +546,8 @@ def default_profile(name: str = "klein", meta: dict[str, Any] | None = None) -> 
         use_loras=True,
         selected_loras=list(DEFAULT_KLEIN_LORA_IDS),
     )
+    profile.policy = seeded_policy(profile, meta)
+    return profile
 
 
 def fallback_gateway(name: str) -> str:

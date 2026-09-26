@@ -13,12 +13,14 @@ from profiles import (
     mixed_family_reason,
     payload_unets,
     plan_route,
+    policy_image_for,
     profile_for_gateway,
     profiles_for_checkpoint,
     remove_checkpoint,
     route_payload,
     same_gateway,
     seed_checkpoints,
+    seeded_policy,
     serving_family,
     unet_family,
     SNOFS_UNET,
@@ -36,6 +38,8 @@ from profiles import (
     set_active,
     upsert,
 )
+
+import studio_meta
 
 EXPECTED_FIELDS = (
     "name",
@@ -569,6 +573,8 @@ class CheckpointListTest(unittest.TestCase):
 class ProfilePolicyTest(unittest.TestCase):
     """Each stored config keeps its own Salad group policy across a reload."""
 
+    KLEIN_UNET = "flux-2-klein-base-9b-fp8.safetensors"
+
     def setUp(self) -> None:
         self._td = tempfile.TemporaryDirectory()
         self.addCleanup(self._td.cleanup)
@@ -624,19 +630,115 @@ class ProfilePolicyTest(unittest.TestCase):
             loaded["klein5090"].policy["gpu_classes"],
         )
 
-    def test_a_record_with_no_policy_key_loads_as_empty(self) -> None:
+    def test_a_record_with_no_policy_key_loads_the_documents_image(self) -> None:
+        """A store written before the policy existed must not load imageless."""
         doc = {
             "profiles": {
                 "klein": {
                     "name": "klein",
                     "gateway": "https://example.salad.cloud",
-                    "checkpoints": ["flux-2-klein-base-9b-fp8.safetensors"],
+                    "checkpoints": [self.KLEIN_UNET],
                 }
             },
             "active": "klein",
         }
         self.path.write_text(json.dumps(doc), encoding="utf-8")
-        self.assertEqual(load_all(self.path)["klein"].policy, {})
+        loaded = load_all(self.path)["klein"]
+        self.assertTrue(loaded.policy["image"], "the shipped document names a klein image")
+        self.assertEqual(
+            loaded.policy["image"],
+            studio_meta.image_for_family("klein", studio_meta.default()),
+        )
+        self.assertEqual(
+            loaded.policy,
+            seeded_policy(SaladProfile(name="klein", checkpoints=[self.KLEIN_UNET])),
+        )
+
+    def test_an_empty_stored_policy_comes_back_carrying_the_documents_image(self) -> None:
+        upsert(
+            SaladProfile(name="klein", checkpoints=[self.KLEIN_UNET], policy={}),
+            self.path,
+        )
+        loaded = load_all(self.path)["klein"]
+        self.assertTrue(loaded.policy["image"], "the shipped document names a klein image")
+        self.assertEqual(
+            loaded.policy["image"],
+            studio_meta.image_for_family("klein", studio_meta.default()),
+        )
+
+    def test_an_imageless_stored_policy_keeps_its_fields_when_seeded(self) -> None:
+        """The seed fills the image in; a stored probe or placement stays put."""
+        upsert(
+            SaladProfile(
+                name="klein",
+                checkpoints=[self.KLEIN_UNET],
+                policy={
+                    "gpu_classes": ["rtx4090"],
+                    "country_codes": ["us"],
+                    "startup": {"failure_threshold": "7"},
+                },
+            ),
+            self.path,
+        )
+        loaded = load_all(self.path)["klein"]
+        self.assertEqual(
+            loaded.policy["image"],
+            studio_meta.image_for_family("klein", studio_meta.default()),
+            "the document's image fills the gap",
+        )
+        self.assertEqual(loaded.policy["gpu_classes"], ["rtx4090"])
+        self.assertEqual(loaded.policy["country_codes"], ["us"])
+        self.assertEqual(loaded.policy["startup"]["failure_threshold"], "7")
+
+    def test_a_stored_image_is_its_own_and_beats_the_documents(self) -> None:
+        upsert(
+            SaladProfile(
+                name="klein",
+                checkpoints=[self.KLEIN_UNET],
+                policy={"image": "docker.io/example/mine:tag"},
+            ),
+            self.path,
+        )
+        loaded = load_all(self.path)["klein"]
+        self.assertEqual(loaded.policy["image"], "docker.io/example/mine:tag")
+        self.assertNotEqual(
+            loaded.policy["image"],
+            studio_meta.image_for_family("klein", studio_meta.default()),
+        )
+
+    def test_a_stored_image_keeps_every_other_policy_field(self) -> None:
+        mine = self._policy("docker.io/example/mine:tag", "rtx4090", "us")
+        upsert(
+            SaladProfile(name="klein", checkpoints=[self.KLEIN_UNET], policy=mine),
+            self.path,
+        )
+        loaded = load_all(self.path)["klein"]
+        self.assertEqual(loaded.policy, mine)
+        self.assertEqual(loaded.policy["gpu_classes"], ["rtx4090"])
+        self.assertEqual(loaded.policy["country_codes"], ["us"])
+        self.assertEqual(loaded.policy["startup"]["failure_threshold"], 12)
+        self.assertEqual(loaded.policy["readiness"]["path"], "/ready")
+
+    def test_a_non_dict_policy_still_loads_the_documents_image(self) -> None:
+        """Junk in the policy field must not crash, and must not lose the image."""
+        expected = studio_meta.image_for_family("klein", studio_meta.default())
+        self.assertTrue(expected, "the shipped document names a klein image")
+        for junk in ("junk", ["image", "gpu_classes"], 7, None):
+            with self.subTest(policy=junk):
+                doc = {
+                    "profiles": {
+                        "klein": {
+                            "name": "klein",
+                            "checkpoints": [self.KLEIN_UNET],
+                            "policy": junk,
+                        }
+                    },
+                    "active": "klein",
+                }
+                self.path.write_text(json.dumps(doc), encoding="utf-8")
+                self.assertEqual(
+                    load_all(self.path)["klein"].policy, {"image": expected}
+                )
 
     def test_a_non_dict_policy_loads_as_empty(self) -> None:
         for junk in ("junk", ["image", "gpu_classes"], 7, None):
@@ -647,6 +749,64 @@ class ProfilePolicyTest(unittest.TestCase):
                 }
                 self.path.write_text(json.dumps(doc), encoding="utf-8")
                 self.assertEqual(load_all(self.path)["klein"].policy, {})
+
+    def test_a_new_builtin_profile_starts_with_the_documents_image(self) -> None:
+        klein = default_profile("klein")
+        snofs = default_profile("klein5090")
+        self.assertEqual(klein.policy, seeded_policy(klein))
+        self.assertEqual(snofs.policy, seeded_policy(snofs))
+        self.assertEqual(
+            klein.policy["image"],
+            studio_meta.image_for_family("klein", studio_meta.default()),
+        )
+        self.assertEqual(
+            snofs.policy["image"],
+            studio_meta.image_for_family("snofs", studio_meta.default()),
+        )
+        self.assertNotEqual(klein.policy["image"], snofs.policy["image"])
+
+    def test_policy_image_for_names_the_documents_image_or_nothing(self) -> None:
+        klein = SaladProfile(name="klein", checkpoints=[self.KLEIN_UNET])
+        self.assertEqual(
+            policy_image_for(klein),
+            studio_meta.image_for_family("klein", studio_meta.default()),
+        )
+        self.assertTrue(policy_image_for(klein), "the shipped document names a klein image")
+        # No checkpoint is no family, so the document has nothing to name.
+        self.assertEqual(policy_image_for(SaladProfile(name="empty")), "")
+        self.assertEqual(
+            policy_image_for(SaladProfile(name="empty"), studio_meta.default()), ""
+        )
+        # A document that names no image for the family is "" too.
+        self.assertEqual(policy_image_for(klein, {"routing": {"families": {}}}), "")
+        self.assertEqual(
+            policy_image_for(
+                klein,
+                {"routing": {"families": {"klein": {"unets": [self.KLEIN_UNET]}}}},
+            ),
+            "",
+        )
+
+    def test_policy_image_for_never_raises_on_a_broken_document(self) -> None:
+        klein = SaladProfile(name="klein", checkpoints=[self.KLEIN_UNET])
+        for broken in ("junk", [], 7, {"routing": "nope"}, {"routing": {"families": "nope"}}):
+            with self.subTest(meta=broken):
+                self.assertEqual(policy_image_for(klein, broken), "")
+
+    def test_seeded_policy_is_the_documents_image_or_nothing(self) -> None:
+        klein = SaladProfile(name="klein", checkpoints=[self.KLEIN_UNET])
+        image = studio_meta.image_for_family("klein", studio_meta.default())
+        self.assertTrue(image, "the shipped document names a klein image")
+        self.assertEqual(seeded_policy(klein), {"image": image})
+        self.assertEqual(seeded_policy(SaladProfile(name="empty")), {})
+        self.assertEqual(seeded_policy(klein, {"routing": {"families": {}}}), {})
+        self.assertEqual(
+            seeded_policy(
+                klein,
+                {"routing": {"families": {"klein": {"image": "  ", "unets": [self.KLEIN_UNET]}}}},
+            ),
+            {},
+        )
 
     def test_the_written_json_nests_each_policy_under_its_profile(self) -> None:
         klein, snofs = self._store_two()

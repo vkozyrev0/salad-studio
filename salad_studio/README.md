@@ -46,8 +46,16 @@ the left and right.
   config — **Load from Salad** reads that config's group, **Apply to Salad**
   PATCHes that config's group (Salad, not a Docker rebuild), and **Save
   profile** stores the fields with that config, so selecting another config
-  swaps them for that config's own policy. There is one policy per config; no
-  window-wide copy is kept.
+  swaps them for that config's own policy. **Selecting a config re-reads its
+  group**, the same fresh GET the button makes, so the fields show that group's
+  current image, GPU classes, country codes and probes instead of whatever the
+  last config left behind; the read fills the fields only and never rewrites a
+  stored record, and a read that fails (no key, no network, no matching group)
+  leaves what is on screen standing. The **image** comes from the metadata
+  document's per-family `image` when the config has none of its own — that is
+  what the initial setup seeds a new config with, and what the image field falls
+  back to — while a live group's image and a stored image each win over it, in
+  that order. There is one policy per config; no window-wide copy is kept.
 - **Prompt Settings**. **Width**, **Height**, **Steps**, **CFG**, **Seed**,
   **Graph** (Flux.2 Klein / Flux.1 Dev), **Scheduler** (Flux2 / Simple), the
   **Checkpoint** (Base 9B / Distilled 9B) and the **LoRA** checkboxes. These are
@@ -352,7 +360,10 @@ and the reason is carried in the document's `error` field.
 - `routing.families` says what a unet **family** is: the `unets` that belong to
   it (the seed list a new profile starts from and the exact names the family
   check matches), the `markers` that catch a variant, and the `image` that group
-  runs (informational). **Which profile serves which checkpoint is not here**: it
+  runs. That image is the source a config's policy image is seeded from, and the
+  fallback when neither its own stored policy nor its live group names one, so
+  editing it here changes what a new config starts with. **Which profile serves
+  which checkpoint is not here**: it
   is each profile's own `checkpoints` list, edited on the **Config** page, and
   routing sends a graph to the profile that lists the checkpoint it loads. A
   checkpoint in no profile's list is refused with a stated reason instead of
@@ -392,7 +403,7 @@ the real freeze path the moment that gap is closed.
 Two test commands, and the second is not part of the first:
 
 ```
-python -m unittest discover -s salad_studio -p "test_*.py"   # 759 tests, ~6 min
+python -m unittest discover -s salad_studio -p "test_*.py"   # 788 tests, ~6 min
 python test_salad_comfy_live_findings.py                     # root structural checks
 ```
 

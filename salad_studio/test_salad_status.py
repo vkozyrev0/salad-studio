@@ -517,6 +517,138 @@ class PolicyRoundtrip(unittest.TestCase):
         self.assertEqual(pol["version"], 5)
 
 
+class PolicyImage(unittest.TestCase):
+    """Which image a config shows, and the fields it shows with no live read.
+
+    The stored policies are built by the shipped ``policy_from_group``, so the
+    nested startup/readiness/gpu_classes/country_codes shape under test is the
+    one the module really produces.
+    """
+
+    DOC = "docker.io/vkozyrev0/eldermark-klein:prefetch6-klein"
+
+    def _stored(self, image: str) -> dict:
+        return salad_status.policy_from_group(
+            {
+                "name": "flux2-klein",
+                "version": 5,
+                "container": {
+                    "image": image,
+                    "resources": {"gpu_classes": ["rtx-5090", "rtx-4090"]},
+                },
+                "country_codes": ["US", "CA"],
+                "startup_probe": {
+                    "http": {"path": "/health", "port": 3000},
+                    "initial_delay_seconds": 300,
+                },
+                "readiness_probe": {"http": {"path": "/ready", "port": 3000}},
+            }
+        )
+
+    def test_the_live_image_wins_over_the_stored_one(self) -> None:
+        self.assertEqual(
+            salad_status.resolve_policy_image(
+                self._stored("docker.io/example:stored"),
+                self._stored("docker.io/example:live"),
+                self.DOC,
+            ),
+            "docker.io/example:live",
+        )
+
+    def test_the_stored_image_answers_when_the_live_read_has_none(self) -> None:
+        stored = self._stored("docker.io/example:stored")
+        for live in (None, self._stored(""), {"image": "   "}):
+            with self.subTest(live=live):
+                self.assertEqual(
+                    salad_status.resolve_policy_image(stored, live, self.DOC),
+                    "docker.io/example:stored",
+                )
+
+    def test_the_documents_image_answers_when_neither_policy_has_one(self) -> None:
+        for live in (None, {}, self._stored("")):
+            with self.subTest(live=live):
+                self.assertEqual(
+                    salad_status.resolve_policy_image(self._stored(""), live, self.DOC),
+                    self.DOC,
+                )
+
+    def test_nothing_anywhere_answers_empty(self) -> None:
+        self.assertEqual(salad_status.resolve_policy_image({}, None, ""), "")
+        self.assertEqual(salad_status.resolve_policy_image(None, {}, ""), "")
+
+    def test_whitespace_is_not_an_image(self) -> None:
+        self.assertEqual(
+            salad_status.resolve_policy_image({"image": "   "}, None, self.DOC), self.DOC
+        )
+        self.assertEqual(
+            salad_status.resolve_policy_image(None, {"image": "\t"}, ""), ""
+        )
+
+    def test_the_answer_is_stripped(self) -> None:
+        self.assertEqual(
+            salad_status.resolve_policy_image(
+                {"image": f"  {self.DOC}  "}, None, ""
+            ),
+            self.DOC,
+        )
+        self.assertEqual(
+            salad_status.resolve_policy_image(None, None, f"  {self.DOC} "), self.DOC
+        )
+
+    def test_it_survives_none_a_non_dict_and_a_non_string_image(self) -> None:
+        for bad in (None, {}, {"image": 5}, {"image": None}, "not a dict", ["x"]):
+            with self.subTest(bad=bad):
+                self.assertEqual(salad_status.resolve_policy_image(bad, None, ""), "")
+                self.assertEqual(salad_status.resolve_policy_image(None, bad, ""), "")
+        self.assertEqual(
+            salad_status.resolve_policy_image(None, {"image": 12}, self.DOC), self.DOC
+        )
+
+    def test_shown_policy_of_an_empty_stored_policy_shows_the_document_image(self) -> None:
+        shown = salad_status.shown_policy({}, self.DOC)
+        self.assertEqual(shown["image"], self.DOC)
+        self.assertEqual(set(shown), {"image"})
+        self.assertEqual(salad_status.shown_policy(None, self.DOC)["image"], self.DOC)
+
+    def test_shown_policy_of_an_imageless_policy_shows_the_document_image(self) -> None:
+        shown = salad_status.shown_policy(self._stored(""), self.DOC)
+        self.assertEqual(shown["image"], self.DOC)
+        self.assertEqual(shown["group_name"], "flux2-klein")
+
+    def test_shown_policy_keeps_a_stored_image_over_the_documents(self) -> None:
+        shown = salad_status.shown_policy(
+            self._stored("docker.io/example:stored"), self.DOC
+        )
+        self.assertEqual(shown["image"], "docker.io/example:stored")
+
+    def test_shown_policy_keeps_every_stored_field(self) -> None:
+        stored = self._stored("")
+        shown = salad_status.shown_policy(stored, self.DOC)
+        for key in ("group_name", "version", "gpu_classes", "country_codes", "startup", "readiness"):
+            with self.subTest(key=key):
+                self.assertEqual(shown[key], stored[key])
+        self.assertEqual(shown["gpu_classes"], ["rtx-5090", "rtx-4090"])
+        self.assertEqual(shown["country_codes"], ["us", "ca"])
+        self.assertEqual(shown["startup"]["initial_delay_seconds"], 300)
+        self.assertEqual(shown["startup"]["path"], "/health")
+        self.assertEqual(shown["readiness"]["path"], "/ready")
+
+    def test_editing_the_shown_copy_leaves_the_stored_policy_alone(self) -> None:
+        stored = self._stored("")
+        shown = salad_status.shown_policy(stored, self.DOC)
+        self.assertIsNot(shown, stored)
+        self.assertIsNot(shown["startup"], stored["startup"])
+        self.assertIsNot(shown["readiness"], stored["readiness"])
+        shown["startup"]["initial_delay_seconds"] = 1
+        shown["startup"]["path"] = "/ping"
+        shown["readiness"]["path"] = "/ping"
+        shown["image"] = "docker.io/example:edited"
+        self.assertEqual(stored["startup"]["initial_delay_seconds"], 300)
+        self.assertEqual(stored["startup"]["path"], "/health")
+        self.assertEqual(stored["readiness"]["path"], "/ready")
+        self.assertEqual(stored["image"], "")
+
+
 class ApiGetDelegation(unittest.TestCase):
     """_api_get is the GET shorthand: one delegation to _api_request."""
 

@@ -21,6 +21,8 @@ for _p in (HERE, HERE.parent):
 
 from salad_studio import profiles  # noqa: E402
 from salad_studio import salad_queue  # noqa: E402
+from salad_studio import salad_status  # noqa: E402
+from salad_studio import studio_meta  # noqa: E402
 from salad_studio import tokens as tok  # noqa: E402
 from salad_studio.test_launch import _Inline, _TempPaths  # noqa: E402
 from salad_studio.test_salad_queue import _FakeLifecycle  # noqa: E402
@@ -169,13 +171,24 @@ class ConfigPage(unittest.TestCase):
         self.assertEqual(stored["startup"]["initial_delay_seconds"], "120")
         self.assertEqual(stored["startup"]["failure_threshold"], "6")
         self.assertEqual(stored["readiness"]["failure_threshold"], "4")
+        # The other config keeps its own policy: the document's SNOFS image, and
+        # none of the fields typed above.
+        other = self._stored("klein5090")["policy"]
         self.assertEqual(
-            self._stored("klein5090").get("policy"), {}, "the other config keeps its own"
+            other["image"],
+            studio_meta.image_for_family("snofs", studio_meta.default()),
         )
+        self.assertNotIn("country_codes", other)
+        self.assertNotIn("startup", other)
 
         self._select("klein5090")
-        self.assertEqual(app.var_pol_image.get(), "", "klein's policy must not follow")
-        self.assertFalse(app.var_pol_us.get())
+        self.assertEqual(
+            app.var_pol_image.get(),
+            studio_meta.image_for_family("snofs", studio_meta.default()),
+            "klein5090 shows its own image, never klein's",
+        )
+        self.assertNotEqual(app.var_pol_image.get(), "docker.io/example/klein:tag1")
+        self.assertFalse(app.var_pol_us.get(), "klein's US-only must not follow")
         self.assertEqual(app._pol_vars["startup"]["failure_threshold"].get(), "")
 
         self._select("klein")
@@ -189,6 +202,206 @@ class ConfigPage(unittest.TestCase):
             [],
             "the policy must not be kept in the window's own state",
         )
+
+    # -- switching re-checks that config's own group ----------------------
+    def _group(self, name: str, dns: str, image: str, gpu: str, codes: list, startup_fail: int, readiness_fail: int) -> dict:
+        """A Salad group payload shaped like the control plane's own."""
+        return {
+            "name": name,
+            "version": 9,
+            "networking": {"dns": dns},
+            "container": {"image": image, "resources": {"gpu_classes": [gpu]}},
+            "country_codes": codes,
+            "startup_probe": {
+                "http": {"path": "/health", "port": 3000},
+                "initial_delay_seconds": 900,
+                "period_seconds": 60,
+                "timeout_seconds": 10,
+                "failure_threshold": startup_fail,
+            },
+            "readiness_probe": {
+                "http": {"path": "/ready", "port": 3000},
+                "initial_delay_seconds": 0,
+                "period_seconds": 10,
+                "timeout_seconds": 5,
+                "failure_threshold": readiness_fail,
+            },
+            "current_state": {"status": "running"},
+        }
+
+    def _recording_api(self, groups: dict[str, dict], classes: list[dict], calls: list) -> object:
+        """A recorded transport: group lookups by name, the class list, nothing else."""
+
+        def _api(method, url, key, data=None):
+            calls.append((method, url, data))
+            if url.endswith("/gpu-classes"):
+                return 200, {"items": classes}
+            if url.endswith("/containers"):
+                return 200, {"items": list(groups.values())}
+            for name, group in groups.items():
+                if url.endswith(f"/{name}"):
+                    return 200, group
+            return 200, {}
+
+        return _api
+
+    def test_switching_config_repopulates_the_policy_from_that_configs_group(self) -> None:
+        """Selecting a config re-reads its own group and fills the fields from it."""
+        app = self.app
+        allp = profiles.load_all()
+        klein, other = allp["klein"], allp["klein5090"]
+        klein_group = self._group(
+            "flux2-klein2", urlparse(klein.gateway).hostname,
+            "docker.io/example/klein:live", "gpu-klein", [], 20, 21,
+        )
+        other_group = self._group(
+            "flux2-klein-5090", urlparse(other.gateway).hostname,
+            "docker.io/example/snofs:live", "gpu-snofs", ["us"], 11, 12,
+        )
+        classes = [
+            {"id": "gpu-klein", "name": "RTX 4090 (klein)"},
+            {"id": "gpu-snofs", "name": "RTX 5090 (snofs)"},
+        ]
+        calls: list[str] = []
+        tok.write_token("salad", "switch-key")
+        klein_before = dict(self._stored("klein")["policy"])
+        other_before = dict(self._stored("klein5090")["policy"])
+        by_gateway = {
+            f"https://{klein_group['networking']['dns']}": klein_group,
+            f"https://{other_group['networking']['dns']}": other_group,
+        }
+
+        def _load(gw, key):
+            """The shipped read the switch drives, recording which group it asked for."""
+            calls.append(gw)
+            group = by_gateway.get(str(gw))
+            if group is None:
+                return None, "No container group matches this gateway DNS."
+            return salad_status.policy_from_group(group), None
+
+        with mock.patch.object(
+            self.app_mod.salad_status, "load_policy", side_effect=_load
+        ), mock.patch.object(
+            self.app_mod.salad_status, "list_gpu_classes", return_value=classes
+        ), mock.patch.object(
+            self.app_mod.salad_status, "snapshot_gateway", return_value={"word": "Ready"}
+        ), mock.patch("salad_studio.app.threading.Thread", _Inline):
+            self._select("klein")
+            self.assertTrue(
+                _pump(app, lambda: app.var_pol_image.get() == "docker.io/example/klein:live"),
+                f"klein never filled: {app.var_pol_image.get()!r}",
+            )
+            calls.clear()
+            self._select("klein5090")
+            self.assertTrue(
+                _pump(app, lambda: app.var_pol_image.get() == "docker.io/example/snofs:live"),
+                f"klein5090 never filled: {app.var_pol_image.get()!r}",
+            )
+            switched = list(calls)
+            self.assertTrue(
+                _pump(app, lambda: app._pol_vars["readiness"]["failure_threshold"].get() == "12"),
+                f"probe fields: {app._pol_vars['readiness']['failure_threshold'].get()!r}",
+            )
+
+        self.assertEqual(
+            app._pol_vars["startup"]["initial_delay_seconds"].get(), "900"
+        )
+        self.assertEqual(app._pol_vars["readiness"]["period_seconds"].get(), "10")
+        self.assertTrue(app.var_pol_us.get(), "that group's country codes")
+        ticked = sorted(gid for gid, var in app._pol_gpu_vars.items() if var.get())
+        self.assertEqual(ticked, ["gpu-snofs"], "that group's GPU classes, not klein's")
+        self.assertIn(
+            "RTX 5090 (snofs)",
+            [str(name) for name in app._pol_gpu_names.values()],
+            "the class list came from the live read",
+        )
+        # The switch read only that config's group.
+        self.assertEqual(
+            switched, [other.gateway], "the switch must read only the selected config's group"
+        )
+        # And it wrote no policy: both stored records still carry what they had.
+        self.assertEqual(self._stored("klein")["policy"], klein_before)
+        self.assertEqual(self._stored("klein5090")["policy"], other_before)
+
+    def test_a_failed_recheck_leaves_the_fields_standing_with_the_documents_image(self) -> None:
+        """A re-check that cannot read the group must not blank the fields."""
+        app = self.app
+        klein = profiles.load_all()["klein"]
+        doc_image = studio_meta.image_for_family("klein", studio_meta.default())
+        tok.write_token("salad", "failing-key")
+
+        def _api(method, url, key, data=None):
+            return 500, {"error": "boom"}
+
+        with mock.patch.object(
+            self.app_mod.salad_status, "_api_request", side_effect=_api
+        ), mock.patch("salad_studio.app.threading.Thread", _Inline):
+            self._select("klein")
+            _pump(app, lambda: app.var_pol_image.get() == doc_image, 5)
+        self.assertEqual(
+            app.var_pol_image.get(), doc_image, "the document's image answers a failed read"
+        )
+        self.assertEqual(app._pol_vars["startup"]["failure_threshold"].get(), "")
+        self.assertEqual(
+            self._stored("klein")["policy"]["image"], doc_image,
+            "and the config keeps its own stored policy",
+        )
+
+    def test_a_new_config_is_seeded_with_the_documents_image(self) -> None:
+        """Adding a config stores the metadata document's image for its family."""
+        app = self.app
+        app.var_name.set("studio3")
+        app.var_gateway.set("https://third.example.salad.cloud")
+        app._on_add_profile()
+        stored = self._stored("studio3")["policy"]
+        self.assertEqual(
+            stored["image"],
+            studio_meta.image_for_family("klein", studio_meta.default()),
+            "a new config's image comes from the document",
+        )
+        self.assertEqual(
+            app.var_pol_image.get(), stored["image"], "and the fields show it"
+        )
+
+    def test_a_switch_writes_no_record_and_a_failed_read_keeps_the_fields(self) -> None:
+        """Switching fills the fields; only Save profile or Apply ever writes."""
+        app = self.app
+        doc_snofs = studio_meta.image_for_family("snofs", studio_meta.default())
+        self._select("klein")
+        app.var_pol_image.set("docker.io/example/klein:mine")
+        app._pol_vars["startup"]["failure_threshold"].set("9")
+        app._save_profile()
+        klein_saved = dict(self._stored("klein")["policy"])
+        other_saved = dict(self._stored("klein5090")["policy"])
+        self.assertEqual(klein_saved["image"], "docker.io/example/klein:mine")
+        tok.write_token("salad", "safety-key")
+
+        def _api(method, url, key, data=None):
+            return 500, {"error": "boom"}
+
+        with mock.patch.object(
+            self.app_mod.salad_status, "_api_request", side_effect=_api
+        ), mock.patch.object(
+            self.app_mod.salad_status, "snapshot_gateway", return_value={"word": "Down"}
+        ), mock.patch("salad_studio.app.threading.Thread", _Inline):
+            self._select("klein5090")
+            _pump(app, lambda: app.var_pol_image.get() == doc_snofs, 5)
+            self.assertEqual(
+                app.var_pol_image.get(), doc_snofs,
+                "an imageless config shows the document's image even when the read fails",
+            )
+            self._select("klein")
+            _pump(app, lambda: app.var_pol_image.get() == "docker.io/example/klein:mine", 5)
+            self.assertEqual(
+                app.var_pol_image.get(), "docker.io/example/klein:mine",
+                "a failed read keeps the config's own stored policy on screen",
+            )
+            self.assertEqual(app._pol_vars["startup"]["failure_threshold"].get(), "9")
+
+        self.assertEqual(
+            self._stored("klein")["policy"], klein_saved, "a switch must write no record"
+        )
+        self.assertEqual(self._stored("klein5090")["policy"], other_saved)
 
     def test_apply_to_salad_patches_this_configs_group_only(self) -> None:
         """Apply sends the selected config's policy to that config's group."""
@@ -248,7 +461,11 @@ class ConfigPage(unittest.TestCase):
             "docker.io/example/klein:tag2",
             "the config keeps what it applied",
         )
-        self.assertEqual(self._stored("klein5090").get("policy"), {})
+        self.assertEqual(
+            self._stored("klein5090")["policy"]["image"],
+            studio_meta.image_for_family("snofs", studio_meta.default()),
+            "the other config keeps its own image, untouched by the apply",
+        )
 
     # -- checkpoint list --------------------------------------------------
     def test_the_page_adds_and_removes_a_checkpoint(self) -> None:

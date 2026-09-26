@@ -475,6 +475,7 @@ class ConfigPage(unittest.TestCase):
         documented = studio_meta.probe_settings_for_family("klein", studio_meta.default())
         self.app.destroy()
         self.app = SaladStudio(show=False)
+        self.addCleanup(_destroy_quietly, self.app)
         self.app.withdraw()
         app = self.app
         app.update_idletasks()
@@ -500,6 +501,7 @@ class ConfigPage(unittest.TestCase):
         ui_state.save_state({"profile": "klein5090", "tab": "Config", "gateway": allp["klein5090"].gateway})
         self.app.destroy()
         self.app = SaladStudio(show=False)
+        self.addCleanup(_destroy_quietly, self.app)
         self.app.withdraw()
         app = self.app
         app.update_idletasks()
@@ -791,6 +793,112 @@ class ConfigPage(unittest.TestCase):
         ):
             app._poll_salad_status()
 
+    def _write_stale_ledger(self, profile: str, gateway: str) -> None:
+        """A record as the app wrote it before it recorded who started a container.
+
+        Its activity time is hours old, so the idle stop would fire immediately
+        if the app treated that record as its own.
+        """
+        path = Path(salad_queue.LEDGER_PATH)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "containers": {
+                        profile: {
+                            "gateway": gateway,
+                            "last_active": time.time() - 10 * 3600,
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def _queue_on_the_users_container(self, app, running: dict) -> _FakeLifecycle:
+        """The app's queue, on the redirected ledger, with a recording container handle."""
+        fake = _FakeLifecycle(running)
+        app.gen_queue = salad_queue.SaladQueue(
+            on_log=app._on_queue_log,
+            lifecycle=fake,
+            ledger_path=salad_queue.LEDGER_PATH,
+            idle_stop_s=3600,
+        )
+        return fake
+
+    def test_opening_the_window_does_not_stop_a_container_the_app_did_not_start(self) -> None:
+        """Criterion 1 through the window: a stale record must stop nothing.
+
+        The group is running because the user started it by hand, and the record
+        is one this app cannot say it started.
+        """
+        app = self.app
+        klein = profiles.load_all()["klein"]
+        self._write_stale_ledger("klein", klein.gateway)
+        fake = self._queue_on_the_users_container(app, {"klein": True, "klein5090": True})
+        app.log_text.delete("1.0", "end")
+        self._tick(app)  # the startup probe adopts nothing
+        app._run_idle_check()  # and the tick that runs the idle check stops nothing
+        self.assertTrue(
+            _pump(app, lambda: not app._idle_check_busy, 30), "the idle check never ran"
+        )
+        self.assertEqual(fake.actions("stop"), [], "the app must not stop it")
+        self.assertEqual(fake.actions("start"), [], "nor start it")
+        self.assertEqual(app.gen_queue.containers(), {}, "it owns nothing here")
+        log = app.log_text.get("1.0", "end")
+        self.assertNotIn("stopped", log.lower(), f"no idle stop may be logged: {log[-400:]}")
+        self.assertIn(
+            "does not say this app started",
+            log,
+            "the log must say why the container was left alone",
+        )
+        self.assertEqual(
+            fake.running, {"klein": True, "klein5090": True}, "it is still running"
+        )
+
+    def test_the_first_request_does_not_cycle_a_container_the_app_did_not_start(self) -> None:
+        """Criterion 2: the press neither stops nor starts the user's container."""
+        app = self.app
+        routed = profiles.load_all()["klein5090"]
+        self._write_stale_ledger("klein5090", routed.gateway)
+        fake = self._queue_on_the_users_container(app, {"klein5090": True, "klein": True})
+        tok.write_token("salad", "user-container-key")
+        _line, gateway = self._prepare_snofs_generate(app)
+        app.log_text.delete("1.0", "end")
+        posts = self._render_once(app)
+
+        self.assertEqual(fake.actions("stop"), [], "the press must not stop it")
+        self.assertEqual(fake.actions("start"), [], "nor start it")
+        self.assertEqual(
+            fake.actions("is_running"),
+            [("is_running", "klein5090", gateway)],
+            "the dispatch only asks whether it is up",
+        )
+        self.assertEqual(len(posts), 1, "and the render is POSTed to it")
+        self.assertEqual(len(app.gen_queue.jobs()), 1, "the request is on the queue")
+
+        # The tick right after the render must not stop it either: this app did
+        # not start that container, and it has just used it.
+        app._run_idle_check()
+        self.assertTrue(
+            _pump(app, lambda: not app._idle_check_busy, 30), "the idle check never ran"
+        )
+        self.assertEqual(fake.actions("stop"), [])
+        self.assertEqual(
+            app.gen_queue.containers(),
+            {"klein5090": gateway},
+            "this session may stop it once it idles: it has used that container",
+        )
+        record = json.loads(
+            Path(salad_queue.LEDGER_PATH).read_text(encoding="utf-8")
+        )["containers"]["klein5090"]
+        self.assertFalse(
+            record["started_by_app"],
+            "but the record still says this app did not start it, so a later "
+            "session leaves it alone",
+        )
+
     def test_generate_starts_the_routed_profiles_container(self) -> None:
         """A stopped container is started for the profile routing picked."""
         app = self.app
@@ -859,7 +967,7 @@ class ConfigPage(unittest.TestCase):
         reopening Studio forgot the container and the idle hour never arrived.
         """
         clock = {"t": 5_000_000.0}
-        first = _FakeLifecycle({"klein5090": True, "klein": True})
+        first = _FakeLifecycle({"klein5090": False, "klein": True})
         app = self.app
         app.gen_queue = salad_queue.SaladQueue(
             on_log=app._on_queue_log,
@@ -871,6 +979,11 @@ class ConfigPage(unittest.TestCase):
         tok.write_token("salad", "restart-key")
         _line, gateway = self._prepare_snofs_generate(app)
         self._render_once(app)
+        self.assertEqual(
+            first.actions("start"),
+            [("start", "klein5090", gateway)],
+            "the app asks Salad to start it, which is what makes it ours",
+        )
         self.assertEqual(app.gen_queue.containers(), {"klein5090": gateway})
         self.assertTrue(
             salad_queue.LEDGER_PATH.is_file(), "the record must be on disk"

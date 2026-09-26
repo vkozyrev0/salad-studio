@@ -324,10 +324,22 @@ the left and right.
   stop Salad rejects is retried only after another full timeout. The record of which containers the app owns
   and when each last had work is written to `~/.config/salad/studio-queue.json`,
   so **closing and reopening Studio does not forget a container**: the idle hour
-  still arrives, and the first tick past it asks for the stop. A container found
-  running at startup is adopted too (the idle clock starts when it is first seen
-  and is not reset by later ticks), and a request that runs through the queue
-  claims its container whatever the group-state read said. The check runs off the
+  still arrives, and the first tick past it asks for the stop. **The app stops
+  only containers it asked Salad to start.** Salad does not report who started a
+  container, so the record carries that fact itself (`started_by_app`): it is
+  written where the app asks for a start, and it is what a later session reads to
+  decide whether the stop is its to make. A record that cannot say so — one
+  written before this field existed, or one that says the app did not start that
+  container — is dropped at load with a line in the log, and its container is
+  left running, so **opening Studio never shuts down a container you started by
+  hand**. The status probe may only *follow* a container the record already owns
+  (`SaladQueue.refresh`), never claim one: finding a group running is not
+  evidence that this app started it. A request the app dispatches claims its
+  container for that session only (the app has used it, so it may stop it once it
+  idles), and a container the app started stays the app's to stop across
+  restarts. A request that runs through the queue claims its container whatever
+  the group-state read said, and a container with a request queued or in flight
+  is never stopped. The check runs off the
   Tk thread, so the window never freezes while the control plane is called.
 
 Klein group, prefetch image, Civitai-vs-Comfy quality, and startup
@@ -436,7 +448,7 @@ the real freeze path the moment that gap is closed.
 Two test commands, and the second is not part of the first:
 
 ```
-python -m unittest discover -s salad_studio -p "test_*.py"   # 824 tests, ~6 min
+python -m unittest discover -s salad_studio -p "test_*.py"   # 830 tests, ~6 min
 python test_salad_comfy_live_findings.py                     # root structural checks
 ```
 

@@ -804,12 +804,12 @@ class SaladStudio(tk.Tk):
                 for pid, gwx in targets:
                     info = snaps.get(pid) or {}
                     word = str(info.get("word") or "Down")
-                    # A group found running is one this app may have to stop: adopt
-                    # it, so a container left over from an earlier session (or one
-                    # started by hand) gets the idle stop too. Adoption starts the
-                    # idle clock; it does not reset it on later ticks.
+                    # A group found running is followed, never adopted: the probe
+                    # cannot tell a container this app started from one the user
+                    # started by hand, and only the app's own start (or a request
+                    # it dispatched) may hand a container to the idle stop.
                     if str((info.get("group") or {}).get("status") or "").lower() == "running":
-                        self.gen_queue.adopt(pid, gwx)
+                        self.gen_queue.refresh(pid, gwx)
                     if active_gw and gwx and active_gw.rstrip("/") == gwx.rstrip("/"):
                         active_word = word
                     if not active_gw and pid == first_pid:

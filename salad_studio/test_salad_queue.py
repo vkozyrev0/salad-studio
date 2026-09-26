@@ -961,16 +961,23 @@ class ContainerLedgerTest(unittest.TestCase):
     def _accept(_job):
         return q.Attempt(status=200, accepted=True, result="plate")
 
-    def test_a_fresh_process_stops_the_container_a_previous_one_used(self) -> None:
+    def test_a_fresh_process_stops_the_container_the_app_started(self) -> None:
+        """A container the app asked Salad to start is still stopped after a restart."""
         clock = [1_000_000.0]
-        first = _FakeLifecycle({"klein": True})
+        first = _FakeLifecycle({"klein": False})  # stopped, so the dispatch starts it
         line = self._queue(first, clock)
         job = line.deliver(
             {"gateway": self.GW, "profile": "klein"}, self._accept, line="klein"
         )
         self.assertEqual(job.state, q.ACCEPTED)
+        self.assertEqual(first.actions("start"), [("start", "klein", self.GW)])
         self.assertEqual(line.containers(), {"klein": self.GW})
         self.assertTrue(self.ledger.is_file(), "the record must be on disk")
+        self.assertEqual(
+            q.load_ledger(self.ledger)["klein"]["started_by_app"],
+            True,
+            "the record says who started it",
+        )
         self.assertEqual(line.idle_check(), [], "not idle yet")
 
         # A new process: same ledger, no memory of the first queue at all.
@@ -984,6 +991,30 @@ class ContainerLedgerTest(unittest.TestCase):
         self.assertEqual(second_life.actions("stop"), [("stop", "klein", self.GW)])
         self.assertEqual(second.idle_check(), [], "and it stops only once")
         self.assertEqual(q.load_ledger(self.ledger), {}, "the record is gone afterwards")
+
+    def test_a_fresh_process_leaves_a_container_it_only_used(self) -> None:
+        """Using a container the user started by hand does not hand it over for good."""
+        clock = [1_500_000.0]
+        first = _FakeLifecycle({"klein": True})  # already running: the user's own
+        line = self._queue(first, clock)
+        line.deliver({"gateway": self.GW, "profile": "klein"}, self._accept, line="klein")
+        self.assertEqual(first.actions("start"), [], "the app must not start it")
+        self.assertEqual(
+            line.idle_check(), [], "and it is not idle: the request just ran"
+        )
+        # This session may stop it once it idles, because this app used it.
+        clock[0] += 3601
+        self.assertEqual(line.idle_check(), ["klein"])
+        self.assertEqual(first.actions("stop"), [("stop", "klein", self.GW)])
+
+        # A later session must not: its record says this app did not start it.
+        clock[0] = 2_000_000.0
+        second_life = _FakeLifecycle({"klein": True})
+        second = self._queue(second_life, clock)
+        self.assertEqual(second.containers(), {}, "not the reopened app's to stop")
+        self.assertEqual(second.idle_check(), [])
+        self.assertEqual(second_life.actions("stop"), [], "the user's container is left alone")
+        self.assertEqual(q.load_ledger(self.ledger), {}, "and its record is dropped")
 
     def test_the_idle_clock_is_not_reset_by_adoption(self) -> None:
         """A tick that re-adopts a running container must not push the stop away."""
@@ -1047,13 +1078,123 @@ class ContainerLedgerTest(unittest.TestCase):
     def test_the_ledger_write_survives_a_second_queue_on_the_same_file(self) -> None:
         clock = [7_000_000.0]
         first = self._queue(_FakeLifecycle({"klein": True}), clock)
-        first.adopt("klein", self.GW)
-        first.adopt("snofs", "https://snofs.example/")
+        first.adopt("klein", self.GW, started_by_app=True)
+        first.adopt("snofs", "https://snofs.example/", started_by_app=True)
         second = self._queue(_FakeLifecycle({}), clock)
         self.assertEqual(
             second.containers(),
             {"klein": self.GW, "snofs": "https://snofs.example/"},
         )
+
+
+class OwnershipProvenanceTest(unittest.TestCase):
+    """Only a container this app asked Salad to start may be stopped when it idles.
+
+    A container the user started by hand is not the app's to shut down, and Salad
+    does not report who started one, so the record has to say it: an old record
+    that cannot, or one that says the app did not, is left alone.
+    """
+
+    GW = "https://klein.example/"
+    SNOFS_GW = "https://snofs.example/"
+
+    def setUp(self) -> None:
+        self._td = TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.ledger = Path(self._td.name) / "studio-queue.json"
+        self.logs: list[str] = []
+
+    def _queue(self, life, clock: list[float], **kw) -> q.SaladQueue:
+        return q.SaladQueue(
+            lifecycle=life,
+            now=lambda: clock[0],
+            ledger_path=self.ledger,
+            idle_stop_s=kw.pop("idle_stop_s", 3600),
+            on_log=lambda level, message: self.logs.append(f"{level}:{message}"),
+            **kw,
+        )
+
+    def _old_record(self, last_active: float) -> None:
+        """A ledger as the app wrote it before it recorded provenance."""
+        self.ledger.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "containers": {"klein": {"gateway": self.GW, "last_active": last_active}},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def test_a_stale_record_that_cannot_say_who_started_it_stops_nothing(self) -> None:
+        """Criterion 1: an old record for a running container leaves it running."""
+        clock = [1_000_000.0]
+        self._old_record(clock[0] - 10 * 3600)  # hours old: idle by any clock
+        life = _FakeLifecycle({"klein": True})
+        line = self._queue(life, clock)
+        # The window's startup: the status probe finds that group running.
+        self.assertFalse(line.refresh("klein", self.GW), "the probe cannot own it")
+        self.assertEqual(line.idle_check(), [], "nothing is due for a stop")
+        self.assertEqual(line.containers(), {}, "the app owns nothing here")
+        self.assertEqual(
+            life.actions("stop"), [], "and it must not ask Salad to stop it"
+        )
+        self.assertTrue(
+            any("does not say this app started" in message for message in self.logs),
+            f"the log must say why it was left alone: {self.logs}",
+        )
+        self.assertEqual(
+            q.load_ledger(self.ledger), {}, "the record that cannot say is dropped"
+        )
+
+    def test_a_record_that_says_the_app_did_not_start_it_stops_nothing(self) -> None:
+        """Criterion 1: a request the app dispatched does not hand the container over."""
+        clock = [1_200_000.0]
+        first = self._queue(_FakeLifecycle({"klein": True}), clock)
+
+        def accept(_job):
+            return q.Attempt(status=200, accepted=True, result="plate")
+
+        first.deliver({"gateway": self.GW, "profile": "klein"}, accept, line="klein")
+        self.assertEqual(first.idle_check(), [], "the request just ran")
+        record = q.load_ledger(self.ledger)["klein"]
+        self.assertFalse(record["started_by_app"], "the app did not start that container")
+
+        # A later session reads that record and leaves the container alone.
+        clock[0] += 10 * 3600
+        life = _FakeLifecycle({"klein": True})
+        second = self._queue(life, clock)
+        second.refresh("klein", self.GW)
+        self.assertEqual(second.idle_check(), [], "not the reopened app's to stop")
+        self.assertEqual(life.actions("stop"), [])
+
+    def test_the_verdict_survives_a_restart_for_both_kinds_of_record(self) -> None:
+        """Criterion 3: after one session that started a container and one that found one."""
+        clock = [1_500_000.0]
+        started_life = _FakeLifecycle({"klein": False})  # stopped: the app starts it
+        first = self._queue(started_life, clock)
+
+        def accept(_job):
+            return q.Attempt(status=200, accepted=True, result="plate")
+
+        first.deliver({"gateway": self.GW, "profile": "klein"}, accept, line="klein")
+        first.adopt("snofs", self.SNOFS_GW)  # found running, only used in this session
+        self.assertEqual(started_life.actions("start"), [("start", "klein", self.GW)])
+        self.assertEqual(
+            {name: row["started_by_app"] for name, row in q.load_ledger(self.ledger).items()},
+            {"klein": True, "snofs": False},
+            "the record says who started what",
+        )
+
+        clock[0] += 3601
+        life = _FakeLifecycle({"klein": True, "snofs": True})
+        second = self._queue(life, clock)
+        self.assertEqual(
+            second.idle_check(),
+            ["klein"],
+            "the fresh window stops exactly the one the app started",
+        )
+        self.assertEqual(life.actions("stop"), [("stop", "klein", self.GW)])
 
 
 class FinishedRecordTest(unittest.TestCase):
@@ -1254,8 +1395,14 @@ class FinishedRecordTest(unittest.TestCase):
         line.deliver({"gateway": self.GW, "profile": "klein"}, self._accept, line="klein")
         self.assertEqual(
             line.records(),
-            {"klein": {"gateway": self.GW, "last_active": 12_000.0}},
-            "the container records keep their shape",
+            {
+                "klein": {
+                    "gateway": self.GW,
+                    "last_active": 12_000.0,
+                    "started_by_app": False,
+                }
+            },
+            "the container records carry who started the container",
         )
         self.assertEqual(line.containers(), {"klein": self.GW})
         data = json.loads(self.ledger.read_text(encoding="utf-8"))
@@ -1274,9 +1421,18 @@ class FinishedRecordTest(unittest.TestCase):
             encoding="utf-8",
         )
         line = self._queue()
-        self.assertEqual(line.containers(), {"klein": self.GW})
         self.assertEqual(
-            line.records(), {"klein": {"gateway": self.GW, "last_active": 100.0}}
+            line.containers(),
+            {},
+            "a record that cannot say who started the container is not the app's",
+        )
+        self.assertEqual(line.records(), {}, "so it is dropped rather than kept")
+        self.assertTrue(
+            any("does not say this app started" in message for message in self.logs),
+            f"the log must say why it was left alone: {self.logs}",
+        )
+        self.assertEqual(
+            q.load_ledger(self.ledger), {}, "and the file no longer carries it"
         )
         self.assertEqual(line.finished(), [], "an older file simply has no history")
 

@@ -93,11 +93,16 @@ RETRY_SLEEP_S = 8
 
 
 def load_ledger(path: Path | None) -> dict[str, dict[str, Any]]:
-    """The container records: profile to ``{gateway, last_active}`` (epoch seconds).
+    """The container records: profile to ``{gateway, last_active, started_by_app}``.
 
-    A missing, unreadable or hand-broken file reads as "no records"; the app
-    then adopts the containers it finds running, which lands in the same place
-    as a first run.
+    ``last_active`` is epoch seconds. ``started_by_app`` says whether this app
+    asked Salad to start that container, which is the only thing that licenses
+    stopping it when it idles: Salad does not report who started a container, and
+    a record that cannot say so - one written before this field existed, or one
+    that says the app did not start it - must be left alone, so the user's own
+    container is never shut down under them.
+
+    A missing, unreadable or hand-broken file reads as "no records".
     """
     if path is None:
         return {}
@@ -120,7 +125,11 @@ def load_ledger(path: Path | None) -> dict[str, dict[str, Any]]:
             last = float(row.get("last_active") or 0.0)
         except (TypeError, ValueError):
             last = 0.0
-        out[str(name)] = {"gateway": str(row.get("gateway") or ""), "last_active": last}
+        out[str(name)] = {
+            "gateway": str(row.get("gateway") or ""),
+            "last_active": last,
+            "started_by_app": bool(row.get("started_by_app")),
+        }
     return out
 
 
@@ -394,17 +403,35 @@ class SaladQueue:
         self._lines: dict[str, list[Job]] = {}
         self._jobs: list[Job] = []
         self._next_id = 1
-        # Per profile: the container we own (persisted), its gateway, and when its
-        # last request finished. The idle check reads these and nothing else. They
-        # are seeded from the ledger, so a reopened app still knows what to stop.
+        # Per profile: the container we own (persisted), its gateway, when its
+        # last request finished, and whether this app asked Salad to start it.
+        # The idle check reads these and nothing else. They are seeded from the
+        # ledger, so a reopened app still knows what to stop - and a record that
+        # cannot say this app started the container is not ours, so a container
+        # the user started by hand is left running instead of being shut down.
         records = load_ledger(self.ledger_path)
-        self._owned: set[str] = set(records)
+        ours = {name: row for name, row in records.items() if row["started_by_app"]}
+        for name, row in sorted(records.items()):
+            if not row["started_by_app"]:
+                self._log(
+                    "info",
+                    f"queue: leaving {name} alone; its record does not say this app "
+                    "started its container",
+                )
+        self._owned: set[str] = set(ours)
+        self._started_by_app: set[str] = set(ours)
         self._gateways: dict[str, str] = {
-            name: row["gateway"] for name, row in records.items() if row["gateway"]
+            name: row["gateway"] for name, row in ours.items() if row["gateway"]
         }
         self._last_active: dict[str, float] = {
-            name: row["last_active"] for name, row in records.items() if row["last_active"]
+            name: row["last_active"] for name, row in ours.items() if row["last_active"]
         }
+        if len(ours) != len(records):
+            # Drop the records that are not ours: keeping them would only repeat
+            # the line above on every start.
+            drop_foreign = True
+        else:
+            drop_foreign = False
         # The finished-request history, oldest first. Without a ledger it lives
         # only in memory, which is still what the page needs for the session.
         self._finished: list[dict[str, Any]] = load_finished(self.ledger_path)
@@ -422,6 +449,8 @@ class SaladQueue:
                 f"queue: {len(records)} container record(s) from {self.ledger_path}: "
                 + ", ".join(sorted(records)),
             )
+        if drop_foreign:
+            self._save_ledger()
 
     # -- the line ---------------------------------------------------------
     def _log(self, level: str, message: str) -> None:
@@ -554,12 +583,13 @@ class SaladQueue:
 
     # -- container ownership ----------------------------------------------
     def records(self) -> dict[str, dict[str, Any]]:
-        """The persisted view: profile to its gateway and last-activity time."""
+        """The persisted view: profile to its gateway, last activity and provenance."""
         with self._cond:
             return {
                 line: {
                     "gateway": self._gateways.get(line, ""),
                     "last_active": self._last_active.get(line, 0.0),
+                    "started_by_app": line in self._started_by_app,
                 }
                 for line in sorted(self._owned)
             }
@@ -574,12 +604,26 @@ class SaladQueue:
         if reason:
             self._log("warn", f"queue: could not write {self.ledger_path}: {reason}")
 
-    def adopt(self, profile: str, gateway: str = "", *, last_active: float | None = None) -> bool:
+    def adopt(
+        self,
+        profile: str,
+        gateway: str = "",
+        *,
+        last_active: float | None = None,
+        started_by_app: bool = False,
+    ) -> bool:
         """Own a container: this app is now the one that stops it when it idles.
 
         Returns True when that was news. The first adoption starts the idle
         clock; re-adopting an owned container only refreshes its gateway, so a
         check every fifteen seconds cannot keep pushing the stop away.
+
+        ``started_by_app`` records that this app asked Salad to start the
+        container, which is the fact the idle stop is licensed by and the one
+        that survives a restart. A request dispatched to a container that was
+        already running owns it for this session only: the app has used it, so it
+        may stop it when it idles, but it did not start it, so a later session
+        must not.
         """
         name = str(profile or "").strip()
         if not name:
@@ -587,6 +631,8 @@ class SaladQueue:
         with self._cond:
             fresh = name not in self._owned
             self._owned.add(name)
+            if started_by_app:
+                self._started_by_app.add(name)
             if gateway:
                 self._gateways[name] = str(gateway)
             if fresh or last_active is not None:
@@ -596,7 +642,27 @@ class SaladQueue:
         if fresh:
             self._log("info", f"queue: {name} is tracked for the idle stop")
             self._save_ledger()
+        elif started_by_app:
+            self._save_ledger()
         return fresh
+
+    def refresh(self, profile: str, gateway: str = "") -> bool:
+        """Follow a container this queue already owns; own nothing new.
+
+        The status probe calls this for every group it finds running. It may only
+        refresh what the record already knows - the gateway - because a container
+        the user started by hand is not this app's to stop, and probing the
+        status of a running group must never be what hands it over.
+        """
+        name = str(profile or "").strip()
+        if not name or name not in self._owned:
+            return False
+        with self._cond:
+            if not gateway or self._gateways.get(name, "") == gateway:
+                return False
+            self._gateways[name] = str(gateway)
+        self._save_ledger()
+        return True
 
     # -- container lifecycle ----------------------------------------------
     def ensure_container(self, profile: str, gateway: str) -> str:
@@ -624,6 +690,10 @@ class SaladQueue:
         code, message = self.lifecycle.start(name, gateway)
         code = int(code)
         if 200 <= code < 300:
+            # This is where ownership comes from: the app asked for that start,
+            # so it is the one that stops the container when it idles - now, and
+            # after a restart, because the record says so.
+            self.adopt(name, gateway, started_by_app=True)
             self._log(
                 "info",
                 f"queue: asked Salad to start {name} (HTTP {code}); the request "

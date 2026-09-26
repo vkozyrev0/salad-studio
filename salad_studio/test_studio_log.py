@@ -73,6 +73,38 @@ class ExplainHttp(unittest.TestCase):
         self.assertIn("flux-2-klein-9b-fp8", msg)
         self.assertIn("prompt_outputs_failed_validation", msg)
 
+    def test_an_html_error_page_is_not_pasted_into_the_message(self) -> None:
+        """Salad's 503 page is markup: the status hint is the whole message.
+
+        A not-ready replica answers with that page for every probe, so pasting it
+        into a log line buries the line that matters (the status and the retry).
+        """
+        body = (
+            '<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n'
+            "  <title>503 Service Unavailable - SaladCloud</title>\n"
+            '  <link rel="stylesheet" href="https://releases.salad.com/assets/page.css">\n'
+            "</head>\n<body>\n  <main>\n"
+            '    <h1 class="title green-primary">Error 503 Detected</h1>\n'
+            "  </main>\n</body>\n</html>\n"
+        )
+        req = "https://apple-gadogado-5d0vs4l8x0j51hwy.salad.cloud/ready"
+        msg = studio_log.explain_http(503, body, req, method="GET")
+        self.assertEqual(
+            msg,
+            f"GET {req}, HTTP 503, Salad replica unavailable.",
+            "the 503 line must carry the status and the hint, nothing else",
+        )
+        for junk in ("<!DOCTYPE", "<html", "<h1", "stylesheet", "releases.salad.com"):
+            self.assertNotIn(junk, msg, f"{junk!r} must not reach a log line")
+
+    def test_a_plain_text_body_still_explains_the_failure(self) -> None:
+        """A one-line refusal from a proxy is kept: it is not markup."""
+        msg = studio_log.explain_http(
+            503, b"upstream connect error or disconnect/reset", "https://gw/ready", method="GET"
+        )
+        self.assertIn("HTTP 503", msg)
+        self.assertIn("upstream connect error", msg)
+
     def test_redact_token_query(self) -> None:
         raw = "https://civitai.com/api/download/models/1?token=supersecret"
         self.assertIn("token=…", studio_log.redact(raw, ["supersecret"]))

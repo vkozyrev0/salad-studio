@@ -281,8 +281,13 @@ the left and right.
   refused for a stopped group**: the request is dispatched, the queue starts the
   container it routes to, and the render waits for that container's `/ready`
   before it POSTs — a cold start is minutes (allocate, pull, boot Comfy, finish
-  the prefetch; a replica has been seen still prefetching ten minutes in), so the
-  wait allows thirty minutes of 10 s probes and a container
+  the prefetch; a replica has been seen still prefetching ten minutes in, and a
+  spawn has been seen to run past an hour), so the wait covers about ninety
+  minutes, asking every 10 s at first, then every 30 s, then every 60 s
+  (`generator.ready_sleep_s`). That is 118 requests for the whole window, where a
+  flat 10 s wait would be 540 — while the container has no ready replica every
+  answer is the same 503 page, and the status line says so in one line: the
+  gateway's HTML error page is never pasted into a log. A container
   that never answers fails the request naming the profile, the gateway and the
   last status it saw. Only a replica that is *gone* — failed, or an origin that
   does not answer — is refused up front, because no start can fix it. The state
@@ -403,7 +408,7 @@ the real freeze path the moment that gap is closed.
 Two test commands, and the second is not part of the first:
 
 ```
-python -m unittest discover -s salad_studio -p "test_*.py"   # 788 tests, ~6 min
+python -m unittest discover -s salad_studio -p "test_*.py"   # 792 tests, ~6 min
 python test_salad_comfy_live_findings.py                     # root structural checks
 ```
 

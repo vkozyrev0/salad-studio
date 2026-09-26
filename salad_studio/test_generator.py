@@ -261,6 +261,75 @@ class PromptEditorPayload(unittest.TestCase):
             self.assertTrue(path.is_file())
             self.assertGreater(path.stat().st_size, 0)
 
+    def test_the_readiness_wait_widens_after_its_first_probes(self) -> None:
+        """A long boot is asked about less and less often, over a longer budget.
+
+        A spawn has been seen to run past an hour, so the wait covers about ninety
+        minutes; while the container has no ready replica every answer is the same
+        503 page, so the first probes are close together and the rest are spaced
+        out, which keeps the request count far below a flat 10 s wait.
+        """
+        sleeps = [generator.ready_sleep_s(i) for i in range(generator._READY_TRIES)]
+        self.assertEqual(sleeps[0], generator._READY_SLEEP_S)
+        self.assertEqual(
+            sleeps[generator._READY_SLEEP_AFTER - 1], generator._READY_SLEEP_S
+        )
+        self.assertEqual(
+            sleeps[generator._READY_SLEEP_AFTER], generator._READY_SLEEP_MID_S
+        )
+        self.assertEqual(
+            sleeps[generator._READY_SLEEP_MID_AFTER - 1], generator._READY_SLEEP_MID_S
+        )
+        self.assertEqual(
+            sleeps[generator._READY_SLEEP_MID_AFTER], generator._READY_SLEEP_MAX_S
+        )
+        self.assertEqual(sleeps[-1], generator._READY_SLEEP_MAX_S)
+        self.assertEqual(
+            generator.ready_budget_s(), sum(sleeps), "the budget is the interval table"
+        )
+        self.assertGreaterEqual(
+            generator.ready_budget_s(), 60 * 60, "an hour-long spawn must still be waited for"
+        )
+        self.assertLessEqual(
+            generator.ready_budget_s(), 2 * 60 * 60, "and the wait stays bounded"
+        )
+        flat = generator.ready_budget_s() / generator._READY_SLEEP_S
+        self.assertLess(
+            generator._READY_TRIES,
+            flat / 2,
+            "the wider budget must not mean a request every 10 s for ninety minutes",
+        )
+
+    def test_the_wait_uses_the_widening_interval(self) -> None:
+        """The shipped loop sleeps what ready_sleep_s says, not a fixed 10 s."""
+        editor = {"prompt": {"1": {"class_type": "SaveImage"}}}
+        slept: list[float] = []
+
+        def _req(url, key, data=None, timeout=30):
+            if url.endswith("/ready"):
+                return 503, b'{"title": "replica unavailable"}'
+            return _OK
+
+        with tempfile.TemporaryDirectory() as td, patch.object(
+            generator, "_READY_TRIES", 60
+        ), patch.object(generator.salad_gen, "_req", side_effect=_req), patch.object(
+            generator.salad_gen.time, "sleep", lambda s: slept.append(s)
+        ):
+            with self.assertRaises(RuntimeError):
+                generator.generate_from_payload(
+                    gateway="https://example.salad.test/",
+                    key="test-key",
+                    payload=editor,
+                    out_dir=Path(td),
+                )
+        self.assertEqual(
+            slept,
+            [generator.ready_sleep_s(i) for i in range(59)],
+            "the wait must widen exactly as ready_sleep_s says",
+        )
+        self.assertIn(generator._READY_SLEEP_MID_S, slept)
+        self.assertIn(generator._READY_SLEEP_MAX_S, slept)
+
     def test_preprobe_ready_then_prompt(self) -> None:
         editor = {"prompt": {"1": {"class_type": "SaveImage"}}}
         calls: list[str] = []

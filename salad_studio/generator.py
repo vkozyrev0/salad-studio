@@ -45,12 +45,23 @@ _PROMPT_TIMEOUT_S = 180
 # has never run it, boot Comfy and finish the Hugging Face prefetch before
 # /ready answers. That is minutes, not seconds, and the prefetch dominates it:
 # measured 2026-09-26, one group's replica was still fetching flux2-vae.safetensors
-# ten minutes in, and the other group's replica took 25-30 minutes from its
-# deployment's start_time before it served. So the budget is thirty minutes of
-# 10 s probes. The probes and the sleep go through the injected transport and
-# clock, so tests drive the whole budget without waiting.
-_READY_TRIES = 180
+# ten minutes in, the other group's replica took 25-30 minutes from its
+# deployment's start_time before it served, and a spawn has been seen to run past
+# an hour. So the wait covers about ninety minutes.
+#
+# It widens as it goes: a warm replica answers the first probe, so the early ones
+# stay close together, and each later one waits longer (10 s, then 30 s, then
+# 60 s). That is 118 requests for ninety minutes of coverage, where a flat 10 s
+# would be 540 - and while a container has no ready replica every answer is the
+# same 503 page, so asking for it ten times a minute says nothing new. The probes
+# and the sleep go through the injected transport and clock, so tests drive the
+# whole budget without waiting.
 _READY_SLEEP_S = 10
+_READY_SLEEP_AFTER = 15
+_READY_SLEEP_MID_S = 30
+_READY_SLEEP_MID_AFTER = 45
+_READY_SLEEP_MAX_S = 60
+_READY_TRIES = 118
 _READY_TIMEOUT_S = 20
 # LoRA URL pre-flight: one quick HEAD per URL, before the render is POSTed.
 _LORA_CHECK_TIMEOUT_S = 20
@@ -71,6 +82,30 @@ def _body_snippet(body: bytes | str, n: int = 200) -> str:
     if isinstance(body, (bytes, bytearray)):
         return body[:n].decode("utf-8", "replace")
     return str(body)[:n]
+
+
+def ready_sleep_s(attempt: int) -> int:
+    """How long to wait before the next readiness probe.
+
+    ``attempt`` is the 0-based index of the probe that just failed. The first
+    probes are close together because a warm replica answers one of them at once;
+    after that each one waits longer, because from there on the answer is the same
+    "replica unavailable" page until the boot finishes.
+    """
+    if attempt < _READY_SLEEP_AFTER:
+        return _READY_SLEEP_S
+    if attempt < _READY_SLEEP_MID_AFTER:
+        return _READY_SLEEP_MID_S
+    return _READY_SLEEP_MAX_S
+
+
+def ready_budget_s() -> int:
+    """How long the whole readiness wait covers, in seconds.
+
+    Summed from the interval table rather than written down twice, so the budget
+    a failure message names is the one the loop actually spends.
+    """
+    return sum(ready_sleep_s(attempt) for attempt in range(_READY_TRIES))
 
 
 def wait_gateway_ready(
@@ -127,15 +162,15 @@ def wait_gateway_ready(
                 _log(
                     "warn",
                     f"GET {url} HTTP 404 while the group reads {group or 'unknown'}; "
-                    f"still starting, retry in {_READY_SLEEP_S}s",
+                    f"still starting, retry in {ready_sleep_s(attempt)}s",
                 )
-                salad_gen.time.sleep(_READY_SLEEP_S)
+                salad_gen.time.sleep(ready_sleep_s(attempt))
                 continue
             _log("error", msg)
             raise RuntimeError(msg + f"  (pre-probe /ready failed for {who})")
         if last_code in _RETRY_CODES and attempt + 1 < _READY_TRIES:
-            _log("warn", msg + f"  retry in {_READY_SLEEP_S}s")
-            salad_gen.time.sleep(_READY_SLEEP_S)
+            _log("warn", msg + f"  retry in {ready_sleep_s(attempt)}s")
+            salad_gen.time.sleep(ready_sleep_s(attempt))
             continue
         if last_code not in _RETRY_CODES:
             _log("warn", msg + "  will POST /prompt anyway")
@@ -145,8 +180,8 @@ def wait_gateway_ready(
     msg = explain_http(int(last_code), last_body, url, method="GET")
     _log("error", msg)
     raise RuntimeError(
-        f"{msg}  (pre-probe /ready failed for {who} after {_READY_TRIES} probes; "
-        f"last status HTTP {int(last_code)})"
+        f"{msg}  (pre-probe /ready failed for {who} after {_READY_TRIES} probes over "
+        f"~{ready_budget_s() // 60} minutes; last status HTTP {int(last_code)})"
     )
 
 

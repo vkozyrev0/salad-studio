@@ -303,6 +303,11 @@ def check_lora_urls(
 
 def _attempt_error(attempt: salad_queue.Attempt, url: str, job: salad_queue.Job) -> str:
     """Why a queued request produced no plate."""
+    if attempt.error and not attempt.body:
+        # A failure that never reached the container (the readiness wait, a
+        # refused start) carries its own message, which names the profile and
+        # the gateway; there is no transport body to explain.
+        return attempt.error
     if attempt.status:
         msg = explain_http(attempt.status, attempt.body, url)
         return f"{msg}  ({attempt.error})" if attempt.error else msg
@@ -361,23 +366,6 @@ def generate_from_payload(
                 "Salad POST omits replica-missing node types "
                 "(editor graph unchanged).",
             )
-    # Ask for the container *before* waiting on it: a stopped group has no /ready
-    # to poll until Salad has been asked to start it, and the wait below is what
-    # covers the cold start that follows. The queue owns the decision (it reads
-    # the group's state every time), and this is the same call its own dispatch
-    # would make, so `ensure=False` below keeps it to one per request.
-    if line:
-        refusal = line_queue.ensure_container(line, gateway)
-        if refusal:
-            _log("error", refusal)
-            raise RuntimeError(refusal)
-    wait_gateway_ready(
-        gateway,
-        key,
-        on_log=_log,
-        line=line,
-        state=(lambda: line_queue.group_state(line, gateway)) if line else None,
-    )
     if isinstance(body_obj.get("prompt"), dict):
         # Check the URLs on the compat-stripped prompt: never probe a LoRA the
         # replica will not be asked for. Nothing is downloaded here. The replica
@@ -439,9 +427,40 @@ def generate_from_payload(
             )
         return salad_queue.Attempt(status=code, body=body, accepted=True, result=raw)
 
+    def dispatch_once(_job: salad_queue.Job) -> salad_queue.Attempt:
+        """Ask for this request's container, wait for it, then submit once.
+
+        This runs *inside* the job, after the queue has taken the request, so the
+        row is in the Queue page for the whole of a cold start: the wait is
+        minutes, and a request that is not in the queue looks like one that never
+        happened. The queue owns the start decision (it re-reads the group's
+        state every time, so a container stopped since the last render is started
+        for this one), and the wait covers the boot that follows.
+
+        A container that never answers ends the job here. 504 is terminal to the
+        queue, so it does not retry a wait that already ran its whole budget, and
+        the message names the profile, the gateway and the last status seen.
+        """
+        refusal = line_queue.ensure_container(line, gateway) if line else ""
+        if refusal:
+            _log("error", refusal)
+            return salad_queue.Attempt(status=504, error=refusal)
+        try:
+            wait_gateway_ready(
+                gateway,
+                key,
+                on_log=_log,
+                line=line,
+                state=(lambda: line_queue.group_state(line, gateway)) if line else None,
+            )
+        except RuntimeError as e:
+            _log("error", str(e))
+            return salad_queue.Attempt(status=504, error=str(e))
+        return render_once()
+
     job = line_queue.deliver(
         {"gateway": gateway, "url": url, "bytes": len(blob), "profile": line},
-        lambda _job: render_once(),
+        dispatch_once,
         line=line,
         ensure=False,
     )

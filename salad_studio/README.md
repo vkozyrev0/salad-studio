@@ -13,8 +13,10 @@ Run from the repo root, or:
 python salad_studio/app.py
 ```
 
-Layout: **top action bar** (Generate + live generation status every 2s, and the
-replica status badges with the Salad probe, right-aligned; a press made while a
+Layout: **top action bar** (Generate + live generation status every 2s, and a
+compact container strip with the Salad probe, right-aligned: a green dot with
+the number of ready containers, an amber dot with the number still starting and
+a red dot with the number not started, separated by `|`; a press made while a
 render is in flight is queued, not dropped), **vertical tabs** on the left
 (**Config**, **Prompt Settings**, **Policy**, **Tokens**, **LoRAs**,
 **Prompt Editor**, **Prompt Assist**, **Prompt Catalog**, **Import**,
@@ -33,7 +35,9 @@ the left and right.
   list must stay in one unet family — one container holds one unet in VRAM, so
   adding a checkpoint of another family is refused with the reason — and adding a
   checkpoint makes a graph that loads it routable with no code edit. Every profile
-  gets its own replica badge and probe in the top action bar, and Generate is
+  is probed, and the three counts in the action bar's strip are sums over all of
+  them: ready instances, instances that exist but are not serving yet, and the
+  configured replica count minus the instances that exist. Generate is
   disabled until the *active* gateway is Ready. The prompt knobs live on
   **Prompt Settings**.
 - **Prompt Settings**. **Width**, **Height**, **Steps**, **CFG**, **Seed**,
@@ -370,7 +374,7 @@ the real freeze path the moment that gap is closed.
 Two test commands, and the second is not part of the first:
 
 ```
-python -m unittest discover -s salad_studio -p "test_*.py"   # 725 tests, ~6 min
+python -m unittest discover -s salad_studio -p "test_*.py"   # 742 tests, ~6 min
 python test_salad_comfy_live_findings.py                     # root structural checks
 ```
 

@@ -239,6 +239,169 @@ class MatchDns(unittest.TestCase):
         self.assertEqual(salad_status.short_status(info), "Downloading 20%")
 
 
+class ContainerCounts(unittest.TestCase):
+    """The compact strip's three counts, over snapshots the probe really builds.
+
+    Every case goes through the shipped ``check_container``, so the mapping is
+    driven by the snapshot shape the probe produces, not by a hand-written dict.
+    """
+
+    GW = "https://persimmon-caraway-2tyczg3bbqh90fnp.salad.cloud"
+    GROUP = "flux2-klein"
+
+    def _snapshot(self, *, replicas: int, state: str, instances: list) -> dict:
+        group = {
+            "name": self.GROUP,
+            "display_name": "Flux2 Klein",
+            "version": 4,
+            "replicas": replicas,
+            "current_state": {"status": state, "description": ""},
+            "container": {"image": "docker.io/example:tag"},
+            "networking": {"dns": self.GW.split("//")[1], "port": 3000},
+        }
+
+        def _api(url, key):
+            if url.endswith("/instances"):
+                return 200, {"instances": instances}
+            if url.endswith("/containers"):
+                return 200, {"items": [group]}
+            return 200, group
+
+        with patch.object(salad_status, "_api_get", side_effect=_api), patch.object(
+            salad_status, "_req", return_value=(503, b"still booting")
+        ):
+            return salad_status.check_container(self.GW, "key")
+
+    def test_a_ready_replica_counts_as_ready(self) -> None:
+        info = self._snapshot(
+            replicas=1,
+            state="running",
+            instances=[{"state": "running", "ready": True, "started": True}],
+        )
+        self.assertEqual(salad_status.container_counts(info), (1, 0, 0))
+
+    def test_an_allocating_replica_counts_as_starting(self) -> None:
+        info = self._snapshot(
+            replicas=1,
+            state="deploying",
+            instances=[{"state": "allocating", "ready": False, "started": False}],
+        )
+        self.assertEqual(salad_status.container_counts(info), (0, 1, 0))
+
+    def test_a_creating_replica_counts_as_starting(self) -> None:
+        info = self._snapshot(
+            replicas=1,
+            state="deploying",
+            instances=[{"state": "creating", "ready": False, "started": False}],
+        )
+        self.assertEqual(salad_status.container_counts(info), (0, 1, 0))
+
+    def test_a_pulling_replica_counts_as_starting(self) -> None:
+        info = self._snapshot(
+            replicas=1,
+            state="deploying",
+            instances=[
+                {
+                    "state": "creating",
+                    "ready": False,
+                    "started": False,
+                    "pulling_progress": 0.2,
+                }
+            ],
+        )
+        self.assertEqual(salad_status.container_counts(info), (0, 1, 0))
+
+    def test_a_running_replica_that_is_not_serving_counts_as_starting(self) -> None:
+        info = self._snapshot(
+            replicas=1,
+            state="running",
+            instances=[{"state": "running", "ready": False, "started": True}],
+        )
+        self.assertEqual(salad_status.container_counts(info), (0, 1, 0))
+
+    def test_a_stopped_group_with_one_replica_counts_as_non_started(self) -> None:
+        info = self._snapshot(replicas=1, state="stopped", instances=[])
+        self.assertEqual(salad_status.container_counts(info), (0, 0, 1))
+
+    def test_a_failed_group_with_one_replica_counts_as_non_started(self) -> None:
+        info = self._snapshot(replicas=1, state="failed", instances=[])
+        self.assertEqual(salad_status.container_counts(info), (0, 0, 1))
+
+    def test_two_replicas_one_ready_one_creating(self) -> None:
+        info = self._snapshot(
+            replicas=2,
+            state="running",
+            instances=[
+                {"state": "running", "ready": True, "started": True},
+                {"state": "creating", "ready": False, "started": False},
+            ],
+        )
+        self.assertEqual(salad_status.container_counts(info), (1, 1, 0))
+
+    def test_more_instances_than_replicas_never_goes_below_zero(self) -> None:
+        info = self._snapshot(
+            replicas=1,
+            state="running",
+            instances=[
+                {"state": "running", "ready": True, "started": True},
+                {"state": "running", "ready": False, "started": False},
+            ],
+        )
+        self.assertEqual(salad_status.container_counts(info), (1, 1, 0))
+
+    def test_a_gateway_with_no_group_contributes_nothing(self) -> None:
+        with patch.object(salad_status, "_api_get", return_value=(200, {"items": []})):
+            info = salad_status.check_container(self.GW, "key")
+        self.assertIsNone(info["group"])
+        self.assertEqual(salad_status.container_counts(info), (0, 0, 0))
+
+    def test_an_api_error_contributes_nothing(self) -> None:
+        with patch.object(salad_status, "_api_get", return_value=(500, {"error": "boom"})):
+            info = salad_status.check_container(self.GW, "key")
+        self.assertIn("HTTP 500", str(info["error"]))
+        self.assertEqual(salad_status.container_counts(info), (0, 0, 0))
+
+    def test_no_snapshot_at_all_contributes_nothing(self) -> None:
+        self.assertEqual(salad_status.container_counts(None), (0, 0, 0))
+        self.assertEqual(salad_status.strip_counts({}), (0, 0, 0))
+        self.assertEqual(salad_status.strip_counts(None), (0, 0, 0))
+
+    def test_the_strip_sums_every_profiles_snapshot(self) -> None:
+        ready = self._snapshot(
+            replicas=1,
+            state="running",
+            instances=[{"state": "running", "ready": True, "started": True}],
+        )
+        stopped = self._snapshot(replicas=1, state="stopped", instances=[])
+        booting = self._snapshot(
+            replicas=1,
+            state="deploying",
+            instances=[{"state": "creating", "ready": False, "started": False}],
+        )
+        self.assertEqual(
+            salad_status.strip_counts({"a": ready, "b": stopped, "c": booting}),
+            (1, 1, 1),
+        )
+
+    def test_the_three_dot_colours_are_distinct_and_are_the_word_colours(self) -> None:
+        """The dots carry what the words carried: Ready green, amber, failed red."""
+        colors = salad_status.STRIP_COLORS
+        self.assertEqual(len(colors), 3)
+        self.assertEqual(len(set(colors)), 3, f"the three dots must differ: {colors}")
+        self.assertEqual(colors[0], salad_status.WORD_COLORS["Ready"])
+        self.assertEqual(colors[1], salad_status.WORD_COLORS["Creating"])
+        self.assertEqual(colors[2], salad_status.WORD_COLORS["Failed"])
+
+        def rgb(hexcolor: str) -> tuple[int, int, int]:
+            h = hexcolor.lstrip("#")
+            return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+        green, amber, red = (rgb(c) for c in colors)
+        self.assertTrue(green[1] > green[0] and green[1] > green[2], f"green: {green}")
+        self.assertTrue(amber[0] > amber[1] > amber[2], f"amber: {amber}")
+        self.assertTrue(red[0] > red[1] and red[0] > red[2], f"red: {red}")
+
+
 class SourceButton(unittest.TestCase):
     def test_config_has_check_button(self) -> None:
         src = (HERE / "app.py").read_text(encoding="utf-8")

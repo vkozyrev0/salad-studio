@@ -214,56 +214,60 @@ class SaladStudio(tk.Tk):
         self._build_replica_cluster(bar)
 
     def _build_replica_cluster(self, bar) -> None:
-        """The Salad probe and one badge row per configured profile, right-aligned."""
+        """The Salad probe and the compact container-count strip, right-aligned."""
         holder = ttk.Frame(bar)
         holder.pack(side="right")
         self._replica_holder = holder
-        self._replica_vars: dict[str, tuple[tk.StringVar, tk.StringVar, tk.Label]] = {}
-        right = ttk.Frame(holder)
-        right.grid(row=0, column=3, sticky="ne", padx=(10, 0))
         ttk.Button(
-            right, text="Check Salad status", command=self._check_salad_status
+            holder, text="Check Salad status", command=self._check_salad_status
         ).pack(side="left")
         self.var_salad_status = tk.StringVar(value="…")
-        self.salad_status_lbl = tk.Label(
-            right,
-            textvariable=self.var_salad_status,
-            font=("Segoe UI Semibold", 11),
-            bg=theme.PALETTE["bg"],
-            fg=theme.PALETTE["fg_muted"],
-        )
-        self.salad_status_lbl.pack(side="left", padx=(8, 0))
-        self._refresh_replica_badges()
+        self._refresh_replica_strip()
 
-    def _refresh_replica_badges(self) -> None:
-        """One badge row per profile the store holds, so N profiles all show.
+    def _refresh_replica_strip(self) -> None:
+        """The three dot+count segments, rebuilt whenever the profile set changes.
 
-        Rebuilt whenever the profile set changes: the number of badges is the
-        number of profiles, and the probe reads the same dict.
+        One strip for every configured profile: the counts are sums, so the
+        number of segments does not grow with the number of profiles. It is
+        refilled from the last probe's snapshots, so adding or removing a profile
+        keeps the numbers instead of blanking them.
         """
         holder = getattr(self, "_replica_holder", None)
         if holder is None:
             return
-        for child in list(holder.grid_slaves()):
-            if int(child.grid_info().get("column", 0) or 0) != 3:
-                child.destroy()
-        self._replica_vars = {}
-        for i, (pid, _gateway) in enumerate(self._status_targets()):
-            ttk.Label(holder, text=pid).grid(row=i, column=0, sticky="w", padx=(0, 6))
-            word = tk.StringVar(value="…")
-            detail = tk.StringVar(value="")
-            lbl = tk.Label(
-                holder,
-                textvariable=word,
-                font=("Segoe UI Semibold", 10),
-                bg=theme.PALETTE["bg"],
-                fg=theme.PALETTE["fg_muted"],
-            )
-            lbl.grid(row=i, column=1, sticky="w", padx=(0, 8))
-            ttk.Label(holder, textvariable=detail, wraplength=420).grid(
-                row=i, column=2, sticky="w"
-            )
-            self._replica_vars[pid] = (word, detail, lbl)
+        old = getattr(self, "_strip", None)
+        if old is not None:
+            old.destroy()
+        p = theme.PALETTE
+        strip = tk.Frame(holder, bg=p["bg"])
+        strip.pack(side="left", padx=(10, 0))
+        self._strip = strip
+        self._strip_dots: list[tk.Label] = []
+        self._strip_vars: list[tk.StringVar] = []
+        for i, color in enumerate(salad_status.STRIP_COLORS):
+            if i:
+                tk.Label(
+                    strip, text="|", bg=p["bg"], fg=p["fg_muted"], font=("Segoe UI", 11)
+                ).pack(side="left", padx=6)
+            dot = tk.Label(strip, text="●", bg=p["bg"], fg=color, font=("Segoe UI", 11))
+            dot.pack(side="left")
+            var = tk.StringVar(value="0")
+            tk.Label(
+                strip,
+                textvariable=var,
+                bg=p["bg"],
+                fg=p["fg"],
+                font=("Segoe UI Semibold", 11),
+            ).pack(side="left", padx=(3, 0))
+            self._strip_dots.append(dot)
+            self._strip_vars.append(var)
+        self._fill_strip(getattr(self, "_last_snaps", None) or {})
+
+    def _fill_strip(self, snaps: dict[str, dict]) -> None:
+        """Write the three counts the probe's snapshots add up to."""
+        counts = salad_status.strip_counts(snaps)
+        for var, n in zip(getattr(self, "_strip_vars", []), counts):
+            var.set(str(n))
 
     def _build_nav_buttons(self) -> None:
         for child in self._nav.winfo_children():
@@ -460,7 +464,7 @@ class SaladStudio(tk.Tk):
         profiles.set_active(name)
         self._refresh_profile_choices(name)
         self._apply_profile(p)
-        self._refresh_replica_badges()
+        self._refresh_replica_strip()
         self.status.set(f"Added profile {name}")
         self.log(
             "ok",
@@ -665,15 +669,16 @@ class SaladStudio(tk.Tk):
         if waiting:
             line = f"{line}  (+{waiting} queued)"
         self.var_gen_state.set(line)
+        # The request is in the queue from the moment it is submitted, and its
+        # row has to be on the page while the container it routes to comes up:
+        # a cold start is minutes, and an empty Queue page reads as "the press
+        # did nothing". The 15 s tick alone is too slow for that first row.
+        self._refresh_queue_page()
         self._schedule_gen_tick()
 
     def _set_salad_word(self, word: str) -> None:
+        """The one status word the gates read. The strip shows counts, not words."""
         self.var_salad_status.set(word)
-        color = salad_status.color_for_status(word)
-        try:
-            self.salad_status_lbl.configure(fg=color)
-        except tk.TclError:
-            pass
         self._apply_generate_gate(word)
 
     def _apply_generate_gate(self, word: str) -> None:
@@ -694,9 +699,10 @@ class SaladStudio(tk.Tk):
     def _status_targets(self) -> list[tuple[str, str]]:
         """(profile name, gateway) for every configured profile.
 
-        One badge and one probe per profile, so any number of profiles is active
-        at once. A profile with no gateway falls back to the published one for a
-        built-in name; anything else with no gateway has nothing to probe.
+        One probe per profile, so any number of profiles is active at once, and
+        the strip counts all of their containers. A profile with no gateway falls
+        back to the published one for a built-in name; anything else with no
+        gateway has nothing to probe.
         """
         try:
             allp = profiles.load_all()
@@ -713,8 +719,8 @@ class SaladStudio(tk.Tk):
         gw = self.var_gateway.get().strip()
         if not gw:
             # Empty Config gateway: mark the active word Down, then fall through
-            # on purpose. The probe below still fills the dual replica badges
-            # from the profile gateways (see _status_targets).
+            # on purpose. The probe below still counts the containers of every
+            # profile gateway (see _status_targets).
             self._set_salad_word("Down")
         if self._salad_check_busy:
             return
@@ -736,26 +742,17 @@ class SaladStudio(tk.Tk):
                 active_word = "Unknown"
                 first_pid = targets[0][0] if targets else ""
                 self._last_snaps = dict(snaps)
-                for pid, (word_var, detail_var, lbl) in getattr(
-                    self, "_replica_vars", {}
-                ).items():
+                self._fill_strip(snaps)
+                for pid, gwx in targets:
                     info = snaps.get(pid) or {}
                     word = str(info.get("word") or "Down")
-                    detail = str(info.get("detail") or info.get("error") or "")
-                    word_var.set(word)
-                    detail_var.set(detail)
                     # A group found running is one this app may have to stop: adopt
                     # it, so a container left over from an earlier session (or one
                     # started by hand) gets the idle stop too. Adoption starts the
                     # idle clock; it does not reset it on later ticks.
                     if str((info.get("group") or {}).get("status") or "").lower() == "running":
-                        self.gen_queue.adopt(pid, dict(targets).get(pid, ""))
-                    try:
-                        lbl.configure(fg=salad_status.color_for_status(word))
-                    except tk.TclError:
-                        pass
-                    tgt_gw = dict(targets).get(pid, "")
-                    if active_gw and tgt_gw and active_gw.rstrip("/") == tgt_gw.rstrip("/"):
+                        self.gen_queue.adopt(pid, gwx)
+                    if active_gw and gwx and active_gw.rstrip("/") == gwx.rstrip("/"):
                         active_word = word
                     if not active_gw and pid == first_pid:
                         active_word = word
@@ -3650,7 +3647,7 @@ class SaladStudio(tk.Tk):
         if active not in allp:
             active = names[0]
         self._apply_profile(allp[active])
-        self._refresh_replica_badges()
+        self._refresh_replica_strip()
 
     def _on_select_profile(self) -> None:
         name = self.var_name.get().strip()
@@ -3669,7 +3666,7 @@ class SaladStudio(tk.Tk):
         profiles.set_active(p.name)
         self._refresh_profile_choices(p.name)
         self._refresh_checkpoint_list(p)
-        self._refresh_replica_badges()
+        self._refresh_replica_strip()
         self.status.set(f"Saved profile {p.name}")
         self.log(
             "ok",
@@ -3694,7 +3691,7 @@ class SaladStudio(tk.Tk):
             self._apply_profile(p)
         self._refresh_profile_choices()
         self._refresh_checkpoint_list()
-        self._refresh_replica_badges()
+        self._refresh_replica_strip()
         self.status.set(f"Deleted {name}")
         self.log("warn", f"deleted profile {name}")
 

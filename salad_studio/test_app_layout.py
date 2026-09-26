@@ -1178,6 +1178,34 @@ class NewPagesAndPlacement(unittest.TestCase):
             if isinstance(w, ttk.Button)
         }
 
+    @staticmethod
+    def _widget_text(widget) -> str:
+        """What a label shows: its textvariable's value, else its static text."""
+        try:
+            var = str(widget.cget("textvariable"))
+        except tk.TclError:
+            var = ""
+        if var:
+            return str(widget.getvar(var))
+        try:
+            return str(widget.cget("text"))
+        except tk.TclError:
+            return ""
+
+    def _strip_text(self, app) -> str:
+        """The strip's visible text, read off its own widgets in order."""
+        return "".join(self._widget_text(w) for w in app._strip.winfo_children())
+
+    @staticmethod
+    def _rgb(hexcolor: str) -> tuple[int, int, int]:
+        h = hexcolor.lstrip("#")
+        return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+    @staticmethod
+    def _snap(replicas: int, instances: list) -> dict:
+        """A probe snapshot shaped like the one salad_status.check_container builds."""
+        return {"group": {"replicas": replicas}, "instances": instances}
+
     # --- pages exist -----------------------------------------------------
     def test_the_two_new_pages_are_in_the_notebook(self) -> None:
         labels = [self.app.nb.tab(t, "text") for t in self.app.nb.tabs()]
@@ -1913,33 +1941,124 @@ class NewPagesAndPlacement(unittest.TestCase):
         self.assertFalse(self._descends_from(app.profile_combo, app._settings))
 
     # --- action bar ------------------------------------------------------
-    def test_replica_badges_are_right_aligned_in_the_action_bar(self) -> None:
+    def test_the_status_strip_is_right_aligned_in_the_action_bar(self) -> None:
+        """One compact strip in the cluster's place: three dot+count segments."""
+        from salad_studio import salad_status
+
         app = self.app
         holder = app._replica_holder
         self.assertIs(holder.master, app._action_bar)
         self.assertEqual(str(holder.pack_info().get("side")), "right")
-        self.assertEqual(set(app._replica_vars), {"klein", "klein5090"})
-        for pid, (word, detail, lbl) in app._replica_vars.items():
-            with self.subTest(replica=pid):
-                self.assertTrue(self._descends_from(lbl, holder))
-                detail_lbl = self._label_with_var(holder, detail)
-                assert detail_lbl is not None, f"no detail label for {pid}"
-                self.assertTrue(self._descends_from(detail_lbl, holder))
-                # The badge label is bound to the word var the probe writes.
-                self.assertEqual(str(lbl.cget("textvariable")), str(word))
-        self.assertTrue(self._descends_from(app.salad_status_lbl, holder))
+        strip = app._strip
+        self.assertTrue(self._descends_from(strip, holder))
+        self.assertEqual(len(app._strip_dots), 3)
+        self.assertEqual(len(app._strip_vars), 3)
+        for dot, var in zip(app._strip_dots, app._strip_vars):
+            self.assertTrue(self._descends_from(dot, strip))
+            self.assertTrue(self._descends_from(self._label_with_var(strip, var), strip))
+
+        colors = [str(dot.cget("fg")) for dot in app._strip_dots]
+        self.assertEqual(len(set(colors)), 3, f"three distinct dot colours: {colors}")
+        self.assertEqual(colors[0], salad_status.WORD_COLORS["Ready"])
+        self.assertEqual(colors[1], salad_status.WORD_COLORS["Creating"])
+        self.assertEqual(colors[2], salad_status.WORD_COLORS["Failed"])
+        green, amber, red = (self._rgb(c) for c in colors)
+        self.assertTrue(green[1] > green[0] and green[1] > green[2], f"green: {green}")
+        self.assertTrue(amber[0] > amber[1] > amber[2], f"amber: {amber}")
+        self.assertTrue(red[0] > red[1] and red[0] > red[2], f"red: {red}")
+
         self.assertIn("Check Salad status", self._buttons(holder))
         # Generate / Clean gallery / the live state stay on the left.
         self.assertEqual(str(app.gen_btn.pack_info().get("side")), "left")
         self.assertEqual(str(app.gen_state_lbl.pack_info().get("side")), "left")
         self.assertFalse(self._descends_from(holder, app._config))
 
-    def test_status_word_still_reaches_the_badge_labels(self) -> None:
+        # The removed detail: no per-profile word or detail row, and no
+        # aggregate status word label anywhere in the bar.
+        self.assertFalse(hasattr(app, "_replica_vars"), "per-profile badges are gone")
+        self.assertFalse(hasattr(app, "salad_status_lbl"), "the word label is gone")
+        shown = " ".join(self._widget_text(w) for w in self._all_widgets(app._action_bar))
+        for gone in (
+            "klein",
+            "klein5090",
+            "Ready",
+            "Stopped",
+            "Starting",
+            "Down",
+            "Unknown",
+        ):
+            self.assertNotIn(gone, shown, f"the action bar still shows {gone!r}")
+
+    def test_the_strip_counts_the_containers_the_probe_finds(self) -> None:
+        """The shipped probe-fill path writes the three counts, in this order.
+
+        Two different snapshot sets go through the same window, so a constant
+        cannot pass: profile klein ready + klein5090 stopped reads 1|0|1, then
+        klein creating + klein5090 ready reads 1|1|0.
+        """
+        from salad_studio import app as app_mod
+
+        app = self.app
+        self.tokens.write_token("salad", "salad-test-key-1234")
+        targets = dict(app._status_targets())
+        self.assertEqual(sorted(targets), ["klein", "klein5090"])
+
+        sets = (
+            (
+                {
+                    targets["klein"]: self._snap(1, [{"state": "running", "ready": True}]),
+                    targets["klein5090"]: self._snap(1, []),
+                },
+                "●1|●0|●1",
+            ),
+            (
+                {
+                    targets["klein"]: self._snap(1, [{"state": "creating", "ready": False}]),
+                    targets["klein5090"]: self._snap(1, [{"state": "running", "ready": True}]),
+                },
+                "●1|●1|●0",
+            ),
+        )
+        for snaps, want in sets:
+            with self.subTest(want=want):
+                probe = mock.patch.object(
+                    app_mod.salad_status,
+                    "snapshot_gateway",
+                    side_effect=lambda gw, _key, _s=snaps: _s[gw],
+                )
+                # The probe's worker posts its fill through after(0, done), which
+                # Tk refuses from a thread without a main loop; run it inline and
+                # pump, the way the rest of this module drives the app's workers.
+                with probe, mock.patch(
+                    "salad_studio.app.threading.Thread", self._inline_thread()
+                ):
+                    app._check_salad_status()
+                    self.assertTrue(
+                        self._pump(lambda: self._strip_text(app) == want),
+                        f"strip reads {self._strip_text(app)!r}, want {want!r}",
+                    )
+                self.assertEqual(self._strip_text(app), want)
+
+        # The dots beside those numbers: green ready, amber starting, red not
+        # started, three distinct colours on the three segments.
+        from salad_studio import salad_status
+
+        colors = [str(dot.cget("fg")) for dot in app._strip_dots]
+        self.assertEqual(len(set(colors)), 3, f"three distinct dot colours: {colors}")
+        self.assertEqual(colors[0], salad_status.WORD_COLORS["Ready"])
+        self.assertEqual(colors[1], salad_status.WORD_COLORS["Creating"])
+        self.assertEqual(colors[2], salad_status.WORD_COLORS["Failed"])
+
+    def test_status_word_still_reaches_the_generate_gate(self) -> None:
         app = self.app
         app._set_salad_word("Ready")
         self.assertEqual(app.var_salad_status.get(), "Ready")
         self.assertEqual(str(app.gen_btn.cget("state")), "normal")
         app._set_salad_word("Down")
+        self.assertEqual(app.var_salad_status.get(), "Down")
+        self.assertEqual(str(app.gen_btn.cget("state")), "disabled")
+        app._set_salad_word("Stopped")
+        self.assertEqual(app.var_salad_status.get(), "Stopped")
         self.assertEqual(str(app.gen_btn.cget("state")), "disabled")
 
     # --- tokens page -----------------------------------------------------

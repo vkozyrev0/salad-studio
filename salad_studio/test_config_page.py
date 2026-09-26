@@ -108,10 +108,14 @@ class ConfigPage(unittest.TestCase):
         self.assertTrue(added["checkpoints"], "a new profile is seeded with checkpoints")
         self.assertEqual(profiles.get_active(), "studio3")
         self.assertEqual(
-            set(app._replica_vars),
+            set(dict(app._status_targets())),
             {"klein", "klein5090", "studio3"},
-            "every profile gets a replica badge",
+            "every profile is probed, and the one strip counts them all",
         )
+        # The strip is rebuilt with the profile set: it must survive the change.
+        self.assertTrue(app._strip.winfo_exists(), "the strip is rebuilt, not dropped")
+        self.assertIs(app._strip.master, app._replica_holder)
+        self.assertEqual(len(app._strip_dots), 3, "still three segments, not one per profile")
 
         app.var_gateway.set("https://configured.example.salad.cloud")
         app._save_profile()
@@ -122,7 +126,7 @@ class ConfigPage(unittest.TestCase):
         app._delete_profile()
         self.assertNotIn("studio3", self._doc()["profiles"])
         self.assertNotIn("studio3", self._listed())
-        self.assertEqual(set(app._replica_vars), {"klein", "klein5090"})
+        self.assertEqual(set(dict(app._status_targets())), {"klein", "klein5090"})
 
     def test_removing_the_last_profile_leaves_the_app_usable(self) -> None:
         app = self.app

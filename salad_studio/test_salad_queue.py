@@ -1145,7 +1145,70 @@ class GeneratorThroughTheQueue(unittest.TestCase):
         self.assertIn("https://klein.example/", message, "and its gateway")
         self.assertIn("HTTP 503", message, "and the last status it saw")
         self.assertEqual(calls, ["probe", "probe", "probe"], "no POST into a down container")
-        self.assertEqual(line.jobs(), [], "nothing was queued")
+        # The request is in the queue for the whole of that wait, and it ends
+        # there: the row the user watches has to say why no plate came back.
+        jobs = line.jobs()
+        self.assertEqual(len(jobs), 1, "the request must be visible while it waits")
+        self.assertEqual(jobs[0].state, q.FAILED)
+        self.assertIn("profile 'klein'", jobs[0].reason)
+        self.assertIn("HTTP 503", jobs[0].reason)
+        self.assertFalse(jobs[0].accepted, "nothing was sent, so nothing was accepted")
+
+    def test_the_request_is_in_the_queue_while_its_container_is_starting(self) -> None:
+        """A cold start is minutes: the row has to be there for the whole wait.
+
+        The report this pins: pressing Generate with a container that was not up
+        left the Queue page empty, because the request only reached the queue
+        after the readiness wait. What the queue held is recorded per probe.
+        """
+        plate = base64.b64encode(b"jpeg-bytes").decode("ascii")
+        seen: list[list[str]] = []
+        probes = {"n": 0}
+
+        def _req(url, key, data=None, timeout=30):
+            if url.endswith("/ready"):
+                probes["n"] += 1
+                seen.append([job.state for job in line.jobs()])
+                return (503, b"replica unavailable") if probes["n"] < 3 else (200, b"ok")
+            return 200, json.dumps({"images": [plate]}).encode()
+
+        life = _FakeLifecycle({"klein": False})
+        line = q.SaladQueue(
+            lifecycle=life, sleep=lambda _s: None, now=lambda: 0.0, idle_stop_s=3600
+        )
+        payload = {
+            "prompt": {
+                "9": {
+                    "class_type": "SaveImage",
+                    "inputs": {"filename_prefix": "x", "images": ["8", 0]},
+                }
+            },
+            "convert_output": {"format": "jpeg"},
+        }
+        with TemporaryDirectory() as td, patch.object(
+            generator.salad_gen, "_req", side_effect=_req
+        ), patch.object(generator.salad_gen.time, "sleep", lambda _s: None):
+            path = generator.generate_from_payload(
+                gateway="https://klein.example/",
+                key="test-key",
+                payload=payload,
+                out_dir=Path(td),
+                queue=line,
+                line="klein",
+            )
+            self.assertTrue(path.is_file())
+        self.assertEqual(
+            seen[0],
+            [q.RUNNING],
+            "the request must be in the queue, in flight, while the container boots",
+        )
+        self.assertEqual(seen[-1], [q.RUNNING], "and still the only row before the POST")
+        self.assertEqual(line.jobs()[0].state, q.ACCEPTED)
+        self.assertEqual(
+            life.actions("start"),
+            [("start", "klein", "https://klein.example/")],
+            "the stopped container was asked for once, for this request",
+        )
 
 
 if __name__ == "__main__":

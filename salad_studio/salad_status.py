@@ -408,6 +408,49 @@ def color_for_status(word: str) -> str:
     return WORD_COLORS.get(key, WORD_COLORS["Unknown"])
 
 
+# The compact status strip's three segments, in order: ready, starting,
+# non-started. The colors are the ones the status words already carry (the Ready
+# green, the amber for a replica that is coming up, the failed/down red), so a
+# dot means what the word it replaced meant.
+STRIP_COLORS: tuple[str, str, str] = (
+    WORD_COLORS["Ready"],
+    WORD_COLORS["Creating"],
+    WORD_COLORS["Failed"],
+)
+
+
+def container_counts(info: dict[str, Any] | None) -> tuple[int, int, int]:
+    """(ready, starting, non-started) instances behind one probe snapshot.
+
+    ``ready`` is the instances whose ``ready`` is true; ``starting`` is the
+    instances that exist and are not ready yet (allocating, creating, pulling,
+    running but not serving); ``non-started`` is the group's configured replica
+    count minus the instances that exist, never below zero, so a stopped or
+    failed group with one configured replica contributes 1.
+
+    A snapshot with no group (the API did not answer, or no group carries that
+    DNS) has no configured count to read and contributes nothing.
+    """
+    if not info:
+        return (0, 0, 0)
+    instances = [it for it in (info.get("instances") or []) if isinstance(it, dict)]
+    ready = sum(1 for it in instances if it.get("ready"))
+    try:
+        configured = int((info.get("group") or {}).get("replicas") or 0)
+    except (TypeError, ValueError):
+        configured = 0
+    return (ready, len(instances) - ready, max(0, configured - len(instances)))
+
+
+def strip_counts(snaps: dict[str, Any] | None) -> tuple[int, int, int]:
+    """The strip's three counts, summed over every profile's snapshot."""
+    out = [0, 0, 0]
+    for info in (snaps or {}).values():
+        for i, n in enumerate(container_counts(info)):
+            out[i] += n
+    return (out[0], out[1], out[2])
+
+
 def _instance_rank(it: dict[str, Any]) -> int:
     st = _instance_state(it)
     if st == "downloading":

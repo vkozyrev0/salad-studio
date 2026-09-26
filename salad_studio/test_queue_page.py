@@ -134,6 +134,30 @@ class QueuePage(unittest.TestCase):
         self.app._refresh_queue_page()
         self.assertEqual(self.app.queue_empty_lbl.winfo_manager(), "", "the empty state must go")
 
+    def test_the_render_tick_puts_a_waiting_request_on_the_page(self) -> None:
+        """Generate's own 2 s tick refreshes the page, not just the 15 s probe.
+
+        The report this pins: a request whose container was still starting left
+        the Queue page empty, so the press looked like it did nothing. The row
+        has to appear while the request waits for its container.
+        """
+        self._open_page()
+        self.assertEqual(self.app.queue_tree.get_children(), ())
+        job = self.app.gen_queue.enqueue(
+            {"id": 7, "url": "https://gw.example/prompt", "bytes": 12, "profile": "klein"},
+            lambda _job: q.Attempt(status=200, accepted=True),
+            line="klein",
+        )
+        self.app._busy = True
+        self.addCleanup(setattr, self.app, "_busy", False)
+        self.app._tick_gen()
+        self.assertEqual(
+            self._row_state(job.id),
+            q.PENDING,
+            "the waiting request must be on the page from the render tick",
+        )
+        self.assertEqual(self.app.queue_empty_lbl.winfo_manager(), "", "the empty state must go")
+
     def test_the_page_renders_each_job_from_the_queues_records(self) -> None:
         accepted = self._accept(1, line="klein5090")
         failed = self._fail(2, message="invalid graph node 94", line="klein")

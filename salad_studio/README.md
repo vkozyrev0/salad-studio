@@ -77,16 +77,30 @@ the left and right.
   **CLIPLoader** (Qwen), not the last `LoraLoader`.
 - **Import**. Paste Civitai generation data and/or Comfy `nodes`/`links`
   JSON. Convert **routes** on graph presence first (Comfy nodes vs no
-  Comfy), then tooling (Draw Things / A1111 metadata). UUID subgraph
+  Comfy), then tooling (Draw Things / A1111 metadata). A Comfy paste whose
+  graph has **no sampling path** — no sampler, no diffusion-model loader, no
+  text encode, so an image-processing pass such as the SeedVR2 upscale
+  workflow image 125073040 carries — is built from the generation data
+  instead of being converted as a graph, because that graph cannot become a
+  request; a paste with neither still converts as a graph. UUID subgraph
   flatten assigns unique link ids and skips muted (mode 4) copies;
   nodes not on the SaveImage path (notes, Fast Groups Bypasser,
   unused inlined loaders) are dropped as orphans. Local LoRA
   filenames are searched on Civitai (including ``_CE_`` trainer names
   and sibling versions on the same model); a miss is omitted from the
-  graph so Convert still succeeds. Convert rewrites Salad-missing nodes: ``ReferenceLatent`` is
-  dropped (CLIP encode → CFG positive), ``ConditioningZeroOut`` becomes
+  graph so Convert still succeeds. Convert rewrites Salad-missing nodes:
+  ``ReferenceLatent`` is dropped (CLIP encode → CFG positive),
+  ``ConditioningZeroOut`` becomes
   an empty CLIP encode, ``full_encoder_small_decoder`` → ``flux2-vae``,
-  and ``Color Correct GPU (mtb)`` is bypassed. Civitai
+  and ``Color Correct GPU (mtb)`` is bypassed. The LoraManager pack
+  (image 123550044) is rewritten the same way: its ``Lora Loader
+  (LoraManager)`` becomes a stock ``LoraLoader`` chain carrying the stack from
+  its own widget (name and strength per entry), its prompt / trigger-word /
+  debug helpers are dropped, and the prompt text they fed is written onto the
+  ``CLIPTextEncode`` they pointed at, from the generation data. Generate POSTs a
+  copy with no pack type in it; a LoRA still holding a local filename after the
+  Civitai lookup is omitted from that copy (the container loads LoRAs from
+  Civitai URLs only) and the editor keeps it. Civitai
   ``flux-2-klein-9b-fp8mixed`` maps to replica ``flux-2-klein-9b-fp8``.
   KSampler ``control_after_generate`` (`randomize`/`fixed`) is not packed
   as steps. When a Civitai Comfy graph has no ``LoraLoader`` but Resources
@@ -228,17 +242,35 @@ the left and right.
   The queue also owns the containers' **lifecycle**, so nothing has to be started
   or stopped by hand. Before a request's first attempt, the queue asks Salad to
   **start** the group behind that profile's gateway when the group is stopped
-  (`POST …/containers/{name}/start`), once per stopped container: a retry does
-  not start it again, a container that is already running is left alone, an
-  unknown state is left alone rather than guessed at, and a start Salad rejects
-  fails that request with the control plane's own reason instead of hanging.
-  The start uses the Salad token the app already stores. When a profile's last
-  request has finished, the queue **stops** its group once it has been idle for
-  the `queue.idle_stop_s` timeout in the metadata document (3600 seconds, one
-  hour, by default), from the app's existing 15 s tick: a profile with a request
-  queued or in flight is never stopped, a stopped container leaves the idle set
-  so a second check cannot stop it twice, and a stop Salad rejects is retried
-  only after another full timeout.
+  (`POST …/containers/{name}/start`): a container that is already running is
+  left alone, an unknown state is left alone rather than guessed at, and a start
+  Salad rejects fails that request with the control plane's own reason instead
+  of hanging. One request asks at most once — the generator asks before its own
+  readiness wait, and the dispatch that follows does not ask again.
+  The start uses the Salad token the app already stores. **Generate is not
+  refused for a stopped group**: the request is dispatched, the queue starts the
+  container it routes to, and the render waits for that container's `/ready`
+  before it POSTs — a cold start is minutes (allocate, pull, boot Comfy, finish
+  the prefetch; a replica has been seen still prefetching ten minutes in), so the
+  wait allows thirty minutes of 10 s probes and a container
+  that never answers fails the request naming the profile, the gateway and the
+  last status it saw. Only a replica that is *gone* — failed, or an origin that
+  does not answer — is refused up front, because no start can fix it. The state
+  is read again at every dispatch, so a container stopped since the last render
+  (the idle stop, the Salad console, a crash) is started for the next request.
+  When a profile's last request has finished, the queue **stops** its group once
+  it has been idle for the `queue.idle_stop_s` timeout in the metadata document
+  (3600 seconds, one hour, by default), from the app's existing 15 s tick: a
+  profile with a request queued or in flight is never stopped, a stopped
+  container leaves the idle set so a second check cannot stop it twice, and a
+  stop Salad rejects is retried only after another full timeout. The record of which containers the app owns
+  and when each last had work is written to `~/.config/salad/studio-queue.json`,
+  so **closing and reopening Studio does not forget a container**: the idle hour
+  still arrives, and the first tick past it asks for the stop. A container found
+  running at startup is adopted too (the idle clock starts when it is first seen
+  and is not reset by later ticks), and a request that runs through the queue
+  claims its container whatever the group-state read said. The check runs off the
+  Tk thread, so the window never freezes while the control plane is called.
 
 Klein group, prefetch image, Civitai-vs-Comfy quality, and startup
 probes: [`docs/workflow/15-salad-flux2-klein-group.md`](../docs/workflow/15-salad-flux2-klein-group.md).
@@ -338,7 +370,7 @@ the real freeze path the moment that gap is closed.
 Two test commands, and the second is not part of the first:
 
 ```
-python -m unittest discover -s salad_studio -p "test_*.py"   # 683 tests, ~5 min
+python -m unittest discover -s salad_studio -p "test_*.py"   # 725 tests, ~6 min
 python test_salad_comfy_live_findings.py                     # root structural checks
 ```
 

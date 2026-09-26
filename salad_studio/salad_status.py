@@ -642,6 +642,36 @@ def generate_block_reason(info: dict[str, Any]) -> str | None:
     return f"Replica is not Ready ({word}). {detail}"
 
 
+# Badge words that mean the replica is gone rather than on its way up. Nothing
+# the app can ask for fixes either: Salad does not start a failed group, and a
+# down origin is a container that is running but not answering.
+_GONE_WORDS = ("Failed", "Down")
+
+
+def generate_dispatch_reason(
+    info: dict[str, Any] | None, *, word: str = ""
+) -> str | None:
+    """Why Generate must not dispatch at all. None means dispatch it.
+
+    A **stopped** group is dispatchable: the queue starts the container the
+    request routes to and the generator waits for its ``/ready`` before it
+    POSTs. So is one that is still coming up (Creating, Allocating,
+    Downloading, Starting) — the start is a no-op there and the same wait covers
+    it. Only a replica that is gone is refused, with the badge's own reason.
+    """
+    label = short_status(info) if info else str(word or "").strip()
+    if label == "Ready" or label.split()[:1] == ["Ready"]:
+        return None
+    if not label.startswith(_GONE_WORDS):
+        return None
+    # A "Down" that came from a probe which never answered says nothing about the
+    # group: the badge has to say something, but the request is dispatched and
+    # the queue reads the group's state itself, which is fresher than the badge.
+    if info and info.get("error") and not (info.get("group") or {}):
+        return None
+    return generate_block_reason(info or {}) or f"Replica is {label}."
+
+
 def attach_last_log(info: dict[str, Any], key: str) -> dict[str, Any]:
     g = info.get("group") or {}
     name = str(g.get("name") or "")
@@ -711,6 +741,22 @@ def stop_container_group(
     return _group_action("stop", gateway, key, sender=sender, group=group)
 
 
+def group_state(
+    gateway: str, key: str, *, sender: Any | None = None, group: str = ""
+) -> str:
+    """The group's own ``current_state.status``: ``running``, ``stopped``, ``pending``…
+
+    ``""`` when there is no group or the read failed. The readiness wait needs
+    this because a **booting** replica answers 404 on ``/ready`` (the route is
+    not registered yet), while a running one that has no probe endpoint answers
+    the same 404 and should not be waited on.
+    """
+    found = find_group_by_gateway(gateway, key, sender=sender, group=group)
+    if found is None:
+        return ""
+    return str((found.get("current_state") or {}).get("status") or "").strip().lower()
+
+
 def group_is_running(
     gateway: str, key: str, *, sender: Any | None = None, group: str = ""
 ) -> bool | None:
@@ -755,6 +801,13 @@ class ContainerLifecycle:
         if not key or not gateway:
             return None
         return group_is_running(gateway, key, sender=self._sender)
+
+    def group_state(self, profile: str, gateway: str) -> str:
+        """The group's raw state string, or "" when it cannot be read."""
+        key = self._token()
+        if not key or not gateway:
+            return ""
+        return group_state(gateway, key, sender=self._sender)
 
     def start(self, profile: str, gateway: str) -> tuple[int, str]:
         return self._act("start", profile, gateway)

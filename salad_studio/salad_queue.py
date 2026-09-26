@@ -27,6 +27,7 @@ import json
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 import studio_meta
@@ -44,6 +45,14 @@ RUNNING = "running"
 ACCEPTED = "accepted"
 CANCELLED = "cancelled"
 
+# Which containers this app has used, and when each last had work. The idle stop
+# is the app's job, so the record has to outlive the process: a restart used to
+# forget every container it had started, and the idle hour then never arrived.
+LEDGER_PATH = Path.home() / ".config" / "salad" / "studio-queue.json"
+LEDGER_VERSION = 1
+# A stop that comes back "no such group" is not retried forever.
+GONE_CODES = (404,)
+
 # The container is not available yet: replica still starting, gateway busy, or
 # Cloudflare cannot reach the origin. Nothing was accepted, so retrying later
 # submits no duplicate.
@@ -53,6 +62,57 @@ BUSY_CODES = (502, 503, 520, 521, 522, 523)
 TERMINAL_CODES = (504, 524)
 MAX_ATTEMPTS = 6
 RETRY_SLEEP_S = 8
+
+
+def load_ledger(path: Path | None) -> dict[str, dict[str, Any]]:
+    """The container records: profile to ``{gateway, last_active}`` (epoch seconds).
+
+    A missing, unreadable or hand-broken file reads as "no records"; the app
+    then adopts the containers it finds running, which lands in the same place
+    as a first run.
+    """
+    if path is None:
+        return {}
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return {}
+    rows = data.get("containers") if isinstance(data, dict) else None
+    if not isinstance(rows, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for name, row in rows.items():
+        if not isinstance(row, dict):
+            continue
+        try:
+            last = float(row.get("last_active") or 0.0)
+        except (TypeError, ValueError):
+            last = 0.0
+        out[str(name)] = {"gateway": str(row.get("gateway") or ""), "last_active": last}
+    return out
+
+
+def save_ledger(path: Path | None, records: dict[str, dict[str, Any]]) -> str:
+    """Write the records. Returns ``""``, or why it could not be written."""
+    if path is None:
+        return ""
+    target = Path(path)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(target.name + ".tmp")
+        tmp.write_text(
+            json.dumps({"version": LEDGER_VERSION, "containers": records}, indent=2, sort_keys=True)
+            + "\n",
+            encoding="utf-8",
+        )
+        tmp.replace(target)
+    except OSError as e:
+        return str(e)
+    return ""
 
 
 @dataclass(frozen=True)
@@ -218,10 +278,14 @@ class SaladQueue:
         lifecycle: Any | None = None,
         idle_stop_s: int | None = None,
         meta: dict[str, Any] | None = None,
+        ledger_path: Path | None = None,
     ) -> None:
         self.on_log = on_log
         self._sleep = sleep or time.sleep
-        self._now = now or time.monotonic
+        # Epoch seconds by default, not a monotonic counter: the ownership record
+        # is written to disk and read back by a later process, so its timestamps
+        # have to mean the same thing in both.
+        self._now = now or time.time
         self.retry_sleep_s = retry_sleep_s
         self.max_attempts = max(1, int(max_attempts))
         # The container handle: is_running / start / stop. None means this queue
@@ -230,15 +294,29 @@ class SaladQueue:
         # None means "read the timeout from the metadata document".
         self._idle_stop_s = idle_stop_s
         self.meta = meta
+        # None means "keep the record in memory only".
+        self.ledger_path = Path(ledger_path) if ledger_path is not None else None
         self._cond = threading.Condition()
         self._lines: dict[str, list[Job]] = {}
         self._jobs: list[Job] = []
         self._next_id = 1
-        # Per profile: the container we asked for, its gateway, and when its last
-        # request finished. The idle check reads these and nothing else.
-        self._started: set[str] = set()
-        self._gateways: dict[str, str] = {}
-        self._last_active: dict[str, float] = {}
+        # Per profile: the container we own (persisted), its gateway, and when its
+        # last request finished. The idle check reads these and nothing else. They
+        # are seeded from the ledger, so a reopened app still knows what to stop.
+        records = load_ledger(self.ledger_path)
+        self._owned: set[str] = set(records)
+        self._gateways: dict[str, str] = {
+            name: row["gateway"] for name, row in records.items() if row["gateway"]
+        }
+        self._last_active: dict[str, float] = {
+            name: row["last_active"] for name, row in records.items() if row["last_active"]
+        }
+        if records:
+            self._log(
+                "info",
+                f"queue: {len(records)} container record(s) from {self.ledger_path}: "
+                + ", ".join(sorted(records)),
+            )
 
     # -- the line ---------------------------------------------------------
     def _log(self, level: str, message: str) -> None:
@@ -312,12 +390,16 @@ class SaladQueue:
         attempt: Callable[[Job], Attempt],
         *,
         line: str = "",
+        ensure: bool = True,
     ) -> Job:
         """Queue ``request`` on its profile's line, wait for its turn, run it.
 
         ``attempt(job)`` performs one transport attempt and returns an
         :class:`Attempt`; the queue calls it again only while the outcome is
-        ``busy``, so the transport sees one call per real POST.
+        ``busy``, so the transport sees one call per real POST. ``ensure=False``
+        is for a caller that already asked :meth:`ensure_container` and waited
+        for readiness itself (the generator does), so one request never asks for
+        the same container twice.
         """
         job = self.enqueue(request, attempt, line=line)
         try:
@@ -328,7 +410,17 @@ class SaladQueue:
                     f"queue: request {job.id} was cancelled before it was submitted",
                 )
                 return job
-            refusal = self._ensure_running(job)
+            if job.line:
+                # Running a request through the queue is what makes this app
+                # responsible for stopping that container later, whatever the
+                # state read says: an inconclusive read (pending, failed, an API
+                # error) must not exempt it for the rest of the session.
+                self.adopt(job.line, request_gateway(job.request))
+            refusal = (
+                self.ensure_container(job.line, request_gateway(job.request))
+                if ensure
+                else ""
+            )
             if refusal:
                 job.state = FAILED
                 job.reason = refusal
@@ -340,45 +432,98 @@ class SaladQueue:
         self._note_activity(job)
         return job
 
-    # -- container lifecycle ----------------------------------------------
-    def _ensure_running(self, job: Job) -> str:
-        """Ask for this request's container once, before its first attempt.
+    # -- container ownership ----------------------------------------------
+    def records(self) -> dict[str, dict[str, Any]]:
+        """The persisted view: profile to its gateway and last-activity time."""
+        with self._cond:
+            return {
+                line: {
+                    "gateway": self._gateways.get(line, ""),
+                    "last_active": self._last_active.get(line, 0.0),
+                }
+                for line in sorted(self._owned)
+            }
 
-        Returns ``""`` when the request may go ahead, or the reason it must not:
-        a start the control plane rejected. A container that is already running
-        is left alone, an unknown state is left alone (starting on a guess could
-        double-start), and a profile whose start was already asked for is not
-        asked again, however many attempts or retries the request makes.
+    def _save_ledger(self) -> None:
+        if self.ledger_path is None:
+            return
+        reason = save_ledger(self.ledger_path, self.records())
+        if reason:
+            self._log("warn", f"queue: could not write {self.ledger_path}: {reason}")
+
+    def adopt(self, profile: str, gateway: str = "", *, last_active: float | None = None) -> bool:
+        """Own a container: this app is now the one that stops it when it idles.
+
+        Returns True when that was news. The first adoption starts the idle
+        clock; re-adopting an owned container only refreshes its gateway, so a
+        check every fifteen seconds cannot keep pushing the stop away.
         """
-        if self.lifecycle is None or not job.line or job.line in self._started:
+        name = str(profile or "").strip()
+        if not name:
+            return False
+        with self._cond:
+            fresh = name not in self._owned
+            self._owned.add(name)
+            if gateway:
+                self._gateways[name] = str(gateway)
+            if fresh or last_active is not None:
+                self._last_active[name] = self._now() if last_active is None else float(last_active)
+            elif name not in self._last_active:
+                self._last_active[name] = self._now()
+        if fresh:
+            self._log("info", f"queue: {name} is tracked for the idle stop")
+            self._save_ledger()
+        return fresh
+
+    # -- container lifecycle ----------------------------------------------
+    def ensure_container(self, profile: str, gateway: str) -> str:
+        """Start ``profile``'s group when it reads stopped. Returns a refusal or "".
+
+        The state is read **every** time a request is about to be submitted: a
+        container started earlier in the session may have been stopped since
+        (the idle stop, the Salad console, a crash), so an earlier start is not
+        evidence that it is still up. A group that is already running is left
+        alone, and an inconclusive read (pending, failed, an API error) starts
+        nothing: starting on a guess could double-start it.
+        """
+        name = str(profile or "").strip()
+        if self.lifecycle is None or not name or not gateway:
             return ""
-        gateway = request_gateway(job.request)
-        if not gateway:
-            return ""
-        running = self.lifecycle.is_running(job.line, gateway)
+        running = self.lifecycle.is_running(name, gateway)
         if running is True:
-            self._started.add(job.line)
             return ""
         if running is None:
             self._log(
                 "warn",
-                f"queue: {job.line} container state unknown; not starting it",
+                f"queue: {name} container state unknown; not starting it",
             )
             return ""
-        code, message = self.lifecycle.start(job.line, gateway)
+        code, message = self.lifecycle.start(name, gateway)
         code = int(code)
         if 200 <= code < 300:
-            self._started.add(job.line)
             self._log(
                 "info",
-                f"queue: asked Salad to start {job.line} (HTTP {code}); the "
-                "request waits for it to become ready",
+                f"queue: asked Salad to start {name} (HTTP {code}); the request "
+                "waits for it to become ready",
             )
             return ""
-        refusal = f"could not start the container for {job.line}: HTTP {code}"
+        refusal = f"could not start the container for {name}: HTTP {code}"
         if message:
             refusal += f" ({message})"
         return refusal
+
+    def group_state(self, profile: str, gateway: str) -> str:
+        """The group's raw state ("running", "stopped", "pending", …) or "".
+
+        The readiness wait uses this: a booting replica answers 404 on /ready,
+        the same as a running one that has no probe endpoint at all.
+        """
+        if self.lifecycle is None or not getattr(self.lifecycle, "group_state", None):
+            return ""
+        try:
+            return str(self.lifecycle.group_state(str(profile or ""), str(gateway or "")) or "")
+        except Exception:  # noqa: BLE001 - an unreadable state is "", not a crash
+            return ""
 
     def _note_activity(self, job: Job) -> None:
         """Remember when this profile last had a request finish."""
@@ -386,6 +531,7 @@ class SaladQueue:
             return
         with self._cond:
             self._last_active[job.line] = self._now()
+        self._save_ledger()
 
     def idle_timeout_s(self) -> int:
         """The idle-stop timeout: the injected value, else the metadata document."""
@@ -412,7 +558,7 @@ class SaladQueue:
             busy = {job.line for job in self._jobs if not job.terminal}
             due = [
                 line
-                for line in sorted(self._started)
+                for line in sorted(self._owned)
                 if line not in busy
                 and line in self._last_active
                 and self._now() - self._last_active[line] >= seconds
@@ -428,25 +574,41 @@ class SaladQueue:
         code, message = self.lifecycle.stop(line, gateway)
         code = int(code)
         if 200 <= code < 300:
-            with self._cond:
-                self._started.discard(line)
-                self._last_active.pop(line, None)
+            self._forget(line)
             self._log(
                 "info",
                 f"queue: stopped {line} after {seconds}s idle (HTTP {code})",
             )
             return True
+        if code in GONE_CODES:
+            # Nothing answers to that gateway any more, so there is nothing to
+            # stop and no reason to keep asking.
+            self._forget(line)
+            self._log(
+                "warn",
+                f"queue: {line} has no group to stop ({message or f'HTTP {code}'}); "
+                "dropping the record",
+            )
+            return False
         with self._cond:
             # Keep the container on the books but do not hammer the API: the next
             # attempt waits another full timeout.
             self._last_active[line] = self._now()
+        self._save_ledger()
         self._log("warn", f"queue: could not stop {line}: HTTP {code} {message}".strip())
         return False
 
-    def containers(self) -> dict[str, str]:
-        """The profiles whose container this queue started, and their gateways."""
+    def _forget(self, line: str) -> None:
         with self._cond:
-            return {line: self._gateways.get(line, "") for line in sorted(self._started)}
+            self._owned.discard(line)
+            self._last_active.pop(line, None)
+            self._gateways.pop(line, None)
+        self._save_ledger()
+
+    def containers(self) -> dict[str, str]:
+        """The profiles whose container this queue owns, and their gateways."""
+        with self._cond:
+            return {line: self._gateways.get(line, "") for line in sorted(self._owned)}
 
     def _run(self, job: Job, attempt: Callable[[Job], Attempt]) -> None:
         job.state = RUNNING

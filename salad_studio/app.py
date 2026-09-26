@@ -93,11 +93,14 @@ class SaladStudio(tk.Tk):
         # One line for every render, shared with the generator: a press while a
         # render is in flight waits its turn here instead of being dropped. The
         # lifecycle handle lets the queue start the container a request needs and
-        # stop it once it has sat idle past the metadata document's timeout.
+        # stop it once it has sat idle past the metadata document's timeout, and
+        # the ledger is what lets a reopened app still know what to stop.
         self.gen_queue = salad_queue.SaladQueue(
             on_log=self._on_queue_log,
             lifecycle=salad_status.ContainerLifecycle(self._salad_api_key),
+            ledger_path=salad_queue.LEDGER_PATH,
         )
+        self._idle_check_busy = False
         self._helper_busy = False
         self._token_probe_busy = False
         self._token_detail: dict[str, str] = {}
@@ -591,11 +594,34 @@ class SaladStudio(tk.Tk):
         self._check_salad_status(silent=True)
         # The existing tick also redraws the queue page, so a job that started
         # or finished since the last poll shows up without a manual Refresh, and
-        # runs the queue's idle check: a container that has sat unused past the
-        # metadata document's timeout is stopped from here, with no extra timer.
+        # asks the queue to stop a container that has sat idle past the metadata
+        # document's timeout. No new timer, and no new button.
         self._refresh_queue_page()
-        self.gen_queue.idle_check()
+        self._run_idle_check()
         self._schedule_salad_poll()
+
+    def _run_idle_check(self) -> None:
+        """Ask the queue about idle containers, off the Tk thread.
+
+        The check resolves a group over the API and may then POST a stop, so it
+        cannot run inside the tick: the window would freeze for as long as those
+        calls take. One check at a time.
+        """
+        if self._idle_check_busy:
+            return
+        self._idle_check_busy = True
+
+        def work() -> None:
+            try:
+                stopped = self.gen_queue.idle_check()
+                if stopped:
+                    self.log("info", f"Idle stop asked for {', '.join(stopped)}")
+            except Exception as e:  # noqa: BLE001 - a check must not kill the tick
+                self.log("warn", f"Queue idle check failed: {e}")
+            finally:
+                self._idle_check_busy = False
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _on_destroy_cancel_poll(self, e=None) -> None:
         # Child Destroy events bubble to the Tk root via bindtags. Ignore
@@ -709,6 +735,7 @@ class SaladStudio(tk.Tk):
                 self._salad_check_busy = False
                 active_word = "Unknown"
                 first_pid = targets[0][0] if targets else ""
+                self._last_snaps = dict(snaps)
                 for pid, (word_var, detail_var, lbl) in getattr(
                     self, "_replica_vars", {}
                 ).items():
@@ -717,6 +744,12 @@ class SaladStudio(tk.Tk):
                     detail = str(info.get("detail") or info.get("error") or "")
                     word_var.set(word)
                     detail_var.set(detail)
+                    # A group found running is one this app may have to stop: adopt
+                    # it, so a container left over from an earlier session (or one
+                    # started by hand) gets the idle stop too. Adoption starts the
+                    # idle clock; it does not reset it on later ticks.
+                    if str((info.get("group") or {}).get("status") or "").lower() == "running":
+                        self.gen_queue.adopt(pid, dict(targets).get(pid, ""))
                     try:
                         lbl.configure(fg=salad_status.color_for_status(word))
                     except tk.TclError:
@@ -3144,8 +3177,11 @@ class SaladStudio(tk.Tk):
                     base=lora_store.graph_label(str(cfg.get("graph") or "klein")),
                 )
             except (Exception, SystemExit) as e:
+                # A LoRA the store cannot register (a local filename that is not
+                # on Civitai) stays in the JSON and in the Import issues list;
+                # Generate omits it from the POST. Warning, not a dialog: a
+                # pasted graph can carry several of them.
                 self.log("warn", f"Could not add LoRA {name}: {e}")
-                messagebox.showerror("Salad Studio", f"Could not add LoRA {name}: {e}")
                 continue
             lid = str(item.get("id") or "")
             if lid and lid not in ids:
@@ -3770,14 +3806,21 @@ class SaladStudio(tk.Tk):
             return
         word = (self.var_salad_status.get() or "").strip()
         if (word or "").split()[:1] != ["Ready"]:
-            try:
-                info = salad_status.snapshot_gateway(p.gateway, key)
-                reason = info.get("block") or salad_status.generate_block_reason(info)
-            except Exception:
-                reason = f"Replica is not Ready ({word or 'unknown'})."
-            self.log("warn", f"Generate blocked: {reason}")
-            messagebox.showinfo("Salad Studio", reason or "Replica is not Ready.")
-            return
+            # A stopped group is not a reason to refuse: the queue starts the
+            # container this request routes to and the generator waits for its
+            # /ready before it POSTs. Only a replica that is gone is refused,
+            # with the badge's own reason (salad_status owns that vocabulary).
+            snap = (getattr(self, "_last_snaps", None) or {}).get(p.name) or {}
+            reason = salad_status.generate_dispatch_reason(snap, word=word)
+            if reason:
+                self.log("warn", f"Generate blocked: {reason}")
+                messagebox.showinfo("Salad Studio", reason)
+                return
+            self.log(
+                "info",
+                f"{p.name} reads {word or 'unknown'}; the queue starts it if it is "
+                "stopped and waits for it to become ready",
+            )
         self._gen_jobs += 1
         first = self._gen_jobs == 1
         self._busy = True

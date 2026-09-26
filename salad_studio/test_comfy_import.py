@@ -3245,5 +3245,506 @@ class SaladMissingTypesSingleSource(unittest.TestCase):
         self.assertIn("SaveImage", types)
 
 
+class GraphCanSampleTest(unittest.TestCase):
+    """The pure decision: does this graph generate an image, or only process one?"""
+
+    @staticmethod
+    def _graph(*classes: str) -> dict:
+        return {
+            "prompt": {
+                str(i): {"class_type": cls, "inputs": {}} for i, cls in enumerate(classes)
+            }
+        }
+
+    def test_a_sampler_means_the_graph_generates(self) -> None:
+        for cls in ("KSampler", "KSamplerAdvanced", "SamplerCustomAdvanced", "KSamplerSelect"):
+            with self.subTest(cls=cls):
+                self.assertTrue(ci.graph_can_sample(self._graph(cls)))
+
+    def test_a_diffusion_model_loader_means_the_graph_generates(self) -> None:
+        for cls in ("UNETLoader", "CheckpointLoaderSimple", "DiffusionModelLoader"):
+            with self.subTest(cls=cls):
+                self.assertTrue(ci.graph_can_sample(self._graph(cls)))
+
+    def test_a_text_encode_means_the_graph_generates(self) -> None:
+        self.assertTrue(ci.graph_can_sample(self._graph("CLIPTextEncode")))
+
+    def test_an_image_processing_pass_does_not_generate(self) -> None:
+        """Image 125073040's stored workflow is exactly this: a SeedVR2 upscale."""
+        upscaler = self._graph(
+            "LoadImage",
+            "ImageScaleToTotalPixels",
+            "SeedVR2LoadDiTModel",
+            "SeedVR2LoadVAEModel",
+            "SeedVR2VideoUpscaler",
+            "SaveImage",
+            "Image Comparer (rgthree)",
+            "Fast Groups Bypasser (rgthree)",
+        )
+        self.assertFalse(ci.graph_can_sample(upscaler))
+
+    def test_an_empty_or_unparseable_graph_does_not_generate(self) -> None:
+        self.assertFalse(ci.graph_can_sample({}))
+        self.assertFalse(ci.graph_can_sample({"prompt": {}}))
+        self.assertFalse(ci.graph_can_sample(None))
+        self.assertFalse(ci.graph_can_sample({"nodes": [], "links": []}))
+
+    def test_the_ui_workflow_shape_is_read_too(self) -> None:
+        """The paste from Civitai is a UI workflow (a nodes list), not an API prompt."""
+        ui = {"nodes": [{"id": 1, "type": "SeedVR2VideoUpscaler"}], "links": []}
+        self.assertFalse(ci.graph_can_sample(ui))
+        ui_gen = {"nodes": [{"id": 1, "type": "KSampler"}], "links": []}
+        self.assertTrue(ci.graph_can_sample(ui_gen))
+
+
+class CivitaiImage125073040Test(unittest.TestCase):
+    """The recorded image converts into a runnable Klein request, offline."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        path = HERE / "civitai_fixtures" / "image_125073040.json"
+        cls.fixture = json.loads(path.read_text(encoding="utf-8"))
+
+    def _convert(self) -> dict:
+        import lora_store as ls
+
+        # The metadata carries the image URL, so the shipped path fetches the
+        # image; serve it from the fixture instead of the network.
+        with patch.object(ls, "fetch_civitai_image", return_value=self.fixture["image"]):
+            return ci.import_to_request(
+                workflow_text=self.fixture["workflow"],
+                metadata_text=self.fixture["metadata"],
+            )
+
+    def test_the_upscaler_paste_is_not_converted_as_a_graph(self) -> None:
+        """The stored workflow is an upscale pass: converting it as a graph fails."""
+        obj = ci._parse_json_blob(self.fixture["workflow"])
+        self.assertGreater(ci.comfy_node_count(obj), 0, "the paste does carry Comfy nodes")
+        self.assertFalse(
+            ci.graph_can_sample(obj),
+            "this workflow has no sampler, no diffusion loader and no text encode",
+        )
+
+    def test_it_converts_to_the_site_prompt_and_both_loras(self) -> None:
+        body = self._convert()
+        prompt = body["prompt"]
+        classes = [node.get("class_type") for node in prompt.values()]
+
+        positives = [
+            node["inputs"].get("text")
+            for node in prompt.values()
+            if node.get("class_type") == "CLIPTextEncode"
+        ]
+        self.assertIn(
+            "realistic, 将画面变为真实的照片",
+            positives,
+            "the site prompt must be the positive CLIP text",
+        )
+
+        loras = [
+            node["inputs"].get("lora_name")
+            for node in prompt.values()
+            if node.get("class_type") == "LoraLoader"
+        ]
+        self.assertEqual(len(loras), 2, f"both LoRAs must be loaders, got {loras}")
+        for version in ("2633750", "2635669"):
+            self.assertTrue(
+                any(version in str(name) for name in loras),
+                f"LoRA version {version} is missing from {loras}",
+            )
+
+        unets = [
+            node["inputs"].get("unet_name")
+            for node in prompt.values()
+            if node.get("class_type") == "UNETLoader"
+        ]
+        self.assertEqual(unets, ["flux-2-klein-9b-fp8.safetensors"])
+
+        for cls in (
+            "KSamplerSelect",
+            "Flux2Scheduler",
+            "CFGGuider",
+            "EmptyFlux2LatentImage",
+            "SamplerCustomAdvanced",
+            "VAEDecode",
+            "SaveImage",
+        ):
+            self.assertIn(cls, classes, f"the sampling chain is missing {cls}")
+
+        self.assertNotIn(
+            "SeedVR2VideoUpscaler",
+            classes,
+            "the upscaler fragment must not be what this image imports to",
+        )
+
+    def test_no_input_points_at_a_node_the_graph_does_not_contain(self) -> None:
+        body = self._convert()
+        prompt = body["prompt"]
+        ids = set(prompt)
+        for nid, node in prompt.items():
+            for key, value in (node.get("inputs") or {}).items():
+                if isinstance(value, list) and value and isinstance(value[0], str):
+                    with self.subTest(node=nid, input=key):
+                        self.assertIn(
+                            value[0],
+                            ids,
+                            f"node {nid} input {key} points at missing node {value[0]}",
+                        )
+
+
+class ImportDispatchRoutesTest(unittest.TestCase):
+    """A paste with no sampling path falls back to the generation data."""
+
+    METADATA = (
+        "a lighthouse cat\n"
+        "Steps: 20, CFG scale: 1, Sampler: Euler, Seed: 1, "
+        "Model: flux-2-klein-9b-fp8, width: 1024, height: 1408, Tools: ComfyUI"
+    )
+
+    def test_an_upscaler_graph_with_generation_data_uses_the_generation_data(self) -> None:
+        upscaler = json.dumps(
+            {
+                "nodes": [
+                    {"id": 1, "type": "LoadImage"},
+                    {"id": 2, "type": "SeedVR2VideoUpscaler"},
+                    {"id": 3, "type": "SaveImage"},
+                ],
+                "links": [],
+            }
+        )
+        body = ci.import_to_request(workflow_text=upscaler, metadata_text=self.METADATA)
+        classes = [node.get("class_type") for node in body["prompt"].values()]
+        self.assertIn("CLIPTextEncode", classes)
+        self.assertIn("SamplerCustomAdvanced", classes)
+        self.assertNotIn("SeedVR2VideoUpscaler", classes)
+
+    def test_a_graph_with_a_sampler_still_converts_as_a_graph(self) -> None:
+        graph = json.dumps(
+            {
+                "prompt": {
+                    "10": {"class_type": "UNETLoader", "inputs": {"unet_name": "x.safetensors"}},
+                    "11": {"class_type": "KSampler", "inputs": {"seed": 1}},
+                    "12": {"class_type": "SaveImage", "inputs": {"images": ["11", 0]}},
+                }
+            }
+        )
+        body = ci.import_to_request(workflow_text=graph, metadata_text=self.METADATA)
+        classes = [node.get("class_type") for node in body["prompt"].values()]
+        self.assertIn("KSampler", classes, "a real generation graph must still convert as one")
+
+    def test_a_lone_diffusion_loader_still_converts_as_a_graph(self) -> None:
+        graph = json.dumps(
+            {"prompt": {"10": {"class_type": "UNETLoader", "inputs": {"unet_name": "x.safetensors"}}}}
+        )
+        body = ci.import_to_request(workflow_text=graph, metadata_text=self.METADATA)
+        self.assertEqual(len(body["prompt"]), 1, "the lone loader is the whole graph")
+
+    def test_an_empty_node_list_still_uses_the_generation_data(self) -> None:
+        body = ci.import_to_request(
+            workflow_text='{"nodes": []}', metadata_text=self.METADATA
+        )
+        self.assertIn("CLIPTextEncode", [n.get("class_type") for n in body["prompt"].values()])
+
+
+class LoraManagerRuleTest(unittest.TestCase):
+    """The pack's rewrite on hand-written graphs, keyed to the types, not an image."""
+
+    @staticmethod
+    def _node(nid, ntype, widgets=None, inputs=None, outputs=None):
+        return {
+            "id": nid,
+            "type": ntype,
+            "mode": 0,
+            "widgets_values": list(widgets or []),
+            "inputs": list(inputs or []),
+            "outputs": list(outputs or []),
+        }
+
+    @staticmethod
+    def _inp(name, kind, link=None):
+        return {"name": name, "type": kind, "link": link}
+
+    @staticmethod
+    def _link(lid, origin, oslot, target, tslot, kind=""):
+        return [lid, origin, oslot, target, tslot, kind]
+
+    def _pack_graph(self, *, clip_consumer: bool = False, pack_model_out: bool = False) -> dict:
+        """A stock Klein chain with the pack's loader, prompt and trigger nodes.
+
+        ``clip_consumer`` wires the pack's CLIP output into the stock encode's
+        ``clip`` (the case that would dangle if the loader were merely dropped),
+        and ``pack_model_out`` gives its MODEL output a consumer.
+        """
+        nodes = [
+            self._node(1, "UNETLoader", ["flux-2-klein-9b-fp8.safetensors", "default"],
+                       outputs=[{"name": "MODEL", "type": "MODEL"}]),
+            self._node(2, "CLIPLoader", ["qwen_3_8b_fp8mixed.safetensors", "flux2", "default"],
+                       outputs=[{"name": "CLIP", "type": "CLIP"}]),
+            self._node(3, "VAELoader", ["flux2-vae.safetensors"],
+                       outputs=[{"name": "VAE", "type": "VAE"}]),
+            self._node(4, "KSamplerSelect", ["euler"],
+                       outputs=[{"name": "SAMPLER", "type": "SAMPLER"}]),
+            self._node(5, "Flux2Scheduler", [4, 896, 1152],
+                       outputs=[{"name": "SIGMAS", "type": "SIGMAS"}]),
+            self._node(6, "EmptyFlux2LatentImage", [896, 1152, 1],
+                       outputs=[{"name": "LATENT", "type": "LATENT"}]),
+            self._node(7, "RandomNoise", [1], outputs=[{"name": "NOISE", "type": "NOISE"}]),
+            self._node(9, "VAEDecode",
+                       inputs=[self._inp("samples", "LATENT", 30), self._inp("vae", "VAE", 31)],
+                       outputs=[{"name": "IMAGE", "type": "IMAGE"}]),
+            self._node(10, "SaveImage", ["klein"],
+                       inputs=[self._inp("images", "IMAGE", 32)]),
+            self._node(20, "Lora Loader (LoraManager)",
+                       ["<lora:alpha-klein-v1:1.00> <lora:beta-klein-v2:0.50>", []],
+                       inputs=[self._inp("model", "MODEL", 20), self._inp("clip", "CLIP", 21)],
+                       outputs=[{"name": "MODEL", "type": "MODEL"},
+                                {"name": "CLIP", "type": "CLIP"},
+                                {"name": "trigger_words", "type": "STRING"}]),
+            self._node(21, "Prompt (LoraManager)", [""],
+                       inputs=[self._inp("clip", "CLIP", 22), self._inp("text", "STRING", 23)],
+                       outputs=[{"name": "CONDITIONING", "type": "CONDITIONING"},
+                                {"name": "PROMPT", "type": "STRING"}]),
+            self._node(22, "TriggerWord Toggle (LoraManager)", [True],
+                       inputs=[self._inp("trigger_words", "STRING", 24)],
+                       outputs=[{"name": "filtered", "type": "STRING"}]),
+            self._node(23, "JoinStringMulti", [2, " ", False, None],
+                       inputs=[self._inp("string_1", "STRING", 25), self._inp("string_2", "STRING", 26)],
+                       outputs=[{"name": "string", "type": "STRING"}]),
+            self._node(24, "ImpactWildcardProcessor", ["a hand-written prompt", "", "populate", 1],
+                       outputs=[{"name": "processed text", "type": "STRING"}]),
+            self._node(25, "CLIPTextEncode", [],
+                       inputs=[self._inp("clip", "CLIP", 27), self._inp("text", "STRING", 28)],
+                       outputs=[{"name": "CONDITIONING", "type": "CONDITIONING"}]),
+            self._node(8, "CFGGuider", [1],
+                       inputs=[self._inp("model", "MODEL", 29),
+                               self._inp("positive", "CONDITIONING", 33),
+                               self._inp("negative", "CONDITIONING", 34)],
+                       outputs=[{"name": "GUIDER", "type": "GUIDER"}]),
+            self._node(11, "SamplerCustomAdvanced", [],
+                       inputs=[self._inp("noise", "NOISE", 35), self._inp("guider", "GUIDER", 36),
+                               self._inp("sampler", "SAMPLER", 37), self._inp("sigmas", "SIGMAS", 38),
+                               self._inp("latent_image", "LATENT", 39)],
+                       outputs=[{"name": "output", "type": "LATENT"}]),
+        ]
+        links = [
+            self._link(20, 1, 0, 20, 0, "MODEL"),
+            self._link(21, 2, 0, 20, 1, "CLIP"),
+            self._link(22, 20, 1, 21, 0, "CLIP"),
+            self._link(24, 20, 2, 22, 0, "STRING"),
+            self._link(23, 22, 0, 21, 1, "STRING"),
+            self._link(25, 24, 0, 23, 0, "STRING"),
+            self._link(26, 21, 1, 23, 1, "STRING"),
+            self._link(27, 2, 0, 25, 0, "CLIP"),
+            self._link(28, 23, 0, 25, 1, "STRING"),
+            self._link(29, 1, 0, 8, 0, "MODEL"),
+            self._link(30, 11, 0, 9, 0, "LATENT"),
+            self._link(31, 3, 0, 9, 1, "VAE"),
+            self._link(32, 9, 0, 10, 0, "IMAGE"),
+            self._link(33, 25, 0, 8, 1, "CONDITIONING"),
+            self._link(34, 25, 0, 8, 2, "CONDITIONING"),
+            self._link(35, 7, 0, 11, 0, "NOISE"),
+            self._link(36, 8, 0, 11, 1, "GUIDER"),
+            self._link(37, 4, 0, 11, 2, "SAMPLER"),
+            self._link(38, 5, 0, 11, 3, "SIGMAS"),
+            self._link(39, 6, 0, 11, 4, "LATENT"),
+        ]
+        if clip_consumer:
+            # The stock encode takes its CLIP from the pack's loader.
+            text_encode = next(n for n in nodes if n["type"] == "CLIPTextEncode")
+            text_encode["inputs"][0]["link"] = 22
+            links[2] = self._link(22, 20, 1, 25, 0, "CLIP")
+        if pack_model_out:
+            guider = next(n for n in nodes if n["type"] == "CFGGuider")
+            guider["inputs"][0]["link"] = 40
+            links.append(self._link(40, 20, 0, 8, 0, "MODEL"))
+        return {"nodes": nodes, "links": links}
+
+    def _import(self, graph: dict, prompt_text: str = "a hand-written prompt") -> dict:
+        import lora_store as ls
+
+        body = ci.import_to_request(
+            workflow_text=json.dumps(graph),
+            metadata_text=(
+                f"{prompt_text}\nNegative prompt: blurry\n"
+                "Steps: 4, CFG scale: 1, Sampler: Euler, Seed: 7, "
+                "Model: flux-2-klein-9b-fp8, width: 896, height: 1152, Tools: ComfyUI"
+            ),
+        )
+        return body
+
+    def test_the_pack_loader_becomes_a_stock_chain_with_its_stack(self) -> None:
+        prompt = self._import(self._pack_graph())["prompt"]
+        classes = [node.get("class_type") for node in prompt.values()]
+        self.assertNotIn("Lora Loader (LoraManager)", classes)
+        names = {
+            node["inputs"].get("lora_name"): node["inputs"].get("strength_model")
+            for node in prompt.values()
+            if node.get("class_type") == "LoraLoader"
+        }
+        self.assertEqual(sorted(names), ["alpha-klein-v1", "beta-klein-v2"])
+        self.assertEqual(names["alpha-klein-v1"], 1.0)
+        self.assertEqual(names["beta-klein-v2"], 0.5)
+        for cls in ("Prompt (LoraManager)", "TriggerWord Toggle (LoraManager)"):
+            self.assertNotIn(cls, classes)
+
+    def test_the_prompt_comes_through_as_literal_text(self) -> None:
+        body = self._import(self._pack_graph(), prompt_text="a forest at night")
+        prompt = body["prompt"]
+        texts = [
+            node["inputs"].get("text")
+            for node in prompt.values()
+            if node.get("class_type") == "CLIPTextEncode"
+        ]
+        self.assertIn("a forest at night", texts, "the pack-fed prompt must survive")
+        for node in prompt.values():
+            if node.get("class_type") == "CLIPTextEncode":
+                self.assertNotIsInstance(node["inputs"].get("text"), list)
+
+    def test_a_pack_clip_consumer_does_not_dangle(self) -> None:
+        copy = ci.prompt_for_salad_replica(
+            json.loads(json.dumps(self._import(self._pack_graph(clip_consumer=True))["prompt"]))
+        )
+        ids = set(copy)
+        for nid, node in copy.items():
+            for key, value in (node.get("inputs") or {}).items():
+                edge = ci._edge(value)
+                if edge:
+                    with self.subTest(node=nid, input=key):
+                        self.assertIn(edge[0], ids, f"#{nid}.{key} points at missing #{edge[0]}")
+
+    def test_a_consumed_pack_model_output_is_kept(self) -> None:
+        """When the author did wire the stack into the model, it stays there."""
+        prompt = self._import(self._pack_graph(pack_model_out=True))["prompt"]
+        guider = prompt["8"]["inputs"]["model"]
+        self.assertNotEqual(guider, ["1", 0], "the guider must take the LoRA chain")
+        chain = guider[0]
+        self.assertEqual(prompt[chain]["class_type"], "LoraLoader")
+
+    def test_a_graph_without_the_pack_is_left_alone(self) -> None:
+        graph = self._pack_graph()
+        graph["nodes"] = [n for n in graph["nodes"] if "LoraManager" not in str(n["type"])]
+        graph["links"] = [row for row in graph["links"] if row[3] not in (20, 21, 22, 23, 24)]
+        prompt = self._import(graph)["prompt"]
+        copy = ci.prompt_for_salad_replica(json.loads(json.dumps(prompt)))
+        self.assertEqual(set(copy), set(prompt), "nothing is dropped from a plain graph")
+        for nid, node in prompt.items():
+            self.assertEqual(copy[nid], node, f"#{nid} was rewritten without cause")
+
+
+class CivitaiImage123550044Test(unittest.TestCase):
+    """The LoraManager pack image: its LoRAs import, and the POST copy runs."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        path = HERE / "civitai_fixtures" / "image_123550044.json"
+        cls.fixture = json.loads(path.read_text(encoding="utf-8"))
+        cls.prompt_text = str(
+            ci.parse_civitai_metadata(cls.fixture["metadata"]).get("prompt") or ""
+        ).strip()
+
+    def _import(self) -> dict:
+        import lora_store as ls
+
+        with patch.object(ls, "fetch_civitai_image", return_value=self.fixture["image"]):
+            return ci.import_to_request(
+                workflow_text=self.fixture["workflow"],
+                metadata_text=self.fixture["metadata"],
+            )
+
+    @staticmethod
+    def _copy(prompt: dict) -> dict:
+        return ci.prompt_for_salad_replica(json.loads(json.dumps(prompt)))
+
+    def test_the_editor_keeps_the_pack_loras_as_stock_loaders(self) -> None:
+        prompt = self._import()["prompt"]
+        classes = [node.get("class_type") for node in prompt.values()]
+        self.assertNotIn(
+            "Lora Loader (LoraManager)", classes, "the pack's loader is rewritten"
+        )
+        loaders = {
+            str(node["inputs"].get("lora_name")): node["inputs"].get("strength_model")
+            for node in prompt.values()
+            if node.get("class_type") == "LoraLoader"
+        }
+        for name in (
+            "nipplediffusion-f2-klein-9b_v3",
+            "Flux Klein - NSFW v2",
+            "breast_slider_klein9b_v11_20260213_091528",
+            "pussydiffusion-f2-klein-9b_v2",
+        ):
+            self.assertIn(name, loaders, f"{name} missing from {sorted(loaders)}")
+        self.assertEqual(loaders["breast_slider_klein9b_v11_20260213_091528"], 0.1)
+        self.assertTrue(
+            any(name.startswith("https://") for name in loaders),
+            f"the resolvable LoRA must carry a Civitai URL: {sorted(loaders)}",
+        )
+
+    def test_the_copy_has_no_node_the_replica_cannot_instantiate(self) -> None:
+        copy = self._copy(self._import()["prompt"])
+        classes = sorted(
+            {str(node.get("class_type")) for node in copy.values() if isinstance(node, dict)}
+        )
+        self.assertEqual([c for c in classes if "LoraManager" in c], [])
+        self.assertEqual([c for c in classes if c in ci.SALAD_MISSING_TYPES], [])
+        for cls in (
+            "UNETLoader",
+            "CLIPLoader",
+            "VAELoader",
+            "KSamplerSelect",
+            "Flux2Scheduler",
+            "CFGGuider",
+            "EmptyFlux2LatentImage",
+            "SamplerCustomAdvanced",
+            "VAEDecode",
+            "SaveImage",
+        ):
+            self.assertIn(cls, classes, f"the sampling chain is missing {cls}")
+
+    def test_the_copy_has_no_input_pointing_at_a_missing_node(self) -> None:
+        copy = self._copy(self._import()["prompt"])
+        ids = set(copy)
+        for nid, node in copy.items():
+            for key, value in (node.get("inputs") or {}).items():
+                edge = ci._edge(value)
+                if edge:
+                    with self.subTest(node=nid, input=key):
+                        self.assertIn(edge[0], ids, f"#{nid}.{key} -> missing #{edge[0]}")
+
+    def test_the_copy_carries_the_prompt_as_literal_text(self) -> None:
+        copy = self._copy(self._import()["prompt"])
+        texts = [
+            node["inputs"].get("text")
+            for node in copy.values()
+            if node.get("class_type") == "CLIPTextEncode"
+        ]
+        self.assertIn(self.prompt_text, texts)
+        self.assertTrue(self.prompt_text, "the fixture must carry a prompt")
+
+    def test_the_copy_keeps_the_site_size(self) -> None:
+        """The graph sizes itself from the reference image; that chain is dropped."""
+        copy = self._copy(self._import()["prompt"])
+        meta = ci.parse_civitai_metadata(self.fixture["metadata"])
+        for nid, node in copy.items():
+            if node.get("class_type") in ("EmptyFlux2LatentImage", "Flux2Scheduler"):
+                with self.subTest(node=nid):
+                    self.assertEqual(node["inputs"].get("width"), meta["width"])
+                    self.assertEqual(node["inputs"].get("height"), meta["height"])
+
+    def test_the_copy_keeps_only_the_loras_the_replica_can_fetch(self) -> None:
+        """The container loads LoRAs from Civitai URLs only (manifest.yaml)."""
+        copy = self._copy(self._import()["prompt"])
+        kept = []
+        for nid, node in copy.items():
+            if node.get("class_type") not in ("LoraLoader", "LoraLoaderModelOnly"):
+                continue
+            name = str(node["inputs"].get("lora_name") or "")
+            kept.append(name)
+            self.assertTrue(
+                name.lower().startswith(("http://", "https://")),
+                f"#{nid} would 500 on the replica: {name!r}",
+            )
+        self.assertEqual(len(kept), 1, f"only the resolvable LoRA survives: {kept}")
+
+
 if __name__ == "__main__":
     unittest.main()

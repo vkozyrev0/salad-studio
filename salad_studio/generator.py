@@ -40,8 +40,17 @@ _RETRY_CODES = (502, 503, 504, 521, 522, 523, 524)
 # probe submits no work, so asking again cannot duplicate a render. The POST is
 # different and goes through salad_queue, which treats 504/524 as terminal.
 _PROMPT_TIMEOUT_S = 180
-_READY_TRIES = 8
-_READY_SLEEP_S = 8
+# The readiness wait covers a **cold** container start, which is the whole point
+# of it: a stopped group has to be allocated a GPU, pull the image if this node
+# has never run it, boot Comfy and finish the Hugging Face prefetch before
+# /ready answers. That is minutes, not seconds, and the prefetch dominates it:
+# measured 2026-09-26, one group's replica was still fetching flux2-vae.safetensors
+# ten minutes in, and the other group's replica took 25-30 minutes from its
+# deployment's start_time before it served. So the budget is thirty minutes of
+# 10 s probes. The probes and the sleep go through the injected transport and
+# clock, so tests drive the whole budget without waiting.
+_READY_TRIES = 180
+_READY_SLEEP_S = 10
 _READY_TIMEOUT_S = 20
 # LoRA URL pre-flight: one quick HEAD per URL, before the render is POSTed.
 _LORA_CHECK_TIMEOUT_S = 20
@@ -69,13 +78,35 @@ def wait_gateway_ready(
     key: str,
     *,
     on_log: Any | None = None,
+    line: str = "",
+    state: Any | None = None,
 ) -> None:
-    """GET /ready until 200. 404 means no probe endpoint. Continue to /prompt."""
+    """GET /ready until 200. 404 means no probe endpoint. Continue to /prompt.
+
+    ``state()`` (optional) reports the group's own state, and it is what tells
+    the two kinds of 404 apart: a **booting** replica answers 404 because the
+    route is not registered yet, while a running one that has no probe endpoint
+    answers the same 404 and should not be waited on. Without ``state`` the 404
+    keeps its old meaning ("no probe endpoint").
+
+    Raises when the budget runs out with the container still not answering, and
+    names the profile and gateway in that failure so the window can say which
+    container the request was waiting for.
+    """
     def _log(level: str, message: str) -> None:
         if on_log is not None:
             on_log(level, message)
 
+    def _state() -> str:
+        if state is None:
+            return ""
+        try:
+            return str(state() or "").strip().lower()
+        except Exception:  # noqa: BLE001 - an unreadable state is "", not a crash
+            return ""
+
     url = ready_url(gateway)
+    who = f"profile {line!r} ({gateway})" if line else gateway
     last_code = 0
     last_body: bytes | str = b""
     for attempt in range(_READY_TRIES):
@@ -86,8 +117,22 @@ def wait_gateway_ready(
             return
         msg = explain_http(int(last_code), last_body, url, method="GET")
         if last_code == 404:
-            _log("warn", "GET /ready HTTP 404, no probe endpoint; will POST /prompt")
-            return
+            group = _state()
+            if state is None or group == "running":
+                _log("warn", "GET /ready HTTP 404, no probe endpoint; will POST /prompt")
+                return
+            # The group is not running, so this 404 is the route not being
+            # registered yet: the replica is still coming up.
+            if attempt + 1 < _READY_TRIES:
+                _log(
+                    "warn",
+                    f"GET {url} HTTP 404 while the group reads {group or 'unknown'}; "
+                    f"still starting, retry in {_READY_SLEEP_S}s",
+                )
+                salad_gen.time.sleep(_READY_SLEEP_S)
+                continue
+            _log("error", msg)
+            raise RuntimeError(msg + f"  (pre-probe /ready failed for {who})")
         if last_code in _RETRY_CODES and attempt + 1 < _READY_TRIES:
             _log("warn", msg + f"  retry in {_READY_SLEEP_S}s")
             salad_gen.time.sleep(_READY_SLEEP_S)
@@ -96,10 +141,13 @@ def wait_gateway_ready(
             _log("warn", msg + "  will POST /prompt anyway")
             return
         _log("error", msg)
-        raise RuntimeError(msg + "  (pre-probe /ready failed)")
+        raise RuntimeError(msg + f"  (pre-probe /ready failed for {who})")
     msg = explain_http(int(last_code), last_body, url, method="GET")
     _log("error", msg)
-    raise RuntimeError(msg + "  (pre-probe /ready failed)")
+    raise RuntimeError(
+        f"{msg}  (pre-probe /ready failed for {who} after {_READY_TRIES} probes; "
+        f"last status HTTP {int(last_code)})"
+    )
 
 
 def first_image_b64(data: Any) -> str | None:
@@ -313,7 +361,23 @@ def generate_from_payload(
                 "Salad POST omits replica-missing node types "
                 "(editor graph unchanged).",
             )
-    wait_gateway_ready(gateway, key, on_log=_log)
+    # Ask for the container *before* waiting on it: a stopped group has no /ready
+    # to poll until Salad has been asked to start it, and the wait below is what
+    # covers the cold start that follows. The queue owns the decision (it reads
+    # the group's state every time), and this is the same call its own dispatch
+    # would make, so `ensure=False` below keeps it to one per request.
+    if line:
+        refusal = line_queue.ensure_container(line, gateway)
+        if refusal:
+            _log("error", refusal)
+            raise RuntimeError(refusal)
+    wait_gateway_ready(
+        gateway,
+        key,
+        on_log=_log,
+        line=line,
+        state=(lambda: line_queue.group_state(line, gateway)) if line else None,
+    )
     if isinstance(body_obj.get("prompt"), dict):
         # Check the URLs on the compat-stripped prompt: never probe a LoRA the
         # replica will not be asked for. Nothing is downloaded here. The replica
@@ -379,6 +443,7 @@ def generate_from_payload(
         {"gateway": gateway, "url": url, "bytes": len(blob), "profile": line},
         lambda _job: render_once(),
         line=line,
+        ensure=False,
     )
     attempt = job.result if isinstance(job.result, salad_queue.Attempt) else salad_queue.Attempt()
     if job.state != salad_queue.ACCEPTED:

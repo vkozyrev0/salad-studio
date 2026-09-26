@@ -24,6 +24,19 @@ SKIP_TYPES: set[str] = set()
 MUTED_MODES = {2, 4}  # Comfy NEVER / BYPASS
 _OUTPUT_TYPES = {"SaveImage", "PreviewImage", "SaveImageWebsocket"}
 POWER_LORA = "Power Lora Loader (rgthree)"
+# The LoraManager pack (image 123550044): its loader carries a whole LoRA stack,
+# and its prompt / trigger-word / debug helpers feed text into a CLIPTextEncode
+# through links. None of them exist on the replica. The loader is rewritten into
+# stock LoraLoader nodes (its stack is a widget, so the rewrite keeps the LoRAs);
+# the helpers are dropped, which is why the text they fed has to be materialized
+# onto the encode they pointed at (materialize_clip_text).
+LORA_MANAGER_LORA = "Lora Loader (LoraManager)"
+LORA_MANAGER_TYPES = (
+    LORA_MANAGER_LORA,
+    "Prompt (LoraManager)",
+    "TriggerWord Toggle (LoraManager)",
+    "Debug Metadata (LoraManager)",
+)
 # Classes Salad Comfy 0.35 cannot instantiate. Generate omits them from the POST
 # copy: prompt_for_salad_replica drops each one, except the three repaired in
 # place by _rewrite_replica_missing_nodes (ReferenceLatent, ConditioningZeroOut,
@@ -42,6 +55,7 @@ SALAD_MISSING_TYPES = {
     "Fast Groups Bypasser (rgthree)",
     "easy cleanGpuUsed",
     "ColorNoiseComfy",
+    *LORA_MANAGER_TYPES,
 }
 _UUID_TYPE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
@@ -418,6 +432,47 @@ def detect_import_tool(
     return TOOL_METADATA
 
 
+# A graph that can generate an image has at least one of: something that samples,
+# something that loads a diffusion model to sample with, or something that
+# encodes prompt text. An image-processing pass (upscale, face fix, interpolate,
+# compare) has none of them, so converting it as a graph yields a fragment that
+# cannot run: for those, the image's own generation data is the only thing that
+# describes the picture. Matched as substrings of the class name so a variant
+# (``KSamplerAdvanced``, ``CheckpointLoaderSimple``, ``CLIPTextEncodeSDXL``)
+# counts without being enumerated.
+_SAMPLING_MARKERS = ("sampler",)
+_DIFFUSION_MARKERS = ("unetloader", "checkpointloader", "diffusionmodelloader")
+_TEXT_MARKERS = ("textencode",)
+
+
+def graph_can_sample(obj: dict[str, Any] | None) -> bool:
+    """Whether this Comfy graph generates an image, rather than only processing one.
+
+    True for a graph with a sampler, a diffusion-model loader or a text encode;
+    False for a pure image-processing pass. A graph that is empty or unparseable
+    is False as well, which sends the caller to the generation-data path.
+
+    The nodes are read **after** subgraph flattening, because a Civitai workflow
+    can keep its whole sampling path inside a subgraph definition (image
+    123714802) and the converter inlines those before it wires anything up.
+    """
+    flat = obj
+    if isinstance(obj, dict):
+        try:
+            flat = flatten_comfy_subgraphs(obj)
+        except Exception:  # noqa: BLE001 - a graph we cannot flatten is judged as it stands
+            flat = obj
+    for _nid, cls in comfy_source_nodes(flat):
+        low = cls.lower()
+        if any(marker in low for marker in _SAMPLING_MARKERS):
+            return True
+        if any(marker in low for marker in _DIFFUSION_MARKERS):
+            return True
+        if any(marker in low for marker in _TEXT_MARKERS):
+            return True
+    return False
+
+
 def map_draw_things_sampler(sampler: str, unet: str | None = None) -> str:
     """Draw Things sampler names → Salad Klein KSamplerSelect.
 
@@ -639,12 +694,20 @@ def resolve_prompt_loras(
 
 
 def _hint_for_lora_name(
-    name: str, hints: dict[str, dict[str, Any]] | None
+    name: str,
+    hints: dict[str, dict[str, Any]] | None,
+    *,
+    allow_single: bool = True,
 ) -> dict[str, Any] | None:
     """Match a Comfy local filename to Civitai Resources hints.
 
     Image 122279320 stores ``DarkAtmospheric01a_CE_…safetensors`` in the
     graph but Resources name the same LoRA ``Dark Atmospheric Style - CE``.
+
+    ``allow_single`` is the one-LoRA-graph shortcut: when the graph loads a
+    single LoRA and Resources list a single one, they are the same LoRA whatever
+    the names say. With several LoRAs in the graph one hint cannot stand for all
+    of them (image 123550044's LoraManager stack), so the caller turns it off.
     """
     if not hints:
         return None
@@ -662,7 +725,7 @@ def _hint_for_lora_name(
         if _same_lora_tag(stem, str(hint.get("model_name") or "")):
             return hint
     usable = [h for h in hints.values() if isinstance(h, dict) and h.get("version_id")]
-    if len(usable) == 1:
+    if allow_single and len(usable) == 1:
         return usable[0]
     return None
 
@@ -676,9 +739,15 @@ def resolve_local_lora_nodes(
 
     Unresolved LoRAs stay in the editor; Generate looks them up again.
     """
+    pending = [
+        Path(salad_filename(name)).stem
+        for _node, name in rj.lora_name_inputs(prompt)
+        if name and not name.lower().startswith(("http://", "https://"))
+    ]
+    sole = len(set(pending)) == 1
     missing: list[str] = []
     for node, name in rj.lora_name_inputs(prompt):
-        if not name or name.startswith("http://") or name.startswith("https://"):
+        if not name or name.lower().startswith(("http://", "https://")):
             continue
         inputs = node.setdefault("inputs", {})
         fname = salad_filename(name)
@@ -688,7 +757,7 @@ def resolve_local_lora_nodes(
         except (TypeError, ValueError):
             strength = 1.0
         bound = dict(hints or {})
-        hit = _hint_for_lora_name(stem, hints)
+        hit = _hint_for_lora_name(stem, hints, allow_single=sole)
         if hit and stem not in bound:
             bound[stem] = hit
         specs, miss = resolve_prompt_loras(
@@ -1070,6 +1139,55 @@ def _lora_name_for_file(filename: str) -> str:
     return salad_filename(filename)
 
 
+def _lora_manager_specs(node: dict[str, Any]) -> list[dict[str, Any]]:
+    """The LoraManager loader's stack, from its ``<lora:name:weight>`` widget.
+
+    The pack keeps the stack in a widget (the tag text, plus the same rows as
+    dicts); the tag text is the one that carries every entry and its strength,
+    and the repo already parses that syntax for Civitai generation data.
+    """
+    widgets = node.get("widgets_values") or []
+    text = ""
+    rows: list[dict[str, Any]] = []
+    for item in widgets:
+        if isinstance(item, str) and "<lora:" in item and not text:
+            text = item
+        elif isinstance(item, list) and not rows:
+            rows = [row for row in item if isinstance(row, dict) and row.get("name")]
+    found: list[tuple[str, float, float]] = []
+    if text:
+        _stripped, tags = _extract_lora_tags(text)
+        found = [(str(tag["name"]), float(tag["strength"]), float(tag["strength"])) for tag in tags]
+    if not found:
+        for row in rows:
+            name = str(row.get("name") or "").strip()
+            if not name:
+                continue
+            strength = _as_float(row.get("strength"), 1.0)
+            found.append((name, strength, _as_float(row.get("clipStrength"), strength)))
+    specs: list[dict[str, Any]] = []
+    for name, strength, clip_strength in found:
+        item = ls.find_by_loader_name(name)
+        specs.append(
+            {
+                "lora_name": _lora_name_for_file(name),
+                "filename": salad_filename(name),
+                "tag": Path(salad_filename(name)).stem,
+                "verified": bool(item.get("verified")) if item else False,
+                "strength_model": strength,
+                "strength_clip": clip_strength,
+            }
+        )
+    return specs
+
+
+def _as_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _power_lora_specs(node: dict[str, Any]) -> list[dict[str, Any]]:
     specs: list[dict[str, Any]] = []
     for item in node.get("widgets_values") or []:
@@ -1153,18 +1271,20 @@ def workflow_to_prompt(workflow: dict[str, Any]) -> dict[str, Any]:
     """Comfy editor workflow (nodes/links) → API ``prompt`` graph."""
     nodes = _node_map(workflow)
     links = _links_by_id(workflow)
-    power_ids: set[int] = set()
+    # Both loader classes carry a LoRA stack and are replaced by a stock chain:
+    # rgthree's Power Lora Loader, and the LoraManager pack's loader (whose stack
+    # lives in a widget, so the rewrite is what keeps its LoRAs).
+    chain_ids: set[int] = set()
     for nid, node in nodes.items():
-        ntype = str(node.get("type") or "")
-        if ntype == POWER_LORA:
-            power_ids.add(nid)
+        if str(node.get("type") or "") in (POWER_LORA, LORA_MANAGER_LORA):
+            chain_ids.add(nid)
 
     prompt: dict[str, Any] = {}
     lora_out: dict[int, tuple[list[Any], list[Any]]] = {}
 
     for nid, node in nodes.items():
         ntype = str(node.get("type") or "")
-        if ntype == POWER_LORA or _node_muted(node):
+        if ntype in (POWER_LORA, LORA_MANAGER_LORA) or _node_muted(node):
             continue
         inputs: dict[str, Any] = _widget_inputs(node)
         dest_slots = [inp for inp in (node.get("inputs") or []) if isinstance(inp, dict)]
@@ -1177,8 +1297,12 @@ def workflow_to_prompt(workflow: dict[str, Any]) -> dict[str, Any]:
                 continue
             src_id, src_slot = int(row[1]), int(row[2])
             name = str(inp.get("name") or f"input_{slot}")
-            if src_id in power_ids:
-                # Rewired after the LoRA chain is inserted.
+            if src_id in chain_ids and src_slot in (0, 1):
+                # Rewired after the LoRA chain is inserted. Slots beyond the
+                # first two are the loader's extra outputs (trigger words,
+                # loaded LoRAs): they have no stock equivalent, so they keep
+                # pointing at the loader and the consumer, a pack node, is
+                # dropped as an orphan.
                 inputs[name] = ["__power__", src_slot, src_id]
                 continue
             inputs[name] = [str(src_id), src_slot]
@@ -1186,10 +1310,16 @@ def workflow_to_prompt(workflow: dict[str, Any]) -> dict[str, Any]:
         prompt[key] = {"class_type": ntype, "inputs": inputs}
 
     # Replace each Power Lora Loader with a LoraLoader chain.
+    model_sources: dict[int, list[Any]] = {}
+    chain_keys: dict[int, set[str]] = {}
     for nid, node in nodes.items():
-        if str(node.get("type") or "") != POWER_LORA or _node_muted(node):
+        if str(node.get("type") or "") not in (POWER_LORA, LORA_MANAGER_LORA) or _node_muted(node):
             continue
-        specs = _power_lora_specs(node)
+        specs = (
+            _power_lora_specs(node)
+            if str(node.get("type") or "") == POWER_LORA
+            else _lora_manager_specs(node)
+        )
         dest_slots = [inp for inp in (node.get("inputs") or []) if isinstance(inp, dict)]
         model_ref: list[Any] | None = None
         clip_ref: list[Any] | None = None
@@ -1206,13 +1336,16 @@ def workflow_to_prompt(workflow: dict[str, Any]) -> dict[str, Any]:
             model_ref = ["70", 0]
         if clip_ref is None:
             clip_ref = ["71", 0]
+        model_sources[nid] = list(model_ref)
         if not specs:
             lora_out[nid] = (model_ref, clip_ref)
             continue
         chain_id = nid
         model, clip = list(model_ref), list(clip_ref)
+        keys: set[str] = set()
         for i, spec in enumerate(specs):
             key = str(chain_id if i == 0 else f"{nid}{i}")
+            keys.add(key)
             node: dict[str, Any] = {
                 "class_type": "LoraLoader",
                 "inputs": {
@@ -1230,6 +1363,7 @@ def workflow_to_prompt(workflow: dict[str, Any]) -> dict[str, Any]:
             model = [key, 0]
             clip = [key, 1]
         lora_out[nid] = (model, clip)
+        chain_keys[nid] = keys
 
     for node in prompt.values():
         inputs = node.get("inputs")
@@ -1241,9 +1375,136 @@ def workflow_to_prompt(workflow: dict[str, Any]) -> dict[str, Any]:
                 model, clip = lora_out.get(src_id, (["70", 0], ["71", 0]))
                 inputs[k] = clip if src_slot == 1 else model
 
+    # A stack whose MODEL output nothing consumed still applies to the model it
+    # was handed: the LoraManager loader in image 123550044 takes its model from
+    # the graph's UNET path and exposes the stack on a MODEL output the author
+    # left unconnected, so without this the whole stack would be an orphan and
+    # the POST copy would drop it. The chain goes between that model and whoever
+    # used it.
+    for nid, source in model_sources.items():
+        model, _clip = lora_out.get(nid, (None, None))
+        if model is None or nid not in chain_keys:
+            continue
+        consumed = any(
+            name == "model" and val == model
+            for key, node in prompt.items()
+            if key not in chain_keys[nid] and isinstance(node, dict)
+            for name, val in (node.get("inputs") or {}).items()
+        )
+        if consumed:
+            continue
+        for key, node in prompt.items():
+            if key in chain_keys[nid] or not isinstance(node, dict):
+                continue
+            inputs = node.get("inputs")
+            if not isinstance(inputs, dict):
+                continue
+            for name, val in list(inputs.items()):
+                if name == "model" and _edge(val) == (str(source[0]), int(source[1])):
+                    inputs[name] = model
+
     if not prompt:
         raise ValueError("Comfy workflow has no convertible nodes")
     return prompt
+
+
+def materialize_graph_size(
+    prompt: dict[str, Any], meta: dict[str, Any] | None
+) -> list[str]:
+    """Write the generation data's size onto latent/scheduler nodes that take it from a link.
+
+    Image 123550044 sizes its latent from ``GetImageSize`` on the reference
+    image; that chain is dropped with the LoadImage, and the copy would fall
+    back to 1024x1024 — a different picture from the site's 896x1152. A literal
+    the author typed stays.
+    """
+    meta = meta if isinstance(meta, dict) else {}
+    try:
+        width = int(meta.get("width"))
+        height = int(meta.get("height"))
+    except (TypeError, ValueError):
+        return []
+    filled: list[str] = []
+    for nid, node in prompt.items():
+        if not isinstance(node, dict):
+            continue
+        if node.get("class_type") not in (
+            "EmptyFlux2LatentImage",
+            "EmptyLatentImage",
+            "EmptySD3LatentImage",
+            "Flux2Scheduler",
+        ):
+            continue
+        inputs = node.get("inputs") if isinstance(node.get("inputs"), dict) else {}
+        if not isinstance(inputs, dict):
+            continue
+        if _edge(inputs.get("width")) and _edge(inputs.get("height")):
+            inputs["width"] = width
+            inputs["height"] = height
+            filled.append(str(nid))
+    return filled
+
+
+def materialize_clip_text(
+    prompt: dict[str, Any], meta: dict[str, Any] | None
+) -> list[str]:
+    """Write the generation data's prompt onto CLIP encodes whose text is a link.
+
+    A pack's prompt widget reaches ``CLIPTextEncode.text`` through its own nodes
+    (the LoraManager pack: Prompt -> TriggerWord Toggle -> JoinStringMulti), and
+    none of those exist on the replica, so the text arrives as a link into a node
+    the POST copy drops and the render would lose the prompt. A literal the
+    author typed is left alone; only a link is replaced, and the node it came
+    from is left for the orphan pass to drop. Returns the node ids it filled.
+    """
+    meta = meta if isinstance(meta, dict) else {}
+    linked: list[str] = []
+    for nid, node in prompt.items():
+        if not isinstance(node, dict) or node.get("class_type") != "CLIPTextEncode":
+            continue
+        inputs = node.get("inputs") if isinstance(node.get("inputs"), dict) else {}
+        if _edge(inputs.get("text")):
+            linked.append(str(nid))
+    if not linked:
+        return []
+    positive = str(meta.get("prompt") or "")
+    negative = str(meta.get("negative") or "")
+    filled: list[str] = []
+    for index, nid in enumerate(sorted(linked, key=lambda key: (len(key), key))):
+        node = prompt.get(nid)
+        if not isinstance(node, dict):
+            continue
+        inputs = node.setdefault("inputs", {})
+        # The first linked encode is the prompt the author saw; any further one
+        # takes the generation data's negative, which is normally empty.
+        inputs["text"] = positive if index == 0 else negative
+        filled.append(nid)
+    return filled
+
+
+def _prompt_encode_ref(prompt: dict[str, Any]) -> list[Any] | None:
+    """``[node id, slot]`` of the CLIP encode that carries the prompt text.
+
+    Used when a conditioning node the replica cannot instantiate has no upstream
+    of its own to fall back on: the prompt text is what it was there to carry.
+    """
+    best: tuple[int, str] | None = None
+    for nid, node in prompt.items():
+        if not isinstance(node, dict) or node.get("class_type") != "CLIPTextEncode":
+            continue
+        inputs = node.get("inputs") if isinstance(node.get("inputs"), dict) else {}
+        text = inputs.get("text")
+        if isinstance(text, list):
+            continue
+        length = len(str(text or ""))
+        if length and (best is None or length > best[0]):
+            best = (length, str(nid))
+    if best is not None:
+        return [best[1], 0]
+    for nid, node in prompt.items():
+        if isinstance(node, dict) and node.get("class_type") == "CLIPTextEncode":
+            return [str(nid), 0]
+    return None
 
 
 def apply_metadata(body: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
@@ -1963,12 +2224,20 @@ def _inline_subgraph(
         host["links"].extend(new_links)
 
 
-def salad_body_from_comfy_obj(obj: dict[str, Any]) -> dict[str, Any]:
-    """UI workflow → LoraLoader chain; API prompt → expand rgthree then use."""
+def salad_body_from_comfy_obj(
+    obj: dict[str, Any], meta: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """UI workflow → LoraLoader chain; API prompt → expand rgthree then use.
+
+    ``meta`` is the Civitai generation data: it is what supplies the prompt text
+    when the graph's own text arrived through nodes the replica cannot run.
+    """
     ui = _ui_workflow(obj)
     if ui is not None:
         ui = flatten_comfy_subgraphs(json.loads(json.dumps(ui)))
         prompt = workflow_to_prompt(ui)
+        materialize_clip_text(prompt, meta)
+        materialize_graph_size(prompt, meta)
         drop_orphan_nodes(prompt)
         return {
             "prompt": prompt,
@@ -1977,6 +2246,8 @@ def salad_body_from_comfy_obj(obj: dict[str, Any]) -> dict[str, Any]:
     prompt = obj.get("prompt") if isinstance(obj.get("prompt"), dict) else None
     if prompt:
         prompt = expand_power_lora_prompt(prompt)
+        materialize_clip_text(prompt, meta)
+        materialize_graph_size(prompt, meta)
         drop_orphan_nodes(prompt)
         return {
             "prompt": prompt,
@@ -2165,7 +2436,7 @@ def convert_comfy_graph(
     the saved graph has no LoraLoader, insert Civitai Resources-used LoRAs
     (e.g. MJ Style Distilled 206 on image 134347427).
     """
-    body = salad_body_from_comfy_obj(obj)
+    body = salad_body_from_comfy_obj(obj, meta)
     prompt = body.get("prompt")
     if isinstance(prompt, dict):
         resolve_local_lora_nodes(prompt, extras_path=extras_path, hints=hints)
@@ -2251,6 +2522,20 @@ def convert_klein_from_metadata(
     )
 
 
+def metadata_can_build(meta: dict[str, Any] | None, path: str = "") -> bool:
+    """Whether the generation data describes a picture on its own."""
+    meta = meta if isinstance(meta, dict) else {}
+    return bool(
+        path == TOOL_DRAW_THINGS
+        or meta.get("prompt")
+        or meta.get("negative")
+        or meta.get("sampler")
+        or meta.get("model")
+        or meta.get("width")
+        or meta.get("seed") is not None
+    )
+
+
 def import_to_request(
     *,
     workflow_text: str = "",
@@ -2292,7 +2577,7 @@ def import_to_request(
         obj = _parse_json_blob(wf_raw) if wf_raw else None
         if not isinstance(obj, dict) or comfy_node_count(obj) == 0:
             path = TOOL_METADATA
-        else:
+        elif graph_can_sample(obj) or not metadata_can_build(meta):
             return convert_comfy_graph(
                 obj,
                 extras_path=extras_path,
@@ -2303,15 +2588,14 @@ def import_to_request(
                 img=img,
                 hints=hints,
             )
-    if (
-        path == TOOL_DRAW_THINGS
-        or meta.get("prompt")
-        or meta.get("negative")
-        or meta.get("sampler")
-        or meta.get("model")
-        or meta.get("width")
-        or meta.get("seed") is not None
-    ):
+        else:
+            # The graph cannot generate anything (image 125073040's stored
+            # workflow is a SeedVR2 upscale pass: no sampler, no diffusion
+            # loader, no text encode), and the image's own generation data
+            # describes the picture, so build from that instead. A paste with
+            # neither still converts as a graph, as it always has.
+            path = TOOL_METADATA
+    if metadata_can_build(meta, path):
         return convert_klein_from_metadata(
             meta,
             img=img,
@@ -2484,7 +2768,8 @@ def replica_issues(
             elif name and not http:
                 issues.append(
                     f"LoRA {salad_filename(name)} is a local filename; "
-                    "Convert will look it up on Civitai."
+                    "Convert will look it up on Civitai, and Generate omits it "
+                    "from the POST if it stays unresolved."
                 )
         elif cls == "LoadImage":
             name = str(inputs.get("image") or "").strip()
@@ -2712,11 +2997,19 @@ def prompt_for_salad_replica(prompt: dict[str, Any]) -> dict[str, Any]:
         if _is_uuid_type(cls) or cls in SALAD_MISSING_TYPES:
             _passthrough_drop_node(out, str(nid), node)
     for nid, node in list(out.items()):
-        if not isinstance(node, dict) or node.get("class_type") != "LoraLoaderModelOnly":
+        if not isinstance(node, dict) or node.get("class_type") not in (
+            "LoraLoader",
+            "LoraLoaderModelOnly",
+        ):
             continue
         inputs = node.get("inputs") if isinstance(node.get("inputs"), dict) else {}
-        if str(inputs.get("lora_name") or "").strip():
+        name = str(inputs.get("lora_name") or "").strip()
+        if name.lower().startswith(("http://", "https://")):
             continue
+        # The container loads LoRAs from Civitai URLs only
+        # (salad_klein/manifest.yaml: "Civitai LoRAs stay URL-loaded"), so a
+        # loader still holding a local filename cannot run: Generate omits it
+        # from the POST and the editor keeps it for the artist to fix.
         _passthrough_drop_node(out, str(nid), node)
     for nid, node in list(out.items()):
         if not isinstance(node, dict) or node.get("class_type") != "LoadImage":
@@ -2749,7 +3042,12 @@ def _rewrite_replica_missing_nodes(prompt: dict[str, Any]) -> None:
         cls = str(node.get("class_type") or "")
         inputs = node.get("inputs") if isinstance(node.get("inputs"), dict) else {}
         if cls == "ReferenceLatent":
-            _rewire(prompt, str(nid), {0: inputs.get("conditioning")})
+            # A reference chain whose own conditioning input is missing (image
+            # 123550044: the prompt reached the positive side through the pack's
+            # prompt node) falls back to the prompt text encode, so the positive
+            # conditioning is the prompt instead of a dangling edge.
+            keep = inputs.get("conditioning") or _prompt_encode_ref(prompt)
+            _rewire(prompt, str(nid), {0: keep})
             del prompt[nid]
         elif cls == "ConditioningZeroOut":
             zclip: Any = clip

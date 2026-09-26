@@ -18,6 +18,17 @@ sys.path.insert(0, str(TOOLS))
 import request_json as rj  # noqa: E402
 from lora_store import DEFAULT_KLEIN_LORA_IDS  # noqa: E402
 
+# Every app construction in this module builds a queue that writes its container
+# ledger. Redirect it here, once, for both copies of salad_queue (the app imports
+# it top-level, these tests import it as salad_studio.salad_queue): no test in
+# this module may touch the real ~/.config/salad/studio-queue.json.
+_LEDGER_DIR = tempfile.TemporaryDirectory()
+import salad_queue as _top_queue  # noqa: E402
+from salad_studio import salad_queue as _pkg_queue  # noqa: E402
+
+_top_queue.LEDGER_PATH = Path(_LEDGER_DIR.name) / "studio-queue.json"
+_pkg_queue.LEDGER_PATH = _top_queue.LEDGER_PATH
+
 
 class AppTabs(unittest.TestCase):
     def test_config_lora_selection_is_in_editor_json(self) -> None:
@@ -1034,20 +1045,6 @@ class LiveFieldSync(unittest.TestCase):
         app._apply_generate_gate("Down")
         self.assertEqual(str(app.gen_btn.cget("state")), "disabled")
 
-    def test_generate_blocks_on_an_empty_status_word(self) -> None:
-        """L11: _on_generate must report, not raise, on an empty status word."""
-        app = self.app
-        self.tokens.write_token("salad", "salad-test-key-1234")
-        app.var_salad_status.set("")
-        from salad_studio import salad_status
-
-        with mock.patch.object(
-            salad_status, "snapshot_gateway", side_effect=OSError("offline")
-        ), mock.patch.object(messagebox, "showinfo") as info:
-            app._on_generate()
-        self.assertTrue(info.called)
-        self.assertFalse(app._busy)
-
     def test_status_probe_falls_through_on_an_empty_gateway(self) -> None:
         """L10: an empty gateway still probes the profile gateways."""
         app = self.app
@@ -1708,10 +1705,15 @@ class NewPagesAndPlacement(unittest.TestCase):
             "convert_output": {"format": "jpeg"},
         }
 
-    def _generate_gateway(self, graph: dict, gateway: str) -> str:
+    def _generate_gateway(
+        self, graph: dict, gateway: str, *, word: str = "Ready"
+    ) -> str:
         """Drive a real _on_generate for `graph` with the form pointing at `gateway`.
 
-        Returns the gateway the render was actually POSTed to.
+        Returns the gateway the render was actually POSTed to. The status probe
+        is stubbed to a snapshot consistent with ``word``, and a refusal dialog
+        is recorded in ``self.refusals`` instead of opening (a modal in a test
+        hangs the run).
         """
         from salad_studio import app as app_mod
 
@@ -1721,8 +1723,9 @@ class NewPagesAndPlacement(unittest.TestCase):
         app.editor_text.insert("1.0", json.dumps(graph))
         app._rebuild_from_json()  # rewrites var_unet from the graph, as the UI does
         app.var_gateway.set(gateway)
-        app.var_salad_status.set("Ready")
+        app.var_salad_status.set(word)
         seen: dict = {}
+        self.refusals = []
 
         def fake_generate(**kwargs):
             seen.update(kwargs)
@@ -1730,12 +1733,100 @@ class NewPagesAndPlacement(unittest.TestCase):
 
         with mock.patch.object(
             app_mod.generator, "generate_from_payload", side_effect=fake_generate
-        ), mock.patch.object(app_mod.messagebox, "showerror"), mock.patch(
-            "salad_studio.app.threading.Thread", self._inline_thread()
-        ):
+        ), mock.patch.object(
+            app_mod.salad_status, "snapshot_gateway", side_effect=self._snapshot_for(word)
+        ), mock.patch.object(app_mod.messagebox, "showerror"), mock.patch.object(
+            app_mod.messagebox, "showinfo", lambda *a, **k: self.refusals.append(str(a))
+        ), mock.patch("salad_studio.app.threading.Thread", self._inline_thread()):
             app._on_generate()
             self.assertTrue(self._pump(lambda: not app._busy))
         return str(seen.get("gateway") or "")
+
+    @staticmethod
+    def _snapshot_for(word: str):
+        """The probe answer that goes with a badge word."""
+        if word in ("Down", "Failed"):
+            return lambda _gw, _key: {
+                "word": word,
+                "error": "probe failed",
+                "group": {"status": "failed" if word == "Failed" else "running"},
+                "instances": [],
+            }
+        if word == "Stopped":
+            return lambda _gw, _key: {"word": "Stopped", "group": {"status": "stopped"}}
+        if word:
+            return lambda _gw, _key: {"word": word, "group": {"status": "running"}}
+        return lambda _gw, _key: {"error": "offline"}
+
+    def test_generate_dispatches_when_the_status_word_is_not_ready(self) -> None:
+        """L11, updated: a not-Ready badge no longer refuses Generate.
+
+        A stopped (or unprobed) container is dispatchable now: the queue starts
+        the container the request routes to and the generator waits for its
+        /ready. Only a replica that is gone is refused, which the test below
+        pins.
+        """
+        from salad_studio import profiles
+
+        app = self.app
+        self.tokens.write_token("salad", "salad-test-key-1234")
+        klein = profiles.load_all()["klein"]
+        for word in ("", "Stopped", "Starting", "Allocating"):
+            with self.subTest(word=word):
+                app.log_text.delete("1.0", "end")
+                used = self._generate_gateway(
+                    self._graph_with_unet(klein.primary_checkpoint),
+                    klein.gateway,
+                    word=word,
+                )
+                self.assertEqual(used, klein.gateway, "the request must reach the queue")
+                self.assertNotIn(
+                    "Generate blocked",
+                    app.log_text.get("1.0", "end"),
+                    f"a {word!r} badge must not be refused",
+                )
+        self.assertFalse(app._busy)
+
+    def test_generate_refuses_a_replica_that_is_gone(self) -> None:
+        """A down or failed replica is not something a start can fix."""
+        from salad_studio import app as app_mod
+        from salad_studio import profiles
+
+        app = self.app
+        self.tokens.write_token("salad", "salad-test-key-1234")
+        klein = profiles.load_all()["klein"]
+        for word in ("Down", "Failed"):
+            with self.subTest(word=word):
+                app.editor_text.delete("1.0", "end")
+                app.editor_text.insert(
+                    "1.0", json.dumps(self._graph_with_unet(klein.primary_checkpoint))
+                )
+                app._rebuild_from_json()
+                app.var_gateway.set(klein.gateway)
+                app.var_salad_status.set(word)
+                app.log_text.delete("1.0", "end")
+                seen: dict = {}
+
+                def fake_generate(**kwargs):
+                    seen.update(kwargs)
+                    raise RuntimeError("routing check only")
+
+                with mock.patch.object(
+                    app_mod.generator, "generate_from_payload", side_effect=fake_generate
+                ), mock.patch.object(
+                    app_mod.salad_status,
+                    "snapshot_gateway",
+                    side_effect=self._snapshot_for(word),
+                ), mock.patch.object(app_mod.messagebox, "showinfo") as info, mock.patch.object(
+                    app_mod.messagebox, "showerror"
+                ), mock.patch(
+                    "salad_studio.app.threading.Thread", self._inline_thread()
+                ):
+                    app._on_generate()
+                    self.assertTrue(self._pump(lambda: not app._busy))
+                self.assertFalse(seen, "a gone replica must not be dispatched")
+                self.assertTrue(info.called, "and must say why")
+                self.assertIn("Generate blocked", app.log_text.get("1.0", "end"))
 
     def test_generate_routes_a_snofs_graph_off_the_klein_group(self) -> None:
         """Routing must read the GATEWAY's family, not the form's unet.

@@ -380,6 +380,10 @@ def strip_non_klein_loras(prompt: dict[str, Any]) -> dict[str, Any]:
     Stock Comfy cannot apply Illustrious tensors onto Flux.2 Klein. Mixed
     stacks (130704037) otherwise sample distilled Klein + photography CLIP.
     IL-only graphs are left as-is.
+
+    Only loaders whose CLIP is *known* foreign go: one whose family cannot be
+    read (a bare Civitai download URL, a name with no family token) is kept,
+    because dropping it would silently lose the artist's LoRA.
     """
     if not isinstance(prompt, dict):
         return prompt
@@ -390,7 +394,7 @@ def strip_non_klein_loras(prompt: dict[str, Any]) -> dict[str, Any]:
     ]
     if not any(lora_is_klein_clip(node) for _nid, node in loaders):
         return prompt
-    drop = [nid for nid, node in loaders if not lora_is_klein_clip(node)]
+    drop = [nid for nid, node in loaders if lora_is_foreign_clip(node)]
     for nid in sorted(drop, key=lambda s: int(s) if str(s).isdigit() else 0, reverse=True):
         passthrough_lora_node(prompt, nid)
     return prompt

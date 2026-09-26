@@ -28,7 +28,7 @@ for _p in (HERE, HERE.parent):
 # Package-qualified on purpose: the app holds salad_studio.profiles, and this
 # repo can load the same module twice (top-level and as a package), so patching
 # the other copy would move paths the app never reads.
-from salad_studio import lora_store, profiles, prompt_catalog, prompt_history, studio_meta  # noqa: E402
+from salad_studio import lora_store, profiles, prompt_catalog, prompt_history, salad_queue, studio_meta  # noqa: E402
 from salad_studio import tokens as tok  # noqa: E402
 from salad_studio import ui_state  # noqa: E402
 
@@ -113,6 +113,13 @@ class _TempPaths:
         self.tmp = tmp
 
     def __enter__(self):
+        # Two copies of salad_queue exist in a test process: the app imports it
+        # top-level while some tests import it as salad_studio.salad_queue, so
+        # both have to be redirected or one of them writes the real config.
+        import salad_queue as top_queue
+
+        from salad_studio import salad_queue as pkg_queue
+
         self.saved = {
             "profiles": profiles.PROFILES_PATH,
             "gw_klein": profiles.GATEWAY_KLEIN_PATH,
@@ -125,6 +132,8 @@ class _TempPaths:
             "config_home": tok.CONFIG_HOME,
             "state": ui_state.STATE_PATH,
             "meta": studio_meta.USER_PATH,
+            "ledger": top_queue.LEDGER_PATH,
+            "ledger_pkg": pkg_queue.LEDGER_PATH,
         }
         profiles.PROFILES_PATH = self.tmp / "studio-profiles.json"
         profiles.GATEWAY_KLEIN_PATH = self.tmp / "gateway-klein"
@@ -137,10 +146,17 @@ class _TempPaths:
         tok.CONFIG_HOME = self.tmp / "defaults"
         ui_state.STATE_PATH = self.tmp / "studio-ui.json"
         studio_meta.USER_PATH = self.tmp / "studio-metadata.json"
+        ledger = self.tmp / "studio-queue.json"
+        top_queue.LEDGER_PATH = ledger
+        pkg_queue.LEDGER_PATH = ledger
         studio_meta.reset_cache()
         return self
 
     def __exit__(self, *_exc) -> None:
+        import salad_queue as top_queue
+
+        from salad_studio import salad_queue as pkg_queue
+
         profiles.PROFILES_PATH = self.saved["profiles"]
         profiles.GATEWAY_KLEIN_PATH = self.saved["gw_klein"]
         profiles.GATEWAY_KLEIN_5090_PATH = self.saved["gw_5090"]
@@ -152,6 +168,8 @@ class _TempPaths:
         tok.CONFIG_HOME = self.saved["config_home"]
         ui_state.STATE_PATH = self.saved["state"]
         studio_meta.USER_PATH = self.saved["meta"]
+        top_queue.LEDGER_PATH = self.saved["ledger"]
+        pkg_queue.LEDGER_PATH = self.saved["ledger_pkg"]
         studio_meta.reset_cache()
 
 

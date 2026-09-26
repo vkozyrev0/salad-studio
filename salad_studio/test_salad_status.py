@@ -249,7 +249,10 @@ class SourceButton(unittest.TestCase):
         self.assertIn("silent=True", src)
         self.assertIn("w is not self", src)
         self.assertIn('text="Policy"', src)
-        self.assertIn("generate_block_reason", src)
+        # Generate's dispatch decision: the app reads the snapshots it already
+        # has and asks salad_status whether the request may go out at all.
+        self.assertIn("generate_dispatch_reason", src)
+        self.assertIn("_last_snaps", src)
         self.assertIn("snapshot_gateway", src)
         self.assertIn("load_policy", src)
         self.assertIn("Load from Salad", src)

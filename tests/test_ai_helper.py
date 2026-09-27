@@ -6,12 +6,16 @@ request, so the URL, the auth header and the body are all the real ones.
 from __future__ import annotations
 
 import base64
+import http.server
 import io
 import json
+import socket
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 HERE = Path(__file__).resolve().parent
@@ -861,6 +865,239 @@ class AShortBodyIsNotTheWholeReply(unittest.TestCase):
         status, got = self._send(body, len(body))
         self.assertEqual(status, 200)
         self.assertEqual(got, body)
+
+
+# The local Help path over a real socket. Every other local test injects
+# ``send``; these let the shipped transport open a socket, so the URLs, the
+# discovery order and the POST body are the ones a user's LM Studio really sees.
+
+EMBEDDING_MODEL = "text-embedding-nomic-embed-text-v1.5"
+UNLOADED_CHAT_MODEL = "gemma-4-12b-obliterated"
+LOADED_CHAT_MODEL = "qwen3.8-27b-obliterated"
+
+# Embedding first, then an unloaded chat model, then the loaded one: a choice
+# that takes the first id grabs the embedding, and one that ignores
+# ``loaded_instances`` grabs a model that is not in memory.
+SERVER_NATIVE_ROWS = (
+    {"key": EMBEDDING_MODEL, "type": "embedding", "loaded_instances": [],
+     "capabilities": {}},
+    {"key": UNLOADED_CHAT_MODEL, "type": "llm", "loaded_instances": [],
+     "capabilities": {"vision": False}},
+    {"key": LOADED_CHAT_MODEL, "type": "llm",
+     "loaded_instances": [{"id": LOADED_CHAT_MODEL}], "capabilities": {"vision": True}},
+)
+
+SERVER_REPLY = (
+    '{"issue": "the head is missing", "positive": "LOCAL POSITIVE", '
+    '"negative": "LOCAL NEGATIVE"}'
+)
+
+
+class _LmStudioHandler(http.server.BaseHTTPRequestHandler):
+    """LM Studio's two APIs on one port, with every request recorded."""
+
+    def log_message(self, *args: Any) -> None:
+        """Silence the per-request line the stdlib would print to stderr."""
+        return None
+
+    def _reply(self, status: int, payload: dict[str, Any]) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _record(self, body: bytes) -> None:
+        parsed: Any = None
+        if body:
+            try:
+                parsed = json.loads(body.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                parsed = body.decode("utf-8", "replace")
+        self.server.requests.append(
+            {"method": self.command, "path": self.path, "body": parsed}
+        )
+
+    def do_GET(self) -> None:
+        self._record(b"")
+        rows = list(self.server.native_rows)
+        if self.path == "/api/v1/models":
+            self._reply(200, {"models": rows})
+        elif self.path == "/v1/models":
+            self._reply(200, {"data": [{"id": r["key"], "object": "model"} for r in rows]})
+        else:
+            self._reply(404, {"error": {"message": f"no such endpoint: {self.path}"}})
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        self._record(self.rfile.read(length) if length else b"")
+        if self.path == "/v1/chat/completions":
+            self._reply(200, {"choices": [
+                {"index": 0, "message": {"role": "assistant",
+                                         "content": self.server.reply}}
+            ]})
+        else:
+            self._reply(404, {"error": {"message": f"no such endpoint: {self.path}"}})
+
+
+class _LmStudioServer(http.server.ThreadingHTTPServer):
+    """A real HTTP server on an ephemeral 127.0.0.1 port, standing in for LM Studio."""
+
+    daemon_threads = True
+
+    def __init__(self, *, reply: str, native_rows: tuple[dict[str, Any], ...]) -> None:
+        super().__init__(("127.0.0.1", 0), _LmStudioHandler)
+        self.reply = reply
+        self.native_rows = native_rows
+        self.requests: list[dict[str, Any]] = []
+
+    @property
+    def url(self) -> str:
+        """The bare ``http://127.0.0.1:<port>`` the user would paste."""
+        return f"http://127.0.0.1:{self.server_address[1]}"
+
+    def start(self) -> "_LmStudioServer":
+        self._thread = threading.Thread(target=self.serve_forever, daemon=True)
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self.shutdown()
+        self.server_close()
+        self._thread.join(timeout=5)
+
+    def paths(self) -> list[str]:
+        return [seen["path"] for seen in self.requests]
+
+
+def _requests_seen(server: _LmStudioServer) -> str:
+    """The recorded requests, one per line, for the test's output."""
+    lines = [
+        f"  {i}. {seen['method']} {seen['path']}"
+        + ("" if seen["body"] is None else " " + json.dumps(seen["body"]))
+        for i, seen in enumerate(server.requests, 1)
+    ]
+    return "\n".join(lines) or "  (no requests)"
+
+
+def _closed_port() -> int:
+    """A 127.0.0.1 port nobody listens on: bound to read the number, then freed."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+class ALocalServerOnARealSocket(unittest.TestCase):
+    """The whole local round trip with no injected ``send``.
+
+    Discovery, the model choice and the chat POST all go over a real socket to a
+    stdlib server bound to port 0, so the port is whatever the OS hands out and
+    nothing depends on LM Studio running on this machine.
+    """
+
+    def _serve(
+        self,
+        *,
+        reply: str = SERVER_REPLY,
+        native_rows: tuple[dict[str, Any], ...] = SERVER_NATIVE_ROWS,
+    ) -> _LmStudioServer:
+        server = _LmStudioServer(reply=reply, native_rows=native_rows).start()
+        self.addCleanup(server.stop)
+        return server
+
+    def test_help_round_trip_over_a_real_socket(self) -> None:
+        server = self._serve()
+        out = ai.help_with_prompts_local(
+            url=server.url + "/v1", issue="the head is missing", **INPUTS
+        )
+        print(f"\n[local end to end] the server saw:\n{_requests_seen(server)}")
+
+        # Discovery asks the native endpoint, then the chat POST follows it.
+        paths = server.paths()
+        self.assertIn("/api/v1/models", paths)
+        self.assertIn("/v1/chat/completions", paths)
+        self.assertLess(
+            paths.index("/api/v1/models"), paths.index("/v1/chat/completions")
+        )
+
+        chat = next(s for s in server.requests if s["path"] == "/v1/chat/completions")
+        self.assertEqual(chat["method"], "POST")
+        body = chat["body"]
+        # The loaded chat model, never the embedding and never the unloaded one.
+        self.assertEqual(body["model"], LOADED_CHAT_MODEL)
+        self.assertFalse(body["stream"])
+        self.assertEqual([m["role"] for m in body["messages"]], ["system", "user"])
+
+        context = body["messages"][1]["content"]
+        for label, needle in (
+            ("editor positive", "MARKER_EDITOR_POSITIVE"),
+            ("editor negative", "MARKER_EDITOR_NEGATIVE"),
+            ("adjusted positive", "MARKER_ADJUSTED_POSITIVE"),
+            ("adjusted negative", "MARKER_ADJUSTED_NEGATIVE"),
+            ("request JSON", "flux-2-klein-base-9b-fp8.safetensors"),
+            ("findings", "Klein Detail Slider"),
+            ("the issue", "the head is missing"),
+        ):
+            with self.subTest(context=label):
+                self.assertIn(needle, context)
+        # The issue still leads the context, as it does on the DeepSeek path.
+        self.assertIn("the head is missing", context.split("=== POSITIVE PROMPT")[0])
+
+        # The reply's prompts come back, and the raw text is the reply itself.
+        self.assertEqual(out["positive"], "LOCAL POSITIVE")
+        self.assertEqual(out["negative"], "LOCAL NEGATIVE")
+        self.assertEqual(out["issue"], "the head is missing")
+        self.assertEqual(out["raw"], SERVER_REPLY)
+        self.assertEqual(out["model"], LOADED_CHAT_MODEL)
+        self.assertEqual(out["base"], server.url + "/v1")
+        self.assertIs(out["vision"], True)
+
+    def test_every_pasted_url_form_reaches_the_chat_endpoint(self) -> None:
+        server = self._serve()
+        base = server.url + "/v1"
+        forms = (
+            base,                                  # the OpenAI-compatible base
+            server.url + "/api/v1",                # LM Studio's native base
+            server.url + "/v1/chat/completions",   # a full inference URL
+            server.url.removeprefix("http://"),    # a bare host:port
+        )
+        for form in forms:
+            with self.subTest(url=form):
+                self.assertEqual(ai.local_base(form), base)
+                seen_from = len(server.requests)
+                out = ai.help_with_prompts_local(url=form, **INPUTS)
+                paths = server.paths()[seen_from:]
+                print(f"[url form] {form} -> {paths}")
+                self.assertIn("/v1/chat/completions", paths)
+                chat = next(
+                    s for s in server.requests[seen_from:]
+                    if s["path"] == "/v1/chat/completions"
+                )
+                self.assertEqual(chat["body"]["model"], LOADED_CHAT_MODEL)
+                self.assertEqual(out["base"], base)
+                self.assertEqual(out["positive"], "LOCAL POSITIVE")
+
+    def test_a_closed_port_carries_the_hint_and_leaves_nothing_wedged(self) -> None:
+        port = _closed_port()
+        base = f"http://127.0.0.1:{port}/v1"
+        with self.assertRaises(ai.AiError) as ctx:
+            ai.help_with_prompts_local(url=f"http://127.0.0.1:{port}", **INPUTS)
+        message = str(ctx.exception)
+        self.assertIn("is the local model server running?", message)
+        self.assertIn(base, message)
+        # Nothing but an AiError escapes: no OSError/URLError traceback.
+        self.assertIsInstance(ctx.exception, ai.AiError)
+        self.assertNotIsInstance(ctx.exception, OSError)
+        self.assertNotIsInstance(ctx.exception, ai.ReplyError)
+
+        # The next call against a server that does answer still works, so the
+        # failure left no socket or module state behind it.
+        server = self._serve()
+        out = ai.help_with_prompts_local(url=server.url + "/v1", **INPUTS)
+        self.assertEqual(out["positive"], "LOCAL POSITIVE")
+        self.assertEqual(out["model"], LOADED_CHAT_MODEL)
+        self.assertEqual(out["base"], server.url + "/v1")
 
 
 if __name__ == "__main__":

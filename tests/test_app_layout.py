@@ -1,10 +1,13 @@
 """Behaviour tests for the live Salad Studio window: tabs, LoRA tab, JSON reflection."""
 from __future__ import annotations
 
+import http.server
 import json
 import os
+import socket
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -1201,6 +1204,95 @@ class LiveFieldSync(unittest.TestCase):
         self.assertEqual({c.args[0] for c in probe.call_args_list}, want)
 
 
+class _LocalAssistServer:
+    """A real LM Studio-shaped server on 127.0.0.1, for the page's local path.
+
+    It answers both APIs LM Studio serves: the native model list (with an
+    embedding model, an unloaded chat model and a loaded one that reports no
+    vision) and the OpenAI-compatible chat endpoint. Every request is recorded,
+    so a test can assert what the shipped page actually sent.
+    """
+
+    MODELS = {
+        "models": [
+            {"key": "embed-nomic", "type": "embedding"},
+            {"key": "chat-unloaded", "type": "llm", "loaded_instances": []},
+            {
+                "key": "chat-loaded",
+                "type": "llm",
+                "loaded_instances": [{"id": "chat-loaded"}],
+                "capabilities": {"vision": False},
+            },
+        ]
+    }
+    REPLY = json.dumps(
+        {
+            "positive": "LOCAL POSITIVE",
+            "negative": "LOCAL NEGATIVE",
+            "issue": "the hand is missing",
+        }
+    )
+
+    def __init__(self) -> None:
+        self.requests: list[tuple[str, str, dict]] = []
+        self.headers: list[dict[str, str]] = []
+        server = self
+
+        class _Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *_args) -> None:  # keep the test output clean
+                pass
+
+            def _answer(self, body: bytes) -> None:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self) -> None:
+                server.requests.append(("GET", self.path, {}))
+                if self.path.endswith("/api/v1/models"):
+                    self._answer(json.dumps(server.MODELS).encode())
+                elif self.path.endswith("/v1/models"):
+                    self._answer(json.dumps({"data": [{"id": "chat-loaded"}]}).encode())
+                else:
+                    self._answer(b"{}")
+
+            def do_POST(self) -> None:
+                server.headers.append(dict(self.headers))
+                length = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(length)
+                try:
+                    parsed = json.loads(raw.decode("utf-8"))
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    parsed = {}
+                server.requests.append(("POST", self.path, parsed))
+                self._answer(
+                    json.dumps(
+                        {"choices": [{"message": {"role": "assistant", "content": server.REPLY}}]}
+                    ).encode()
+                )
+
+        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+
+    @property
+    def url(self) -> str:
+        return f"http://127.0.0.1:{self.httpd.server_address[1]}"
+
+    def posts(self) -> list[tuple[str, str, dict]]:
+        return [row for row in self.requests if row[0] == "POST"]
+
+    def paths(self) -> list[str]:
+        return [path for _method, path, _body in self.requests]
+
+    def stop(self) -> None:
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.thread.join(5)
+
+
 @unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
 class NewPagesAndPlacement(unittest.TestCase):
     """Prompt Assist, the Config split, the action-bar badges and the key dots."""
@@ -1448,6 +1540,223 @@ class NewPagesAndPlacement(unittest.TestCase):
             app.var_helper_image.set(False)
             app._refresh_helper_image_label()
             self.assertIn("no image is sent", str(app.helper_image_lbl.cget("text")))
+
+    def test_every_backend_label_names_the_right_backend(self) -> None:
+        """Criterion 1: no label calls a pane DeepSeek-only when both fill it.
+
+        Read off the real window's own widgets: the reply pane's LabelFrame
+        title, the image note in both checkbox states, and the dialog an empty
+        commit shows.
+        """
+        from salad_studio import app as app_mod
+
+        app = self.app
+        reply_box = app.helper_reply.master
+        title = str(reply_box.cget("text"))
+        self.assertIn("local", title.lower(), f"the reply pane must name both: {title!r}")
+        self.assertIn("deepseek", title.lower())
+        self.assertNotEqual(title, "DeepSeek reply (raw)")
+
+        app.var_helper_image.set(False)
+        app._refresh_helper_image_label()
+        off = str(app.helper_image_lbl.cget("text"))
+        self.assertIn("no image is sent", off)
+        self.assertNotIn("DeepSeek", off, "the note is about the box, not one backend")
+
+        plate = self._plate("studio_assist_label.jpg")
+        with mock.patch.object(app_mod, "OUT_DIR", plate.parent):
+            app.var_helper_image.set(True)
+            app._refresh_helper_image_label()
+            on = str(app.helper_image_lbl.cget("text"))
+        self.assertIn(plate.name, on)
+        self.assertNotIn("DeepSeek", on, "the note is about the box, not one backend")
+
+        app.helper_adj_pos.delete("1.0", "end")
+        app.helper_adj_neg.delete("1.0", "end")
+        seen: list[str] = []
+        with mock.patch.object(
+            app_mod.messagebox,
+            "showinfo",
+            lambda *a, **_k: seen.append(" ".join(str(x) for x in a)),
+        ):
+            app._on_prompt_commit()
+        self.assertTrue(seen, "an empty commit must be reported")
+        dialog = seen[0]
+        self.assertIn("local", dialog.lower(), f"the dialog must name both: {dialog!r}")
+        self.assertNotIn("Ask DeepSeek for help first", dialog)
+
+        # And no DeepSeek-only claim survives in the two modules that carry the
+        # page and the helper.
+        pkg = Path(app_mod.__file__).resolve().parent
+        for name in ("app.py", "ai_helper.py"):
+            src = (pkg / name).read_text(encoding="utf-8")
+            for phrase in (
+                "DeepSeek reply (raw)",
+                "no image is sent to DeepSeek",
+                "Ask DeepSeek for help first",
+                "DeepSeek-backed prompt help",
+            ):
+                self.assertNotIn(phrase, src, f"{name} still says {phrase!r}")
+
+    def _drive_in_mainloop(self, app, body, predicate, seconds: float = 90.0) -> None:
+        """Run ``body`` on the Tk thread inside a real main loop, then pump.
+
+        The page's Help handlers start a worker thread and report back with
+        ``after``, which Tk refuses without a running loop; ``predicate``
+        says when the page has come back.
+        """
+        outcome: list[BaseException] = []
+        deadline = time.time() + seconds
+
+        def run() -> None:
+            try:
+                body()
+                while not predicate() and time.time() < deadline:
+                    app.update()
+                    time.sleep(0.02)
+            except BaseException as exc:  # noqa: BLE001 - re-raised below
+                outcome.append(exc)
+            finally:
+                app.quit()
+
+        app.after(0, run)
+        app.mainloop()
+        if outcome:
+            raise outcome[0]
+        self.assertTrue(predicate(), "the page never came back")
+
+    def _prepare_assist_press(self, app, url: str) -> None:
+        """Put a parseable graph and a marked prompt in the editor, point the page at ``url``."""
+        from salad_studio import profiles
+
+        klein = profiles.load_all()["klein"]
+        app.editor_text.delete("1.0", "end")
+        app.editor_text.insert(
+            "1.0", json.dumps(self._graph_with_unet(klein.primary_checkpoint))
+        )
+        app._rebuild_from_json()
+        app.prompt_text.delete("1.0", "end")
+        app.prompt_text.insert("1.0", "MARKER EDITOR POSITIVE")
+        app.helper_issue.delete("1.0", "end")
+        app.helper_issue.insert("1.0", "MARKER ISSUE the hand is missing")
+        app._refresh_prompt_helper()
+        app.var_helper_local_url.set(url)
+        app.log_text.delete("1.0", "end")
+
+    def test_help_local_runs_against_a_real_local_server(self) -> None:
+        """Criterion 2: the shipped page talks to a real OpenAI-compatible server."""
+        from salad_studio import ref_check
+
+        app = self.app
+        server = _LocalAssistServer()
+        self.addCleanup(server.stop)
+        self._prepare_assist_press(app, server.url)  # a bare host:port, no scheme
+
+        with mock.patch.object(ref_check, "online_lookup", return_value=None):
+            self._drive_in_mainloop(
+                app, app._on_prompt_help_local, lambda: not app._helper_busy
+            )
+
+        self.assertFalse(app._helper_busy, "the page must come back to idle")
+        self.assertTrue(
+            any(path.endswith("/api/v1/models") for path in server.paths()),
+            f"the page must read the server's model list: {server.requests}",
+        )
+        posts = server.posts()
+        self.assertEqual(len(posts), 1, f"exactly one chat POST: {server.requests}")
+        for headers in server.headers:
+            self.assertNotIn(
+                "Authorization", headers, "a local request carries no key"
+            )
+        _method, path, body = posts[0]
+        self.assertTrue(path.endswith("/v1/chat/completions"), f"posted to {path}")
+        self.assertEqual(
+            body.get("model"), "chat-loaded", "the loaded chat model's id, not the others"
+        )
+        content = body["messages"][1]["content"]
+        text = content if isinstance(content, str) else content[0]["text"]
+        self.assertIn("MARKER EDITOR POSITIVE", text, "the editor prompt rides along")
+        self.assertIn("MARKER ISSUE", text, "and the issue box does too")
+
+        self.assertEqual(app.helper_adj_pos.get("1.0", "end-1c"), "LOCAL POSITIVE")
+        self.assertEqual(app.helper_adj_neg.get("1.0", "end-1c"), "LOCAL NEGATIVE")
+        self.assertIn(
+            "LOCAL POSITIVE", app.helper_reply.get("1.0", "end"), "the raw reply pane"
+        )
+        self.assertIn("the hand is missing", app.helper_state.get(), "what the model saw")
+        self.assertIn(
+            "chat-loaded", app.log_text.get("1.0", "end"), "the log names the model"
+        )
+        # The model reports no image support, and the note says so rather than
+        # claiming a plate is going to be read.
+        app.var_helper_image.set(True)
+        app._refresh_helper_image_label()
+        self.assertNotIn(
+            "attaching",
+            str(app.helper_image_lbl.cget("text")),
+            "a model that cannot take an image must not be said to be reading one",
+        )
+
+    def test_help_local_reports_a_server_that_is_not_running(self) -> None:
+        """Criterion 3: a dead port gives the actionable message, buttons back."""
+        from salad_studio import ref_check
+
+        app = self.app
+        probe = socket.socket()
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+        probe.close()  # nothing listens there now
+        self._prepare_assist_press(app, f"http://127.0.0.1:{port}")
+
+        with mock.patch.object(ref_check, "online_lookup", return_value=None):
+            self._drive_in_mainloop(
+                app, app._on_prompt_help_local, lambda: not app._helper_busy, 120
+            )
+
+        self.assertIn(
+            "is the local model server running?", app.helper_state.get(), "the state"
+        )
+        self.assertIn(
+            "is the local model server running?",
+            app.helper_reply.get("1.0", "end"),
+            "the reply pane",
+        )
+        self.assertFalse(app._helper_busy, "the page must come back to idle")
+        for btn in (app.helper_btn, app.helper_local_btn):
+            self.assertEqual(
+                str(btn.cget("state")), "normal", "the buttons must be usable again"
+            )
+        self.assertNotIn("Traceback", app.log_text.get("1.0", "end"))
+
+    def test_every_local_url_form_reaches_the_chat_endpoint(self) -> None:
+        """Criterion 3: the native base, a pasted inference URL and host:port."""
+        from salad_studio import ai_helper
+
+        server = _LocalAssistServer()
+        self.addCleanup(server.stop)
+        want = f"{server.url}/v1"
+        forms = (
+            f"{server.url}/v1",
+            f"{server.url}/api/v1",
+            f"{server.url}/v1/chat/completions",
+            server.url.replace("http://", ""),
+        )
+        for form in forms:
+            with self.subTest(form=form):
+                self.assertEqual(ai_helper.local_base(form), want)
+
+        for form in forms:
+            with self.subTest(call=form):
+                out = ai_helper.help_with_prompts_local(
+                    url=form, editor_positive="MARKER POSITIVE"
+                )
+                self.assertEqual(out["base"], want, "the OpenAI-compatible base")
+                self.assertEqual(out["model"], "chat-loaded", "the loaded chat model")
+                self.assertEqual(out["positive"], "LOCAL POSITIVE")
+        posts = server.posts()
+        self.assertEqual(len(posts), len(forms), f"one POST per form: {server.requests}")
+        for _method, path, _body in posts:
+            self.assertTrue(path.endswith("/v1/chat/completions"), path)
 
     def test_issue_reaches_the_help_request(self) -> None:
         from salad_studio import ai_helper, app as app_mod, ref_check

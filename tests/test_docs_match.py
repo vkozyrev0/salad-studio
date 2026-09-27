@@ -108,6 +108,47 @@ class LayerMapMatchesTheModules(unittest.TestCase):
         self.assertEqual(missing, [], f"the layer map does not name: {missing}")
 
 
+class AssistPageMatchesTheManual(unittest.TestCase):
+    """The manual's Prompt Assist text names the backends the shipped page has.
+
+    The page has two backends that fill the same boxes, so a manual sentence
+    that names only DeepSeek, or a pane title that does, is a drift the reader
+    would trip over.
+    """
+
+    def test_the_manual_names_both_backends_and_matches_the_shipped_labels(self) -> None:
+        manual = " ".join(MANUAL.read_text(encoding="utf-8").split())
+        source = (PKG / "app.py").read_text(encoding="utf-8")
+        self.assertIn("Help (DeepSeek)", manual, "the manual names the DeepSeek button")
+        self.assertIn("Help (local)", manual, "and the local one")
+        self.assertIn(
+            "OpenAI-compatible", manual, "and says what the local one talks to"
+        )
+        self.assertIn(
+            "LM Studio", manual, "and where the local server usually comes from"
+        )
+
+        title = re.search(r'text="(Reply \(raw[^"]*)"', source)
+        self.assertIsNotNone(title, "the reply pane's title must be in app.py")
+        pane = str(title.group(1))
+        self.assertIn("DeepSeek", pane, f"the pane must name DeepSeek: {pane!r}")
+        self.assertIn("local", pane, f"the pane must name the local model too: {pane!r}")
+        for where, text in (("the manual", manual), ("app.py", source)):
+            self.assertNotIn(
+                "DeepSeek reply", text, f"{where} still calls the pane DeepSeek-only"
+            )
+            self.assertNotIn(
+                "no image is sent to DeepSeek",
+                text,
+                f"{where} still names one backend for the image note",
+            )
+            self.assertNotIn(
+                "Ask DeepSeek for help first",
+                text,
+                f"{where} still names one backend for the empty-commit dialog",
+            )
+
+
 class RootReadmeTestCount(unittest.TestCase):
     def _real_count(self) -> int:
         real = 0

@@ -8,7 +8,8 @@ The repo is three things sharing one workflow:
 
 - **`salad_studio/`**. The desktop app. Prompt and LoRA knobs, a JointJS node
   graph over the request JSON, Civitai and Comfy workflow import, a prompt
-  catalog, and DeepSeek-assisted prompt rewriting.
+  catalog, and prompt rewriting assisted by DeepSeek or a local LM Studio
+  server.
 - **`salad_klein/`**. The Docker build for a separate ComfyUI API container
   group (Flux.2 Klein 9B), its `prefetch.py` first-boot entrypoint, and the
   Klein prompt recipes.
@@ -27,7 +28,7 @@ Tests are `unittest`, and there are two commands. The second is not part of
 the first:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"   # 830 tests, ~6 min
+python -m unittest discover -s tests -p "test_*.py"   # 838 tests, ~6 min
 python test_salad_comfy_live_findings.py                     # root structural checks
 ```
 

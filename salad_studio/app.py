@@ -1565,7 +1565,13 @@ class SaladStudio(tk.Tk):
         self.json_status_lbl.pack(side="left", padx=(12, 0))
 
     def _build_prompt_helper_tab(self) -> None:
-        """Mirror the editor's prompts, edit an adjusted pair, ask DeepSeek for help."""
+        """Mirror the editor's prompts, edit an adjusted pair, ask a model for help.
+
+        Two backends fill the same boxes: DeepSeek (the key on the Tokens tab)
+        and the local OpenAI-compatible server (LM Studio by default) named in
+        the local URL field below. Every string here that names a backend says
+        which one, and the ones both use do not name either.
+        """
         self._helper = ttk.Frame(self.nb, padding=10)
         self._helper.columnconfigure(0, weight=1)
         self._helper.rowconfigure(1, weight=1)
@@ -1643,6 +1649,10 @@ class SaladStudio(tk.Tk):
         self.helper_commit_btn.pack(side="left")
         self.helper_state = tk.StringVar(value="Idle")
         ttk.Label(bar, textvariable=self.helper_state).pack(side="left", padx=(12, 0))
+        # What the local model the page last asked can do with an image, so the
+        # note above can say it instead of claiming the plate will be read.
+        self._helper_local_vision: bool | None = None
+        self._helper_local_model = ""
 
         local_row = ttk.Frame(self._helper)
         local_row.grid(row=4, column=0, sticky="ew", pady=(6, 0))
@@ -1657,7 +1667,7 @@ class SaladStudio(tk.Tk):
         ).pack(side="left", padx=(8, 0))
 
         reply_box = ttk.LabelFrame(
-            self._helper, text="DeepSeek reply (raw)", padding=8
+            self._helper, text="Reply (raw, from DeepSeek or the local model)", padding=8
         )
         reply_box.grid(row=5, column=0, sticky="nsew", pady=(8, 0))
         reply_box.columnconfigure(0, weight=1)
@@ -1676,11 +1686,20 @@ class SaladStudio(tk.Tk):
         return None
 
     def _refresh_helper_image_label(self) -> None:
+        """Say what the image tick will do, for the model that will answer.
+
+        The note is about the box, so it names no backend; when the local model
+        the page last asked reported that it cannot take an image, the note says
+        that rather than claiming the plate is going to be read.
+        """
         latest = self._latest_generated_image()
         if not self.var_helper_image.get():
-            text = "off, no image is sent to DeepSeek"
+            text = "off, no image is sent"
         elif latest is None:
             text = "no generated image yet, nothing will be attached"
+        elif self._helper_local_vision is False:
+            who = self._helper_local_model or "the local model"
+            text = f"{who} cannot take an image, so {latest.name} is sent but ignored"
         else:
             text = f"attaching {latest.name}"
         try:
@@ -1790,8 +1809,25 @@ class SaladStudio(tk.Tk):
                         key, findings=findings_text, image_path=image, **inputs
                     )
                 else:
+                    # Ask the local server which model will answer first, so the
+                    # page can say what that model does with an image before the
+                    # request goes out, and so the id it advertises is the one
+                    # sent. The helper would discover the same list itself.
+                    picked: dict = {}
+                    try:
+                        picked = ai_helper.choose_local_model(
+                            ai_helper.local_models(ai_helper.local_base(local_url))
+                        )
+                    except Exception as e:  # noqa: BLE001 - the call below reports it
+                        self.log("warn", f"Prompt Assist: local model list failed ({e})")
+                    if picked:
+                        self.after(0, lambda p=picked: self._note_local_model(p))
                     out = ai_helper.help_with_prompts_local(
-                        url=local_url, findings=findings_text, image_path=image, **inputs
+                        url=local_url,
+                        model=str(picked.get("id") or ""),
+                        findings=findings_text,
+                        image_path=image,
+                        **inputs,
                     )
                 self.after(0, lambda: self._helper_done(out, None, backend))
             except ai_helper.ReplyError as e:
@@ -1808,7 +1844,8 @@ class SaladStudio(tk.Tk):
         if not positive and not negative:
             messagebox.showinfo(
                 "Salad Studio",
-                "The adjusted prompts are empty. Ask DeepSeek for help first.",
+                "The adjusted prompts are empty. Ask DeepSeek or the local model "
+                "for help first.",
             )
             return
         raw = self.editor_text.get("1.0", "end").strip()
@@ -1836,6 +1873,30 @@ class SaladStudio(tk.Tk):
                 "warn",
                 "Prompt Assist: the editor JSON was rebuilt from Prompt Settings "
                 "because it could not be patched",
+            )
+
+    def _note_local_model(self, picked: dict) -> None:
+        """Record what the local model about to answer can do with an image.
+
+        Called on the Tk thread once the worker has the server's model list, so
+        the image note and the state can be honest before the reply arrives. A
+        model that reports no image support still gets the plate (the page does
+        not gate on capabilities), and the note says so instead of claiming the
+        plate is going to be read.
+        """
+        self._helper_local_model = str(picked.get("id") or "")
+        vision = picked.get("vision")
+        self._helper_local_vision = None if vision is None else bool(vision)
+        self._refresh_helper_image_label()
+        if self.var_helper_image.get() and self._helper_local_vision is False:
+            self.helper_state.set(
+                f"{self._helper_local_model} reports no image support; the plate is "
+                "sent anyway"
+            )
+            self.log(
+                "warn",
+                f"Prompt Assist: {self._helper_local_model} reports no image "
+                "support; the plate is attached anyway",
             )
 
     def _helper_done(
@@ -1882,6 +1943,15 @@ class SaladStudio(tk.Tk):
                 f"{' or '.join(blank)} prompt. What you had there is kept",
             )
         self._set_helper_reply(str(out.get("raw") or ""))
+        if backend == "local":
+            # The reply carries what the server said about the model it used;
+            # keep the note in step with it (a model picked by id is not
+            # re-discovered, so this is the only place that knows).
+            self._helper_local_model = str(out.get("model") or self._helper_local_model)
+            vision = out.get("vision")
+            if vision is not None:
+                self._helper_local_vision = bool(vision)
+                self._refresh_helper_image_label()
         found = str(out.get("issue") or "").strip()
         if found:
             self.helper_state.set(f"Adjusted prompts updated. Image issue: {found[:140]}")

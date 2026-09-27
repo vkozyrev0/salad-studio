@@ -185,8 +185,10 @@ the left and right.
   `~/.config/salad/studio-prompt-catalog.json` (not git), with Civitai tokens
   stripped from the stored LoRA URLs. The table shows Added / Short name /
   Description / Prompt / Graph.
-- **Prompt Assist**. Asks **DeepSeek** to improve a prompt pair. The top row
-  mirrors the Prompt Editor's current **positive** and **negative** prompt
+- **Prompt Assist**. Asks a model to improve a prompt pair: **Help (DeepSeek)**
+  uses the DeepSeek API (the key lives on the Tokens tab) and **Help (local)**
+  uses an OpenAI-compatible server you run yourself, LM Studio by default. The
+  top row mirrors the Prompt Editor's current **positive** and **negative** prompt
   (read-only, refreshed when you open the page or press **Refresh from Prompt
   Editor**); the second row is a pair of **adjusted** prompts you edit freely.
   They are independent of the editor, and typing in them never touches the
@@ -246,8 +248,9 @@ the left and right.
   Every referenced weight is resolved locally
   first (catalog, extras, replica disk, filename family) and then online
   (Civitai) if the local sources miss; anything still unknown is reported as
-  **UNRESOLVED** to the model rather than dropped. Model id lives in
-  `ai_helper.MODEL` (`deepseek-flash`).
+  **UNRESOLVED** to the model rather than dropped. The DeepSeek backend's model
+  id lives in `ai_helper.MODEL` (`deepseek-flash`); **Help (local)** uses the
+  model its server reports.
 - **Prompt History**. Stores the full request JSON (prompt column for
   skim, Graph column for node/LoRA/size stats). A successful Generate
   writes a 48×48 thumbnail in the first column. Double-click restores
@@ -448,7 +451,7 @@ the real freeze path the moment that gap is closed.
 Two test commands, and the second is not part of the first:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"   # 830 tests, ~6 min
+python -m unittest discover -s tests -p "test_*.py"   # 838 tests, ~6 min
 python test_salad_comfy_live_findings.py              # root structural checks
 ```
 

@@ -1,15 +1,24 @@
-"""DeepSeek-backed prompt help for the Prompt Assist page.
+"""Prompt help for the Prompt Assist page, over DeepSeek or a local model.
 
-Window-free. Three pieces, each testable on its own:
+Window-free. Two backends share everything below the transport: the page's
+**Help (DeepSeek)** button calls :func:`help_with_prompts` with the key from the
+Tokens tab, and **Help (local)** calls :func:`help_with_prompts_local` against an
+OpenAI-compatible server the user runs (LM Studio by default) at the URL in the
+page's local URL field. Both build the same body, send the same instruction and
+parse the same reply contract, so the names here say "the model" where either
+backend is meant and "DeepSeek" or "the local server" only where one is.
 
-- :func:`build_payload`, the request body sent to DeepSeek, carrying the five
-  context inputs (editor positive/negative, adjusted positive/negative, the
-  request JSON) plus the resolved weight findings.
+Three pieces, each testable on its own:
+
+- :func:`build_payload`, the chat-completions body for one Help press, carrying
+  the five context inputs (editor positive/negative, adjusted
+  positive/negative, the request JSON) plus the resolved weight findings.
 - :func:`parse_reply`, a tolerant parser for the reply's adjusted prompts,
   raising :class:`ReplyError` when the reply has no usable prompts so the
   caller can surface the raw text instead of blanking the boxes.
-- :func:`ask_deepseek`, the transport, with the HTTP send injectable at the
-  boundary so tests assert the real request the app builds.
+- :func:`ask_deepseek` and :func:`ask_local`, the two transports, with the HTTP
+  send injectable at the boundary so tests assert the real request the app
+  builds.
 
 Three rules keep a *piece* of a reply from being taken for the whole reply.
 They exist because a reasoning model (LM Studio's Ministral, DeepSeek's
@@ -124,7 +133,7 @@ MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
 
 class AiError(RuntimeError):
-    """The DeepSeek call itself failed (key, transport or HTTP status)."""
+    """The model call itself failed (key, transport or HTTP status)."""
 
 
 class ReplyError(ValueError):
@@ -181,10 +190,10 @@ def build_payload(
     max_tokens: int = MAX_TOKENS,
     meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The DeepSeek chat-completions body for one Help press.
+    """The chat-completions body for one Help press, either backend.
 
     Without an image the user message stays a plain string; with one it becomes
-    the OpenAI-style content list the DeepSeek API accepts.
+    the OpenAI-style content list both APIs accept.
     """
     note = (
         "The last generated image is attached below, inspect it and name the "
@@ -456,7 +465,7 @@ def _best_json(candidates: Iterable[str]) -> dict[str, Any] | None:
 
 
 def parse_reply_full(reply: str) -> dict[str, str]:
-    """Pull (positive, negative, issue) out of a DeepSeek reply.
+    """Pull (positive, negative, issue) out of a model reply.
 
     A reasoning model writes a trace before its answer, and the trace quotes
     JSON, this module's own schema, a first draft. So every complete object in
@@ -471,7 +480,7 @@ def parse_reply_full(reply: str) -> dict[str, str]:
     """
     text = (reply or "").strip()
     if not text:
-        raise ReplyError("DeepSeek returned an empty reply", reply or "")
+        raise ReplyError("the model returned an empty reply", reply or "")
     best = _best_json(_candidates(text))
     if best is None:
         # Nothing at the top level parsed: look again for an object the model
@@ -808,7 +817,11 @@ def help_with_prompts(
     timeout: int = TIMEOUT_S,
     meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """One Help round trip against DeepSeek: build, ask, parse."""
+    """One Help round trip against DeepSeek: build, ask, parse.
+
+    The local backend has its own :func:`help_with_prompts_local`, which
+    shares this body and this reply contract.
+    """
     image = image_data_url(image_path) if image_path else ""
     payload = build_payload(
         editor_positive=editor_positive,
@@ -1075,8 +1088,9 @@ def help_with_prompts_local(
 ) -> dict[str, Any]:
     """One Help round trip against the local LM Studio server.
 
-    The same context and reply contract as the DeepSeek call; only the transport
-    and the model id (discovered from ``/models``) differ.
+    The same context and reply contract as :func:`help_with_prompts`; only the
+    transport and the model id (discovered from the server's model list)
+    differ.
     """
     base = local_base(url)
     chosen = (model or "").strip()

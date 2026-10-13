@@ -26,6 +26,7 @@ from salad_studio import app as app_mod  # noqa: E402
 
 MANUAL = PKG / "README.md"
 ROOT_README = TOOLS / "README.md"
+DEPLOYMENT = TOOLS / "docs" / "workflow" / "23-salad-container-group-deployment.md"
 
 
 class TabListMatchesTheApp(unittest.TestCase):
@@ -171,6 +172,41 @@ class RootReadmeTestCount(unittest.TestCase):
                 real,
                 f"{path.name} says {match.group(1)} tests; the suite has {real}",
             )
+
+
+class DeploymentDocDescribesTheImages(unittest.TestCase):
+    """Both container images this repo builds must be described where they are built.
+
+    The shipped metadata document is the source of truth for which image serves
+    which unet family, and it is what a config's image tag is seeded from, so a
+    tag, a unet or the build arg that changes there and not in the deployment
+    doc is a drift the reader would trip over.
+    """
+
+    def test_the_two_family_images_are_named_with_their_unets(self) -> None:
+        doc = studio_meta.default()
+        families = (doc.get("routing") or {}).get("families") or {}
+        self.assertEqual(
+            sorted(families),
+            ["klein", "snofs"],
+            "the document must map the two unet families",
+        )
+        text = DEPLOYMENT.read_text(encoding="utf-8")
+        self.assertIn("KLEIN_UNET_SET", text, "the doc must name the build arg")
+        for family, entry in sorted(families.items()):
+            entry = entry if isinstance(entry, dict) else {}
+            image = str(entry.get(studio_meta.IMAGE) or "").strip()
+            with self.subTest(family=family):
+                self.assertTrue(image, f"family {family} names no image")
+                self.assertIn(image, text, f"the deployment doc does not name {image}")
+            for unet in entry.get(studio_meta.UNETS) or []:
+                with self.subTest(family=family, unet=unet):
+                    self.assertIn(
+                        str(unet),
+                        text,
+                        f"the deployment doc does not name {unet}, which {family} "
+                        "downloads on its first boot",
+                    )
 
 
 AUDIT = TOOLS / "docs" / "history" / "59-salad-studio-audit-2026-09-26.md"

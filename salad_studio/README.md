@@ -18,7 +18,7 @@ compact container strip with the Salad probe, right-aligned: a green dot with
 the number of ready containers, an amber dot with the number still starting and
 a red dot with the number not started, separated by `|`; a press made while a
 render is in flight is queued, not dropped), **vertical tabs** on the left
-(**Config**, **Prompt Settings**, **Tokens**, **Vast.ai**, **LoRAs**,
+(**Config**, **Prompt Settings**, **Tokens**, **Vast.ai**, **Images**, **LoRAs**,
 **Prompt Editor**, **Prompt Assist**, **Prompt Catalog**, **Import**,
 **Prompt History**, **Queue**, **Logs**).
 Bottom (always visible) = horizontal history strip with a tall button on
@@ -42,7 +42,14 @@ the left and right.
 
   The same page owns each config's **Salad policy**: the group's **image tag**,
   **GPU classes**, **US-only** country codes, the startup and readiness probe
-  fields, and **Reallocate** (confirm). The policy belongs to the selected
+  fields, and **Reallocate** (confirm). Two images are built from
+  `salad_klein/` — `eldermark-klein:…-prefetch6-klein` for the Klein family and
+  `…-prefetch6-snofs` for the SNOFS one, differing only in the unet set baked at
+  first boot — and both are described together, with their build args, ports and
+  entrypoint, in
+  [`docs/workflow/23-salad-container-group-deployment.md`](../docs/workflow/23-salad-container-group-deployment.md)
+  §1.2. Either one also runs as a vast.ai instance image (see the Vast.ai page
+  below). The policy belongs to the selected
   config — **Load from Salad** reads that config's group, **Apply to Salad**
   PATCHes that config's group (Salad, not a Docker rebuild), and **Save
   profile** stores the fields with that config, so selecting another config
@@ -93,7 +100,39 @@ the left and right.
   never sent to an instance: it authenticates the vast.ai control API only,
   while a render goes straight to the instance's own ComfyUI `/prompt` with the
   same body the Salad path POSTs and the same accepted-image transform, so the
-  plate lands in the gallery and the prompt history like any other.
+  plate lands in the gallery and the prompt history like any other. Both answers
+  an instance can give are handled: a Salad-style wrapper (the `comfyui-api`
+  image this repo's groups run, which serves port **3000**) answers with base64
+  JPEGs in `images[]`, while a plain ComfyUI (the vast.ai ComfyUI template, port
+  **8188**) answers with a `prompt_id`, so the app polls `/history/<id>` and
+  fetches the plate from `/view`. The plate's extension follows its own bytes —
+  a wrapper's JPEG is `studio_<ms>.jpg`, a native ComfyUI PNG is
+  `studio_<ms>.png` — and the gallery, the history strip and **Clean gallery**
+  read both.
+- **Images**. The container images this app deploys, and what a host needs for
+  each one: where the tag lives, the build context and build arg, the ports the
+  container answers on (the `comfyui-api` wrapper on **3000**, ComfyUI on
+  **8188**), the GPU class, the disk and the environment the container reads. The
+  facts come from the metadata document's `routing.families.<family>.deployment`,
+  so a new image is a document edit; the **Image** picker selects one (the two
+  built images, plus any you add). The **Environment** tree shows the documented
+  entries — `HF_TOKEN` and `CIVITAI_API_TOKEN` from their Tokens-tab slots, and
+  the literals such as `STARTUP_CHECK_MAX_TRIES=120` — each with where it comes
+  from and what it is for; a secret's value is masked until **show token values**
+  is ticked. **Add env** / **Remove selected** / **Save environment** edit your
+  own extra entries (a row for a documented name overrides its value) and keep
+  them in `~/.config/salad/studio-images.json` beside the profiles and the token
+  store. **Deploy** shows the commands for that image — `docker build` with the
+  build arg, `docker push`, a `docker run` for a host of your own, and the
+  `vastai create instance` line whose `--env` carries the ports and the
+  environment (the image's own ENTRYPOINT does the first-boot download, so no
+  `--onstart-cmd` is needed) — plus the **Salad portal fields** to create a group
+  with. **Copy commands** puts what is shown on the clipboard, and a secret stays
+  a `${NAME}` placeholder unless **show token values** is ticked. **Your own
+  image** adds a tag of your own (name, tag, build arg, context) so the Config
+  page and the Vast.ai page can refer to it too; removing it takes its extra
+  environment with it. This page is the app's half of
+  [`docs/workflow/23-salad-container-group-deployment.md`](../docs/workflow/23-salad-container-group-deployment.md).
 - **Logs**. Salad container log-entries for the active gateway, plus
   Studio/HTTP events (secrets redacted).
 - **LoRAs**. Known catalog LoRAs plus extras you add from a Civitai
@@ -373,11 +412,13 @@ Secrets: `salad_studio/studio-tokens.json` (not git; seeded from
 Profiles: `~/.config/salad/studio-profiles.json`. User LoRA extras:
 `~/.config/salad/studio-loras.json`. Prompt history (full `/prompt` JSON):
 `~/.config/salad/studio-prompt-history.json`. Prompt catalog (named request
-JSON): `~/.config/salad/studio-prompt-catalog.json`.
+JSON): `~/.config/salad/studio-prompt-catalog.json`. Your own images and their
+extra deployment environment: `~/.config/salad/studio-images.json`. Vast.ai
+instances and the engine choice: `~/.config/salad/studio-vast.json`.
 
 ## Layers
 
-Seven layers, one seam. `app.py` owns the window, the tab wiring and the thread
+Eight layers, one seam. `app.py` owns the window, the tab wiring and the thread
 starts; every module outside the UI layer imports and runs in a process where
 `tkinter` is never loaded. `tests/test_layers.py` drives one real call per non-UI
 layer in a subprocess and asserts exactly that, and a second test keeps the
@@ -391,6 +432,7 @@ window in `app.py`.
 | Logging | `studio_log.py` | formatted redacted log lines, and an explanation for an HTTP failure |
 | Salad communication | `generator.py`, `salad_status.py`, `salad_queue.py`, `salad_gen.py` (repo root) | a routed, queued render request, the plate it wrote, and the container lifecycle (never start, stop when idle) |
 | Vast.ai communication | `vast.py` | the account's instance list behind the Bearer key, the endpoint each instance maps, the stored instance list, and the POST that renders on one |
+| Image deployment | `image_deploy.py` | the tag, ports and environment each image needs, and the build, run and vast.ai commands that deploy it |
 | AI communication | `ai_helper.py`, `ref_check.py` | the Prompt Assist request and its parsed reply |
 
 `app.py` keeps the widgets and the wiring and nothing else that belongs to a
@@ -431,7 +473,13 @@ and the reason is carried in the document's `error` field.
   (`path`, `port`, `initial_delay_seconds`, `period_seconds`, `timeout_seconds`,
   `failure_threshold`): they are what a new config's policy starts from and what
   the Config page falls back to, so the page shows a full set of probe fields the
-  moment the window opens instead of waiting for a read. **Which profile serves
+  moment the window opens instead of waiting for a read. `deployment` is what it
+  takes to run that image on a host — the build `context`, the `base_image`, the
+  `build_arg` (which unet set the tag bakes), the `ports` the container answers
+  on (`api` 3000 and `comfy` 8188), the `env` entries the container reads (each
+  naming a Tokens-tab `token` slot or a literal `value`, with a `note`), the
+  `gpu`, `disk_gb`, `vcpu` and `memory_gb` — and the **Images** page renders it.
+  **Which profile serves
   which checkpoint is not here**: it
   is each profile's own `checkpoints` list, edited on the **Config** page, and
   routing sends a graph to the profile that lists the checkpoint it loads. A
@@ -472,7 +520,7 @@ the real freeze path the moment that gap is closed.
 Two test commands, and the second is not part of the first:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"   # 876 tests, ~6 min
+python -m unittest discover -s tests -p "test_*.py"   # 911 tests, ~6 min
 python test_salad_comfy_live_findings.py              # root structural checks
 ```
 

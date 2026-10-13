@@ -1,10 +1,10 @@
-"""The six non-UI layers run in a process where tkinter is never imported.
+"""The seven non-UI layers run in a process where tkinter is never imported.
 
 A subprocess drives one real call per layer -- import, persistence, logging,
-Salad communication, Vast.ai communication, AI communication -- and then asserts
-that ``tkinter`` is not in ``sys.modules``. The UI layer is the one that is
-allowed to import it, so a regression here means widget code crept back into a
-layer.
+Salad communication, Vast.ai communication, image deployment, AI communication
+-- and then asserts that ``tkinter`` is not in ``sys.modules``. The UI layer is
+the one that is allowed to import it, so a regression here means widget code
+crept back into a layer.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ for p in (root, root / "salad_studio"):
 
 tmp = Path(tempfile.mkdtemp())
 
-import ai_helper, comfy_import, profiles, prompt_history, request_json
+import ai_helper, comfy_import, image_deploy, profiles, prompt_history, request_json
 import salad_queue, studio_log, studio_meta, tokens, vast
 
 # --- import layer: build the Comfy graph the replica will run -------------
@@ -104,6 +104,27 @@ kept = vast.load_doc()["instances"]
 assert [row["endpoint"] for row in kept] == ["http://203.0.113.9:31234", "http://198.51.100.7:40111"], kept
 print(f"vast: listed {len(listed['instances'])} instance(s), {len(kept)} kept across a reload")
 
+# --- image deployment layer: the tag, its env, and the commands ------------
+image_deploy.SETTINGS_PATH = tmp / "studio-images.json"
+doc_meta = studio_meta.load()
+entry = image_deploy.entry_by_ref(image_deploy.entries(doc_meta, None), "klein")
+assert entry is not None and entry["tag"].endswith("prefetch6-klein"), entry
+rows = image_deploy.env_rows(entry, None, {"huggingface": "probe-hf-token"})
+assert [r["name"] for r in rows] == ["HF_TOKEN", "CIVITAI_API_TOKEN", "STARTUP_CHECK_MAX_TRIES"], rows
+assert rows[0]["value"] == "probe-hf-token"
+settings, refusal = image_deploy.add_env(image_deploy.empty_settings(), "klein", "PROBE_FLAG", "1")
+assert refusal == "", refusal
+image_deploy.save_settings(settings)
+kept_env = image_deploy.extra_env(image_deploy.load_settings(), "klein")
+assert [r["name"] for r in kept_env] == ["PROBE_FLAG"], kept_env
+script = image_deploy.deploy_script(entry, rows)
+assert "docker build" in script and "vastai create" in script
+assert "probe-hf-token" not in script, "the shown commands must not carry the token"
+print(
+    f"images: {entry['tag'].rsplit(':', 1)[-1]} {len(rows)} env entries, "
+    f"{len(kept_env)} extra kept across a reload"
+)
+
 # --- AI communication layer: build the request, parse a reply ------------
 payload = ai_helper.build_payload(editor_positive="a plate")
 system = payload["messages"][0]["content"]
@@ -133,7 +154,7 @@ class LayerSeparability(unittest.TestCase):
         print(output)
         self.assertEqual(proc.returncode, 0, f"probe failed:\n{proc.stdout}\n{proc.stderr}")
         lines = [line for line in output.splitlines() if line.strip()]
-        for prefix in ("import:", "persistence:", "logging:", "salad:", "vast:", "ai:"):
+        for prefix in ("import:", "persistence:", "logging:", "salad:", "vast:", "images:", "ai:"):
             self.assertTrue(
                 any(line.startswith(prefix) for line in lines),
                 f"no result line for {prefix}\n{output}",
@@ -148,6 +169,7 @@ class LayerSeparability(unittest.TestCase):
             "ai_helper.py",
             "comfy_import.py",
             "generator.py",
+            "image_deploy.py",
             "profiles.py",
             "prompt_history.py",
             "request_json.py",

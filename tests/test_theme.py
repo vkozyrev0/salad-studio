@@ -181,19 +181,28 @@ class ThemeOnBareRoot(unittest.TestCase):
 
 
 def _isolate_studio_io(tmp: Path) -> None:
-    from salad_studio import lora_store, profiles, prompt_history, tokens, ui_state, vast
+    from salad_studio import (
+        image_deploy,
+        lora_store,
+        profiles,
+        prompt_history,
+        tokens,
+        ui_state,
+        vast,
+    )
 
     profiles.PROFILES_PATH = tmp / "studio-profiles.json"
     lora_store.EXTRAS_PATH = tmp / "studio-loras.json"
     # Constructing the window reads the token store (log redaction), the
-    # prompt history, the saved UI state and the Vast.ai page's instance list.
-    # Keep all four off the real files.
+    # prompt history, the saved UI state, the Vast.ai page's instance list and
+    # the Images page's store. Keep all five off the real files.
     tokens.LOCAL_PATH = tmp / "studio-tokens.json"
     tokens.CONFIG_HOME = tmp / "defaults"
     prompt_history.HISTORY_PATH = tmp / "studio-prompt-history.json"
     prompt_history.THUMBS_DIR = tmp / "studio-prompt-thumbs"
     ui_state.STATE_PATH = tmp / "studio-ui.json"
     vast.INSTANCES_PATH = tmp / "studio-vast.json"
+    image_deploy.SETTINGS_PATH = tmp / "studio-images.json"
 
 
 def _tab_texts(nb: ttk.Notebook) -> list[str]:

@@ -55,16 +55,64 @@ how you find the group behind it (`find_group_by_gateway`).
 | `weights/.gitignore` | the staging target for local builds (weights themselves are not committed) |
 | `test_prefetch.py`, `test_http.py`, `test_hf_gated_access.py` | tests for the above |
 
-### 1.2 Build and push
+### 1.2 The two images: one per unet family
+
+One Dockerfile, built **twice** — once per unet family — and each family's group
+runs its own tag. The build arg `KLEIN_UNET_SET` decides what the first boot
+downloads, and that is the only difference between the two images.
+
+| Family | Tag | `KLEIN_UNET_SET` | Unets on disk after the first boot |
+|---|---|---|---|
+| `klein` | `docker.io/vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-klein` | `base,distilled` | `flux-2-klein-base-9b-fp8.safetensors`, `flux-2-klein-9b-fp8.safetensors` |
+| `snofs` | `docker.io/vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-snofs` | `snofs` | `snofsSexNudesAndOther_distilledV12KleinFp8.safetensors` |
+
+The family-to-image mapping is shipped in
+[`salad_studio/studio-metadata.json`](../../salad_studio/studio-metadata.json)
+(`routing.families.<family>.image`), which is what the Config page's **image
+tag** field is seeded from; `tests/test_docs_match.py` fails if this table stops
+naming an image, a unet or the build arg the document ships.
+
+Build and push both (`RGTHREE_COMMIT.txt` pins the node copy; weights are never
+baked):
 
 ```bash
 git clone --depth 1 https://github.com/rgthree/rgthree-comfy.git salad_klein/custom_nodes/rgthree-comfy
-docker build -t vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch4 salad_klein
-docker push vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch4
+docker build --build-arg KLEIN_UNET_SET=base,distilled \
+  -t vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-klein salad_klein
+docker push vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-klein
+docker build --build-arg KLEIN_UNET_SET=snofs \
+  -t vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-snofs salad_klein
+docker push vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-snofs
 ```
 
 The `rgthree-comfy` clone must be pinned to the commit in `RGTHREE_COMMIT.txt`
 and `COPY`d into `/opt/ComfyUI/custom_nodes/rgthree-comfy` at build time.
+
+What either image is, inside:
+
+| Piece | Value |
+|---|---|
+| Base | `ghcr.io/saladtechnologies/comfyui-api:comfy0.35.0-api1.19.2-torch2.13.0-cuda13.0-runtime` |
+| ComfyUI | `--listen 0.0.0.0 --port 8188`, its own UI and API |
+| Salad wrapper | `comfyui-api` on port **3000**: `/health`, `/ready`, and `POST /prompt` answering `images[]` as base64 JPEG (`convert_output`) |
+| ENTRYPOINT | `python /prefetch.py` — parallel weight download, then `exec ./comfyui-api` |
+| Custom nodes | `rgthree-comfy` (Image Comparer, Power Lora Loader) at the pinned commit |
+| Weights | none in any layer: the first boot fetches the set this tag was built for (~10 GB+) |
+| Size | ~12 GB image; a new replica re-downloads, because node storage is ephemeral |
+
+Both tags are interchangeable as a container **image**: the Config page's
+**image tag** (a Salad group policy) takes either one, and so does a **vast.ai
+instance** — see the Vast.ai page in
+[`salad_studio/README.md`](../../salad_studio/README.md). What a group may render
+is decided by the family its tag bakes, not by the tag's name.
+
+**The app renders all of this**: the **Images** page shows these fields for each
+tag (context, base image, build arg, ports, GPU, disk, environment) and copies
+the build, run and `vastai create` commands, so the deploy parameters live in
+one place instead of in this document alone. The page reads them from
+`routing.families.<family>.deployment` in
+[`salad_studio/studio-metadata.json`](../../salad_studio/studio-metadata.json);
+the values below are the same ones.
 
 ### 1.3 The two hard rules
 
@@ -79,8 +127,8 @@ at build:
 
 1. If a `.zip` sits next to the Comfy path, or a zip was misnamed
    `*.safetensors`, inflate it to the real `.safetensors` filename.
-2. Otherwise download both Klein unets, the SNOFS distilled v1.2 fp8 UNET, the
-   CLIP and the VAE **in parallel** (~17 GB).
+2. Otherwise download the unet set the tag was built for (`KLEIN_UNET_SET`, see
+   §1.2), the CLIP and the VAE **in parallel**.
 3. `exec` `comfyui-api`. Comfy only ever sees raw `.safetensors`.
 
 ### 1.4 Staging weights locally (optional)
@@ -136,7 +184,7 @@ https://portal.salad.com, create a **new** group; never edit an unrelated one.
 
 | Field | Set |
 |---|---|
-| Image | `YOURUSER/eldermark-klein:comfy0.35-api1.19.2-prefetch4` (private registry: add pull credentials) |
+| Image | the family's tag from §1.2: `vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-klein` for a Klein group, `…-prefetch6-snofs` for the SNOFS one (private registry: add pull credentials) |
 | GPU | RTX 4090 (24 GB). Lowest priority is fine for probes |
 | vCPU / RAM | 4+ / **30 GB** |
 | Replicas | **1** until `/ready` is green |

@@ -2,7 +2,7 @@
 
 Constructing the window hidden is the closest this Windows-only Tk app gets to
 a user launch. Two runs must agree: construction succeeds, the tab set is the
-12 tabs, the log sink receives a real line, and a SNOFS graph routes to the
+13 tabs, the log sink receives a real line, and a SNOFS graph routes to the
 SNOFS group. A pass on one run and an empty result on the other is an app
 defect, not noise to average away. The last check presses Generate twice with
 the first render still in flight: the second press must wait in the app's own
@@ -30,6 +30,7 @@ for _p in (PKG, HERE.parent):
 # repo can load the same module twice (top-level and as a package), so patching
 # the other copy would move paths the app never reads.
 from salad_studio import lora_store, profiles, prompt_catalog, prompt_history, salad_queue, studio_meta  # noqa: E402
+from salad_studio import image_deploy  # noqa: E402
 from salad_studio import tokens as tok  # noqa: E402
 from salad_studio import ui_state, vast  # noqa: E402
 
@@ -43,6 +44,7 @@ TABS = (
     "Prompt Settings",
     "Tokens",
     "Vast.ai",
+    "Images",
     "LoRAs",
     "Prompt Editor",
     "Prompt Assist",
@@ -136,6 +138,7 @@ class _TempPaths:
             "ledger": top_queue.LEDGER_PATH,
             "ledger_pkg": pkg_queue.LEDGER_PATH,
             "vast": vast.INSTANCES_PATH,
+            "images": image_deploy.SETTINGS_PATH,
         }
         profiles.PROFILES_PATH = self.tmp / "studio-profiles.json"
         profiles.GATEWAY_KLEIN_PATH = self.tmp / "gateway-klein"
@@ -154,6 +157,8 @@ class _TempPaths:
         # The Vast.ai page reads this file at construction, and its engine
         # choice decides where Generate POSTs: no test may read the real one.
         vast.INSTANCES_PATH = self.tmp / "studio-vast.json"
+        # The Images page reads the user's own images and extra environment.
+        image_deploy.SETTINGS_PATH = self.tmp / "studio-images.json"
         studio_meta.reset_cache()
         return self
 
@@ -176,6 +181,7 @@ class _TempPaths:
         top_queue.LEDGER_PATH = self.saved["ledger"]
         pkg_queue.LEDGER_PATH = self.saved["ledger_pkg"]
         vast.INSTANCES_PATH = self.saved["vast"]
+        image_deploy.SETTINGS_PATH = self.saved["images"]
         studio_meta.reset_cache()
 
 

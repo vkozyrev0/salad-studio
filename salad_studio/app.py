@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Salad Studio Windows UI: the window, its twelve tabs and the prompt graph pane.
+"""Salad Studio Windows UI: the window, its thirteen tabs and the prompt graph pane.
 
-The tabs are **Config**, **Prompt Settings**, **Tokens**, **Vast.ai**, **LoRAs**,
-**Prompt Editor**, **Prompt Assist**, **Prompt Catalog**, **Import**, **Prompt
-History**, **Queue** and **Logs**, plus the always-visible history strip. Each
+The tabs are **Config**, **Prompt Settings**, **Tokens**, **Vast.ai**,
+**Images**, **LoRAs**, **Prompt Editor**, **Prompt Assist**, **Prompt Catalog**,
+**Import**, **Prompt History**, **Queue** and **Logs**, plus the always-visible
+history strip. Each
 config carries its own Salad policy (image, GPU classes, country codes and the
 startup/readiness probes), edited on the Config page beside that config's
 checkpoints, and the Vast.ai page chooses between the Salad profiles and the
-vast.ai instances Generate renders on. This module is the UI layer: it holds the
-widgets and the wiring and calls the other six layers (`TAB_ORDER` is the one
+vast.ai instances Generate renders on while the Images page describes the
+container images both hosts run. This module is the UI layer: it holds the
+widgets and the wiring and calls the other seven layers (`TAB_ORDER` is the one
 list the notebook, the sidebar and the tab lookup all follow).
 """
 from __future__ import annotations
@@ -29,7 +31,7 @@ if str(_TOOLS) not in sys.path:
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
-from salad_studio import ai_helper, comfy_import, generator, graph_view, json_highlight, lora_store, profiles, prompt_catalog, prompt_history, ref_check, request_json, salad_status, studio_log, theme, tokens, ui_state, vast  # noqa: E402
+from salad_studio import ai_helper, comfy_import, generator, graph_view, image_deploy, json_highlight, lora_store, profiles, prompt_catalog, prompt_history, ref_check, request_json, salad_status, studio_log, studio_meta, theme, tokens, ui_state, vast  # noqa: E402
 # Top-level, like studio_log: the generator and this module must hold the same
 # salad_queue object, or a job this app submits is not a job the generator's
 # type checks accept.
@@ -47,6 +49,7 @@ TAB_ORDER = (
     "Prompt Settings",
     "Tokens",
     "Vast.ai",
+    "Images",
     "LoRAs",
     "Prompt Editor",
     "Prompt Assist",
@@ -173,6 +176,9 @@ class SaladStudio(tk.Tk):
         self._helper_busy = False
         self._token_probe_busy = False
         self._vast_fetch_busy = False
+        # The user's own images and extra deployment environment. Loaded before
+        # the Config page is built, because its image field offers these tags.
+        self._image_settings = image_deploy.load_settings()
         self._token_detail: dict[str, str] = {}
         self._lora_vars: dict[str, tk.BooleanVar] = {}
         self._lora_checks: dict[str, ttk.Checkbutton] = {}
@@ -213,6 +219,7 @@ class SaladStudio(tk.Tk):
         self._build_prompt_settings_tab()
         self._build_tokens_tab()
         self._build_vast_tab()
+        self._build_images_tab()
         self._build_loras_tab()
         self._build_editor_tab()
         self._build_prompt_helper_tab()
@@ -225,6 +232,7 @@ class SaladStudio(tk.Tk):
         self.nb.add(self._settings, text="Prompt Settings")
         self.nb.add(self._tokens, text="Tokens")
         self.nb.add(self._vast, text="Vast.ai")
+        self.nb.add(self._images, text="Images")
         self.nb.add(self._loras, text="LoRAs")
         self.nb.add(self._editor, text="Prompt Editor")
         self.nb.add(self._helper, text="Prompt Assist")
@@ -940,9 +948,16 @@ class SaladStudio(tk.Tk):
         extra.columnconfigure(1, weight=1)
         ttk.Label(extra, text="Image").grid(row=0, column=0, sticky="w")
         self.var_pol_image = tk.StringVar()
-        ttk.Entry(extra, textvariable=self.var_pol_image).grid(
-            row=0, column=1, sticky="ew", padx=6
-        )
+        # A picker over the tags the Images page describes, still editable: a
+        # group may run a tag this app has never been told about.
+        self.pol_image_box = ttk.Combobox(extra, textvariable=self.var_pol_image)
+        self.pol_image_box.grid(row=0, column=1, sticky="ew", padx=6)
+        ttk.Label(
+            extra,
+            text="a tag from the Images tab, or any other tag",
+            style="Status.TLabel",
+        ).grid(row=0, column=2, columnspan=2, sticky="w")
+        self._refresh_image_refs()
         self.var_pol_us = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             extra, text="US-only (country_codes=['us'])", variable=self.var_pol_us
@@ -1442,19 +1457,26 @@ class SaladStudio(tk.Tk):
         ttk.Label(add, text="Label").pack(side="left")
         self.var_vast_label = tk.StringVar(value="")
         ttk.Entry(add, textvariable=self.var_vast_label, width=16).pack(side="left", padx=6)
+        ttk.Label(add, text="Image").pack(side="left")
+        self.var_vast_image = tk.StringVar(value="")
+        self.vast_image_box = ttk.Combobox(
+            add, textvariable=self.var_vast_image, width=34
+        )
+        self.vast_image_box.pack(side="left", padx=6)
         ttk.Button(add, text="Add instance", command=self._on_vast_add).pack(side="left")
         ttk.Label(
             add, text="(one address, or several separated by commas)", style="Status.TLabel"
         ).pack(side="left", padx=(6, 0))
 
-        cols = ("use", "label", "endpoint", "state", "gpu")
+        cols = ("use", "label", "endpoint", "image", "state", "gpu")
         self.vast_tree = ttk.Treeview(box, columns=cols, show="headings", height=10)
         for col, heading, width, stretch in (
             ("use", "Use", 40, False),
-            ("label", "Label", 150, False),
-            ("endpoint", "Address", 240, True),
-            ("state", "State", 100, False),
-            ("gpu", "GPU", 160, True),
+            ("label", "Label", 130, False),
+            ("endpoint", "Address", 220, True),
+            ("image", "Image", 300, True),
+            ("state", "State", 90, False),
+            ("gpu", "GPU", 130, True),
         ):
             self.vast_tree.heading(col, text=heading)
             self.vast_tree.column(col, width=width, stretch=stretch, anchor="w")
@@ -1473,6 +1495,9 @@ class SaladStudio(tk.Tk):
         ttk.Button(bar, text="Save list", command=self._on_vast_save).pack(
             side="left", padx=(6, 0)
         )
+        ttk.Button(bar, text="Set image for selected", command=self._on_vast_set_image).pack(
+            side="left", padx=(6, 0)
+        )
         self.vast_fetch_btn = ttk.Button(
             bar, text="Fetch instances from Vast.ai", command=self._on_vast_fetch
         )
@@ -1481,6 +1506,7 @@ class SaladStudio(tk.Tk):
         ttk.Label(bar, textvariable=self.var_vast_status, style="Status.TLabel").pack(
             side="left", padx=(12, 0)
         )
+        self._refresh_image_refs()
         self._refresh_vast_page()
 
     def gen_mode(self) -> str:
@@ -1505,6 +1531,7 @@ class SaladStudio(tk.Tk):
                     "●" if endpoint == active else "",
                     vast.row_label(row),
                     endpoint,
+                    row.get("image") or "",
                     row.get("state") or "",
                     row.get("gpu") or "",
                 ),
@@ -1545,11 +1572,14 @@ class SaladStudio(tk.Tk):
             messagebox.showinfo("Salad Studio", "Type an instance address first.")
             return
         label = self.var_vast_label.get().strip()
+        image = self.var_vast_image.get().strip()
         doc = self._vast_doc
         added: list[str] = []
         refusals: list[str] = []
         for i, part in enumerate(parts):
-            doc, refusal = vast.add_instance(doc, part, label=label if i == 0 else "")
+            doc, refusal = vast.add_instance(
+                doc, part, label=label if i == 0 else "", image=image if i == 0 else ""
+            )
             if refusal:
                 refusals.append(refusal)
             else:
@@ -1587,6 +1617,32 @@ class SaladStudio(tk.Tk):
     def _on_vast_save(self) -> None:
         count = len(self._vast_doc.get("instances") or [])
         self._store_vast_doc(self._vast_doc, f"saved {count} instance(s)")
+
+    def _on_vast_set_image(self) -> None:
+        """Record which image a listed instance runs, so the row points at one.
+
+        The image is a reference for the reader: it is what the Images tab
+        describes, and what to run on that instance. A render does not depend on
+        it, because the instance's endpoint is what Generate POSTs to.
+        """
+        selection = self.vast_tree.selection()
+        if not selection:
+            messagebox.showinfo("Salad Studio", "Select an instance row first.")
+            return
+        endpoint = str(self.vast_tree.item(selection[0], "values")[2])
+        image = self.var_vast_image.get().strip()
+        rows = [dict(row) for row in self._vast_doc.get("instances") or []]
+        changed = False
+        for row in rows:
+            if str(row.get("endpoint") or "") == endpoint and str(row.get("image") or "") != image:
+                row["image"] = image
+                changed = True
+        if not changed:
+            return
+        doc = dict(self._vast_doc)
+        doc["instances"] = rows
+        note = f"{endpoint} runs {image}" if image else f"cleared the image on {endpoint}"
+        self._store_vast_doc(doc, note)
 
     def _on_vast_fetch(self) -> None:
         """List this account's instances with the stored key, off the Tk thread."""
@@ -1645,6 +1701,325 @@ class SaladStudio(tk.Tk):
         else:
             self.var_vast_status.set(note)
             self.log("info", f"vast.ai: {note}")
+
+    def _build_images_tab(self) -> None:
+        """The container images: where each one lives, and what a host needs.
+
+        The facts come from the metadata document, so a new image is a document
+        edit; what the user adds — extra environment entries, and images of
+        their own — is kept in ``~/.config/salad/studio-images.json``. The tags
+        here are what the Config page's image field and a Vast.ai instance row
+        refer to.
+        """
+        self._images = ttk.Frame(self.nb, padding=10)
+        self._images.columnconfigure(0, weight=1)
+        self._images.rowconfigure(2, weight=1)
+        ttk.Label(
+            self._images,
+            text=(
+                "The container images this app deploys, one per unet family. The "
+                "tag, the build arg, the ports and the documented environment come "
+                "from the metadata document; extra environment entries and your own "
+                f"images are stored in {image_deploy.SETTINGS_PATH} (not git). The "
+                "Config page's image field and a Vast.ai instance row refer to a tag "
+                "from here."
+            ),
+            wraplength=820,
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+        pick = ttk.Frame(self._images)
+        pick.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+        ttk.Label(pick, text="Image").pack(side="left")
+        self.var_image_key = tk.StringVar(value="")
+        self.image_box = ttk.Combobox(
+            pick, textvariable=self.var_image_key, state="readonly", width=28
+        )
+        self.image_box.pack(side="left", padx=6)
+        self.image_box.bind("<<ComboboxSelected>>", self._on_image_pick, add="+")
+        self.var_image_facts = tk.StringVar(value="")
+        ttk.Label(pick, textvariable=self.var_image_facts, style="Status.TLabel").pack(
+            side="left", padx=(12, 0)
+        )
+
+        box = ttk.LabelFrame(self._images, text="Environment", padding=8)
+        box.grid(row=2, column=0, sticky="nsew")
+        box.columnconfigure(0, weight=1)
+        box.rowconfigure(0, weight=1)
+        cols = ("name", "value", "source", "note")
+        self.image_env_tree = ttk.Treeview(box, columns=cols, show="headings", height=7)
+        for col, heading, width, stretch in (
+            ("name", "Variable", 190, False),
+            ("value", "Value", 210, False),
+            ("source", "From", 90, False),
+            ("note", "What it is for", 320, True),
+        ):
+            self.image_env_tree.heading(col, text=heading)
+            self.image_env_tree.column(col, width=width, stretch=stretch, anchor="w")
+        escroll = ttk.Scrollbar(box, orient="vertical", command=self.image_env_tree.yview)
+        self.image_env_tree.configure(yscrollcommand=escroll.set)
+        self.image_env_tree.grid(row=0, column=0, sticky="nsew")
+        escroll.grid(row=0, column=1, sticky="ns")
+
+        add = ttk.Frame(box)
+        add.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ttk.Label(add, text="Add").pack(side="left")
+        self.var_image_env_name = tk.StringVar(value="")
+        ttk.Entry(add, textvariable=self.var_image_env_name, width=22).pack(side="left", padx=6)
+        self.var_image_env_value = tk.StringVar(value="")
+        ttk.Entry(add, textvariable=self.var_image_env_value, width=26).pack(side="left", padx=6)
+        ttk.Button(add, text="Add env", command=self._on_image_add_env).pack(side="left")
+        ttk.Button(add, text="Remove selected", command=self._on_image_remove_env).pack(
+            side="left", padx=(6, 0)
+        )
+        ttk.Button(add, text="Save environment", command=self._on_image_save).pack(
+            side="left", padx=(6, 0)
+        )
+        self.var_image_include = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            add,
+            text="show token values",
+            variable=self.var_image_include,
+            command=self._refresh_images_page,
+        ).pack(side="left", padx=(12, 0))
+
+        dep = ttk.LabelFrame(self._images, text="Deploy", padding=8)
+        dep.grid(row=3, column=0, sticky="nsew", pady=(8, 0))
+        dep.columnconfigure(0, weight=1)
+        self.image_script = tk.Text(dep, height=12, wrap="none", state="disabled")
+        self.image_script.grid(row=0, column=0, sticky="nsew")
+        dep.rowconfigure(0, weight=1)
+        bar = ttk.Frame(dep)
+        bar.grid(row=1, column=0, sticky="ew", pady=(6, 0))
+        ttk.Button(bar, text="Copy commands", command=self._on_image_copy).pack(side="left")
+        self.var_image_status = tk.StringVar(value="")
+        ttk.Label(bar, textvariable=self.var_image_status, style="Status.TLabel").pack(
+            side="left", padx=(12, 0)
+        )
+
+        mine = ttk.LabelFrame(self._images, text="Your own image", padding=8)
+        mine.grid(row=4, column=0, sticky="ew", pady=(8, 0))
+        for column in (1, 3):
+            mine.columnconfigure(column, weight=1)
+        ttk.Label(mine, text="Name").grid(row=0, column=0, sticky="w")
+        self.var_image_new_name = tk.StringVar(value="")
+        ttk.Entry(mine, textvariable=self.var_image_new_name, width=18).grid(
+            row=0, column=1, sticky="ew", padx=6
+        )
+        ttk.Label(mine, text="Tag").grid(row=0, column=2, sticky="w")
+        self.var_image_new_tag = tk.StringVar(value="")
+        ttk.Entry(mine, textvariable=self.var_image_new_tag).grid(
+            row=0, column=3, sticky="ew", padx=6
+        )
+        ttk.Label(mine, text="Build arg").grid(row=1, column=0, sticky="w")
+        self.var_image_new_arg = tk.StringVar(value="")
+        ttk.Entry(mine, textvariable=self.var_image_new_arg).grid(
+            row=1, column=1, sticky="ew", padx=6
+        )
+        ttk.Label(mine, text="Context").grid(row=1, column=2, sticky="w")
+        self.var_image_new_context = tk.StringVar(value=image_deploy.DEFAULT_CONTEXT)
+        ttk.Entry(mine, textvariable=self.var_image_new_context).grid(
+            row=1, column=3, sticky="ew", padx=6
+        )
+        ttk.Button(mine, text="Add image", command=self._on_image_add_image).grid(
+            row=2, column=1, sticky="w", padx=6, pady=(6, 0)
+        )
+        ttk.Button(mine, text="Remove image", command=self._on_image_remove_image).grid(
+            row=2, column=3, sticky="w", padx=6, pady=(6, 0)
+        )
+        self._refresh_images_page()
+
+    def _image_entries(self) -> list[dict]:
+        """Every image the page can show: the document's, then the user's own."""
+        return image_deploy.entries(studio_meta.default(), self._image_settings)
+
+    def _image_tokens(self) -> dict[str, str]:
+        """The token values the document's environment entries ask for.
+
+        The slots come from the document rather than a literal list, so an entry
+        that names a new slot needs no code change here.
+        """
+        slots = {
+            str(row.get(studio_meta.ENV_TOKEN) or "")
+            for entry in self._image_entries()
+            for row in entry.get("env") or []
+        }
+        return {slot: tokens.read_token(slot) for slot in sorted(slots) if slot}
+
+    def _image_entry(self) -> dict | None:
+        """The entry the page is showing, or the first one."""
+        entries = self._image_entries()
+        if not entries:
+            return None
+        found = image_deploy.entry_by_ref(entries, self.var_image_key.get())
+        return found or entries[0]
+
+    def _image_env_rows(self, entry: dict) -> list[dict]:
+        return image_deploy.env_rows(
+            entry,
+            image_deploy.extra_env(self._image_settings, str(entry.get("key") or "")),
+            self._image_tokens(),
+        )
+
+    def _refresh_image_refs(self) -> None:
+        """Offer the known tags where a Salad policy or a vast.ai row refers to one."""
+        options = image_deploy.tag_options(studio_meta.default(), self._image_settings)
+        box = getattr(self, "pol_image_box", None)
+        if box is not None:
+            box.configure(values=options)
+        vast_box = getattr(self, "vast_image_box", None)
+        if vast_box is not None:
+            vast_box.configure(values=[""] + options)
+
+    def _refresh_images_page(self) -> None:
+        """Redraw the page: the picker, the facts, the environment and the script."""
+        entries = self._image_entries()
+        keys = [str(entry["key"]) for entry in entries]
+        self.image_box.configure(values=keys)
+        if self.var_image_key.get() not in keys:
+            self.var_image_key.set(keys[0] if keys else "")
+        entry = self._image_entry()
+        self.image_env_tree.delete(*self.image_env_tree.get_children())
+        if entry is None:
+            self.var_image_facts.set("no image is configured")
+            self._refresh_image_script()
+            return
+        ports = entry.get("ports") or {}
+        self.var_image_facts.set(
+            f"{entry['source']} · {entry.get('gpu') or 'any GPU'} · "
+            f"ports {ports.get(studio_meta.PORT_API) or '-'} (api) / "
+            f"{ports.get(studio_meta.PORT_COMFY) or '-'} (comfy)"
+        )
+        include = bool(self.var_image_include.get())
+        for row in self._image_env_rows(entry):
+            self.image_env_tree.insert(
+                "",
+                "end",
+                values=(
+                    row.get(studio_meta.ENV_NAME) or "",
+                    image_deploy.shown_value(row, include_values=include),
+                    row.get("source") or "",
+                    row.get(studio_meta.ENV_NOTE) or "",
+                ),
+            )
+        self._refresh_image_script()
+
+    def _refresh_image_script(self) -> None:
+        """Refill the command pane from the selected entry and its environment."""
+        entry = self._image_entry()
+        include = bool(self.var_image_include.get())
+        text = (
+            image_deploy.deploy_script(entry, self._image_env_rows(entry), include_values=include)
+            if entry is not None
+            else ""
+        )
+        self.image_script.configure(state="normal")
+        self.image_script.delete("1.0", "end")
+        self.image_script.insert("1.0", text)
+        self.image_script.configure(state="disabled")
+
+    def _on_image_pick(self, _event=None) -> None:
+        self._refresh_images_page()
+
+    def _store_image_settings(self, settings: dict, note: str) -> None:
+        """Keep an edited store in memory and on disk, then redraw the pages."""
+        self._image_settings = settings
+        try:
+            path = image_deploy.save_settings(settings)
+        except OSError as e:
+            messagebox.showerror("Salad Studio", str(e))
+            return
+        self._refresh_images_page()
+        self._refresh_image_refs()
+        self.var_image_status.set(note)
+        self.status.set(note)
+        self.log("ok", f"images: {note} -> {path}")
+
+    def _on_image_add_env(self) -> None:
+        entry = self._image_entry()
+        if entry is None:
+            return
+        settings, refusal = image_deploy.add_env(
+            self._image_settings,
+            str(entry["key"]),
+            self.var_image_env_name.get(),
+            self.var_image_env_value.get(),
+        )
+        if refusal:
+            messagebox.showinfo("Salad Studio", refusal)
+            return
+        self.var_image_env_name.set("")
+        self.var_image_env_value.set("")
+        # The name only: an environment value may be a secret.
+        self._store_image_settings(settings, f"added an environment entry to {entry['key']}")
+
+    def _on_image_remove_env(self) -> None:
+        entry = self._image_entry()
+        selection = self.image_env_tree.selection()
+        if entry is None or not selection:
+            messagebox.showinfo("Salad Studio", "Select an environment row first.")
+            return
+        name = str(self.image_env_tree.item(selection[0], "values")[0])
+        settings, removed = image_deploy.remove_env(self._image_settings, str(entry["key"]), name)
+        if not removed:
+            messagebox.showinfo(
+                "Salad Studio",
+                f"{name} comes from the metadata document, so remove it there.",
+            )
+            return
+        self._store_image_settings(settings, f"removed {name} from {entry['key']}")
+
+    def _on_image_save(self) -> None:
+        self._store_image_settings(self._image_settings, "saved the environment")
+
+    def _on_image_copy(self) -> None:
+        """Put the shown commands on the clipboard."""
+        text = self.image_script.get("1.0", "end").strip()
+        if not text:
+            messagebox.showinfo("Salad Studio", "Nothing to copy yet.")
+            return
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.update_idletasks()
+        note = (
+            "copied the commands with the token values"
+            if self.var_image_include.get()
+            else "copied the commands (tokens as placeholders)"
+        )
+        self.var_image_status.set(note)
+        self.log("ok", f"images: {note}")
+
+    def _on_image_add_image(self) -> None:
+        settings, refusal = image_deploy.add_image(
+            self._image_settings,
+            self.var_image_new_name.get(),
+            self.var_image_new_tag.get(),
+            context=self.var_image_new_context.get(),
+            build_arg=self.var_image_new_arg.get(),
+        )
+        if refusal:
+            messagebox.showinfo("Salad Studio", refusal)
+            return
+        name = self.var_image_new_name.get().strip()
+        self.var_image_new_name.set("")
+        self.var_image_new_tag.set("")
+        self.var_image_new_arg.set("")
+        self._store_image_settings(settings, f"added the image {name}")
+        self.var_image_key.set(name)
+        self._refresh_images_page()
+
+    def _on_image_remove_image(self) -> None:
+        entry = self._image_entry()
+        if entry is None or str(entry.get("source")) != image_deploy.SOURCE_SETTINGS:
+            messagebox.showinfo(
+                "Salad Studio",
+                "Only an image you added here can be removed; the document owns the rest.",
+            )
+            return
+        settings, removed = image_deploy.remove_image(self._image_settings, str(entry["key"]))
+        if not removed:
+            return
+        self.var_image_key.set("")
+        self._store_image_settings(settings, f"removed the image {entry['key']}")
 
     def _salad_api_key(self) -> str:
         return tokens.resolve_salad_key()

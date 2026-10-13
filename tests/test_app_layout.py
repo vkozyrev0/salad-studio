@@ -28,14 +28,17 @@ from lora_store import DEFAULT_KLEIN_LORA_IDS  # noqa: E402
 # this module may touch the real ~/.config/salad/studio-queue.json.
 _LEDGER_DIR = tempfile.TemporaryDirectory()
 import salad_queue as _top_queue  # noqa: E402
+from salad_studio import image_deploy as _image_deploy  # noqa: E402
 from salad_studio import salad_queue as _pkg_queue  # noqa: E402
 from salad_studio import vast as _vast  # noqa: E402
 
 _top_queue.LEDGER_PATH = Path(_LEDGER_DIR.name) / "studio-queue.json"
 _pkg_queue.LEDGER_PATH = _top_queue.LEDGER_PATH
 # Same reason for the Vast.ai page: its engine choice decides where a Generate
-# press goes, so a window built here must not read the user's own file.
+# press goes, so a window built here must not read the user's own file. The
+# Images page's store is read at construction for the same reason.
 _vast.INSTANCES_PATH = Path(_LEDGER_DIR.name) / "studio-vast.json"
+_image_deploy.SETTINGS_PATH = Path(_LEDGER_DIR.name) / "studio-images.json"
 
 
 class AppTabs(unittest.TestCase):
@@ -1128,6 +1131,7 @@ class LiveFieldSync(unittest.TestCase):
                 "Prompt Settings",
                 "Tokens",
                 "Vast.ai",
+                "Images",
                 "LoRAs",
                 "Prompt Editor",
                 "Prompt Assist",

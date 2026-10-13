@@ -216,14 +216,21 @@ def poll_history_image(
     on_log: Any | None = None,
     tries: int = 24,
     sleep_s: int = 8,
-) -> str | None:
+    pick: Any | None = None,
+) -> Any | None:
     """Poll a Comfy ``/history/{id}`` URL until it carries an image.
 
     ``fetch(url)`` performs one GET and returns ``(status, body)``, so the Salad
-    path passes its keyed transport and the vast path a keyless one. A non-200
-    answer, a body that is not JSON and an entry with no image all just wait for
-    the next try: the render is still running until Comfy says otherwise.
+    path passes its keyed transport and the vast path a keyless one. ``pick``
+    decides what counts as the plate in one answer: the default is the base64 a
+    Salad wrapper carries, and the vast path passes one that also accepts a
+    native ComfyUI file record (which the caller resolves through ``/view``). A
+    non-200 answer, a body that is not JSON and an entry with no image all just
+    wait for the next try: the render is still running until Comfy says
+    otherwise.
     """
+    finder = pick or first_image_b64
+
     def _log(level: str, message: str) -> None:
         if on_log is not None:
             on_log(level, message)
@@ -242,9 +249,9 @@ def poll_history_image(
             continue
         entry = data.get(prompt_id) if isinstance(data, dict) else None
         blob = entry if isinstance(entry, dict) else data
-        raw = first_image_b64(blob if isinstance(blob, dict) else {})
-        if raw:
-            return raw
+        found = finder(blob if isinstance(blob, dict) else {})
+        if found:
+            return found
         if isinstance(blob, dict):
             st = blob.get("status") if isinstance(blob.get("status"), dict) else {}
             if st.get("status_str") == "error" or st.get("completed") is False and st.get("status_str"):
@@ -275,19 +282,71 @@ def wait_history_image(
     )
 
 
-def write_plate(raw: str, out_dir: Path) -> Path:
-    """Decode one accepted image and write it as ``studio_<ms>.jpg``.
+def native_image_file(data: Any) -> dict[str, str] | None:
+    """The first native ComfyUI image record in an answer, or None.
 
-    Both engines end here: the accepted response carries the JPEG as base64,
-    sometimes behind a ``data:`` URL, and this file is what the gallery, the
-    history strip and the prompt history all read.
+    A plain ComfyUI answers ``/history`` with **file records**
+    (``{"filename", "subfolder", "type"}``) rather than base64: the image is
+    saved inside the container and fetched from ``/view``. Resolving that needs
+    the instance, so this returns the record and the caller does the GET.
+    """
+    outputs = data.get("outputs") if isinstance(data, dict) else None
+    if not isinstance(outputs, dict):
+        return None
+    for node in outputs.values():
+        if not isinstance(node, dict):
+            continue
+        for img in node.get("images") or []:
+            if isinstance(img, dict) and img.get("filename"):
+                return {
+                    "filename": str(img["filename"]),
+                    "subfolder": str(img.get("subfolder") or ""),
+                    "type": str(img.get("type") or "output"),
+                }
+    return None
+
+
+def fetch_view_image(
+    base: str, info: dict[str, str], *, sender: Any | None = None, on_log: Any | None = None
+) -> str:
+    """GET a native ComfyUI ``/view`` image and return it as base64 text."""
+    def _log(level: str, message: str) -> None:
+        if on_log is not None:
+            on_log(level, message)
+
+    url = vast.view_url(base, info)
+    _log("http", f"GET {url}")
+    code, body = vast.get_url(url, sender=sender)
+    if int(code) != 200 or not body:
+        raise RuntimeError(f"GET {url} HTTP {code}: the plate could not be fetched")
+    return salad_gen.base64.b64encode(body).decode("ascii")
+
+
+# The plate files this app writes. A Salad wrapper answers with a JPEG
+# (``convert_output``), while a plain ComfyUI saves what its graph says, which is
+# a PNG by default; the gallery, the history strip and Clear read both.
+PLATE_GLOBS: tuple[str, ...] = ("studio_*.jpg", "studio_*.png")
+
+
+def plate_suffix(data: bytes) -> str:
+    """The extension the plate's own bytes call for: ``.png`` or ``.jpg``."""
+    return ".png" if data.startswith(b"\x89PNG\r\n\x1a\n") else ".jpg"
+
+
+def write_plate(raw: str, out_dir: Path) -> Path:
+    """Decode one accepted image and write it as ``studio_<ms>.<ext>``.
+
+    Both engines end here: the accepted response carries the plate as base64,
+    sometimes behind a ``data:`` URL. The extension follows the bytes, so a file
+    is never labelled as something it is not.
     """
     if isinstance(raw, str) and raw.startswith("data:"):
         raw = raw.split(",", 1)[-1]
+    data = salad_gen.base64.b64decode(raw)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / f"studio_{int(time.time() * 1000)}.jpg"
-    out.write_bytes(salad_gen.base64.b64decode(raw))
+    out = out_dir / f"studio_{int(time.time() * 1000)}{plate_suffix(data)}"
+    out.write_bytes(data)
     return out
 
 
@@ -624,7 +683,7 @@ def generate_from_vast(
         data = salad_gen.json.loads(body.decode("utf-8", "replace"))
     except json.JSONDecodeError:
         raise RuntimeError(f"POST {url} answered 200 with a body that is not JSON") from None
-    raw = first_image_b64(data)
+    raw: Any = first_image_b64(data) or native_image_file(data)
     if not raw and isinstance(data, dict) and data.get("prompt_id"):
         pid = str(data.get("prompt_id"))
         errs = data.get("node_errors") or {}
@@ -642,7 +701,12 @@ def generate_from_vast(
             f"{base}/history/{pid}",
             pid,
             on_log=_log,
+            # A native ComfyUI keeps the plate in the container and names it in
+            # /history, so accept that record as well as a wrapper's base64.
+            pick=lambda blob: first_image_b64(blob) or native_image_file(blob),
         )
+    if isinstance(raw, dict):
+        raw = fetch_view_image(base, raw, sender=sender, on_log=_log)
     if not raw:
         keys = list(data)[:16] if isinstance(data, dict) else type(data)
         raise RuntimeError(f"no images in the response from {url}; keys={keys}")
@@ -698,12 +762,12 @@ def list_history(out_dir: Path) -> list[Path]:
     out_dir = Path(out_dir)
     if not out_dir.is_dir():
         return []
-    files = list(out_dir.glob("studio_*.jpg"))
+    files = [path for pattern in PLATE_GLOBS for path in out_dir.glob(pattern)]
     return sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)
 
 
 def clear_history(out_dir: Path) -> int:
-    """Delete ``studio_*.jpg`` plates in ``out_dir``. Returns how many files went."""
+    """Delete every plate in ``out_dir``. Returns how many files went."""
     n = 0
     for path in list_history(out_dir):
         try:

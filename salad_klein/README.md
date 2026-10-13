@@ -36,15 +36,34 @@ from the repo root (the whole suite runs the same way with `-p "test_*.py"`).
 
 ```
 git clone --depth 1 https://github.com/rgthree/rgthree-comfy.git salad_klein/custom_nodes/rgthree-comfy
-docker build -t vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-klein salad_klein
+docker build --build-arg KLEIN_UNET_SET=base,distilled \
+  -t vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-klein salad_klein
 docker push vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-klein
+docker build --build-arg KLEIN_UNET_SET=snofs \
+  -t vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-snofs salad_klein
+docker push vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-snofs
 ```
 
-**The live image tags are `prefetch6-klein` (base + distilled) and
-`prefetch6-snofs` (the SNOFS cut)**, one per group, per
+**Two images, one per unet family**, both built from this directory with the
+same Dockerfile. `KLEIN_UNET_SET` is the only difference: it decides what
+`prefetch.py` downloads on the first boot, and therefore what the container can
+render. One container holds one unet family in VRAM, which is why the pair
+exists.
+
+| Tag | `KLEIN_UNET_SET` | Unets fetched on first boot | Group it serves |
+|---|---|---|---|
+| `vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-klein` | `base,distilled` | `flux-2-klein-base-9b-fp8.safetensors`, `flux-2-klein-9b-fp8.safetensors` | the Klein groups (4090) |
+| `vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-snofs` | `snofs` | `snofsSexNudesAndOther_distilledV12KleinFp8.safetensors` | the SNOFS group (5090) |
+
+Both tags are the live ones, one per group, per
 [`docs/workflow/21-klein-image-handoff.md`](../docs/workflow/21-klein-image-handoff.md)
-§2, which is the entry point for this work and the authority on the tags. The
-older `prefetch3`/`prefetch4` tags below are kept as the record of how the
+§2, which is the entry point for this work and the authority on the tags, and
+both are described together in
+[`docs/workflow/23-salad-container-group-deployment.md`](../docs/workflow/23-salad-container-group-deployment.md)
+§1.2 (build args, ports, entrypoint, what is inside). Either tag also runs as a
+**vast.ai instance** image: the app's Vast.ai page renders on such an instance
+with the same image, and the ComfyUI template's own port is handled there too.
+The older `prefetch3`/`prefetch4` tags below are kept as the record of how the
 rgthree COPY was introduced. Prefetch stays weights-only —
 do not `git clone` on Salad. On the current images, `/prompt` can instantiate
 `Image Comparer (rgthree)` and `Power Lora Loader (rgthree)`. Studio

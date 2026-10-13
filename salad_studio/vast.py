@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 VAST_API = "https://console.vast.ai/api/v1"
 INSTANCES_URL = f"{VAST_API}/instances/"
@@ -164,6 +164,23 @@ def prompt_url(endpoint: str) -> str:
     return f"{normalize_endpoint(endpoint)}/prompt"
 
 
+def view_url(endpoint: str, info: dict[str, Any]) -> str:
+    """The ComfyUI ``/view`` URL of one image record a history answer carried.
+
+    A plain ComfyUI answers ``/prompt`` with a ``prompt_id`` and ``/history``
+    with file records, so the plate itself is fetched from ``/view`` with the
+    filename, subfolder and type that record names.
+    """
+    query = urlencode(
+        {
+            "filename": str((info or {}).get("filename") or ""),
+            "subfolder": str((info or {}).get("subfolder") or ""),
+            "type": str((info or {}).get("type") or "output"),
+        }
+    )
+    return f"{normalize_endpoint(endpoint)}/view?{query}"
+
+
 def instance_row(instance: dict[str, Any]) -> dict[str, Any] | None:
     """One API instance as a stored row, or None when it has no endpoint."""
     if not isinstance(instance, dict):
@@ -286,7 +303,12 @@ def get_url(
 
 
 def clean_row(row: Any) -> dict[str, Any] | None:
-    """A stored row as this app uses it, or None when it names no endpoint."""
+    """A stored row as this app uses it, or None when it names no endpoint.
+
+    ``image`` is a reference, not a fact this client checks: it records which
+    container image the instance runs, so the row points at the entry the
+    Images page describes.
+    """
     if not isinstance(row, dict):
         return None
     endpoint = normalize_endpoint(row.get("endpoint"))
@@ -298,6 +320,7 @@ def clean_row(row: Any) -> dict[str, Any] | None:
         "id": row.get("id"),
         "gpu": str(row.get("gpu") or "").strip(),
         "state": str(row.get("state") or "").strip(),
+        "image": str(row.get("image") or "").strip(),
     }
 
 

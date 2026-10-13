@@ -40,6 +40,26 @@ PLATE = base64.b64encode(
     b"\xff\xda\x00\x08\x01\x01\x00\x00?\x00\x7f?\xff\xd9"
 ).decode("ascii")
 
+# A 1x1 PNG: what a plain ComfyUI's SaveImage writes, and what ``/view`` serves.
+PNG_PLATE = base64.b64encode(
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08"
+    b"\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\xcf\xc0\xf0"
+    b"\x1f\x00\x05\x00\x01\xff\xab\xce6\x89\x00\x00\x00\x00IEND\xaeB`\x82"
+).decode("ascii")
+
+# What a plain ComfyUI answers /history with: the plate lives in the container.
+HISTORY_FILE_BODY = {
+    "abc-123": {
+        "outputs": {
+            "9": {
+                "images": [
+                    {"filename": "x_00001_.png", "subfolder": "", "type": "output"}
+                ]
+            }
+        }
+    }
+}
+
 # What the vast.ai instances endpoint answers for an account with two machines.
 INSTANCES_BODY = {
     "instances": [
@@ -165,6 +185,22 @@ class EndpointDerivation(unittest.TestCase):
 
     def test_the_prompt_url_is_the_instance_plus_prompt(self) -> None:
         self.assertEqual(vast.prompt_url("1.2.3.4:31234"), "http://1.2.3.4:31234/prompt")
+
+    def test_the_view_url_carries_the_records_own_fields(self) -> None:
+        url = vast.view_url(
+            "1.2.3.4:31234",
+            {"filename": "my plate_00001_.png", "subfolder": "sub dir", "type": "output"},
+        )
+        self.assertEqual(
+            url,
+            "http://1.2.3.4:31234/view?filename=my+plate_00001_.png"
+            "&subfolder=sub+dir&type=output",
+        )
+        self.assertEqual(
+            vast.view_url("1.2.3.4:31234", {"filename": "x.png"}),
+            "http://1.2.3.4:31234/view?filename=x.png&subfolder=&type=output",
+            "a record with no subfolder still names one",
+        )
 
 
 class ListInstances(unittest.TestCase):
@@ -424,6 +460,70 @@ class VastGeneration(unittest.TestCase):
         self.assertEqual(requests[1].full_url, "http://1.2.3.4:31234/history/abc-123")
         self.assertIsNone(_header(requests[1], "Authorization"))
         self.assertEqual(path.read_bytes(), base64.b64decode(PLATE))
+
+    def test_a_plain_comfyui_answer_is_fetched_from_view(self) -> None:
+        """A plain ComfyUI: prompt_id, then /history, then /view for the plate.
+
+        That is what the vast.ai ComfyUI template publishes on its own port, and
+        its SaveImage writes a PNG, so the plate lands as ``studio_*.png``.
+        """
+        answers = [
+            (200, json.dumps({"prompt_id": "abc-123"}).encode()),
+            (200, json.dumps(HISTORY_FILE_BODY).encode()),
+            (200, base64.b64decode(PNG_PLATE)),
+        ]
+        requests: list = []
+
+        def transport(request, timeout):
+            requests.append(request)
+            return answers.pop(0) if answers else (200, b"{}")
+
+        with mock.patch.object(generator.salad_gen.time, "sleep", lambda _s: None):
+            path = generator.generate_from_vast(
+                endpoint="203.0.113.9:31234",
+                payload=self.PAYLOAD,
+                out_dir=self.out,
+                sender=transport,
+            )
+        self.assertEqual(
+            [r.full_url for r in requests],
+            [
+                "http://203.0.113.9:31234/prompt",
+                "http://203.0.113.9:31234/history/abc-123",
+                "http://203.0.113.9:31234/view?filename=x_00001_.png&subfolder=&type=output",
+            ],
+            "the plate is fetched from /view with the record's own fields",
+        )
+        self.assertTrue(path.name.endswith(".png"), path.name)
+        self.assertEqual(path.read_bytes(), base64.b64decode(PNG_PLATE))
+        self.assertEqual(
+            generator.list_history(self.out),
+            [path],
+            "the gallery must see a PNG plate as well as a JPEG one",
+        )
+        self.assertEqual(generator.clear_history(self.out), 1)
+
+    def test_a_view_that_answers_nothing_is_reported(self) -> None:
+        answers = [
+            (200, json.dumps({"prompt_id": "abc-123"}).encode()),
+            (200, json.dumps(HISTORY_FILE_BODY).encode()),
+            (404, b"not found"),
+        ]
+
+        def transport(request, timeout):
+            return answers.pop(0) if answers else (200, b"{}")
+
+        with mock.patch.object(generator.salad_gen.time, "sleep", lambda _s: None):
+            with self.assertRaises(RuntimeError) as caught:
+                generator.generate_from_vast(
+                    endpoint="203.0.113.9:31234",
+                    payload=self.PAYLOAD,
+                    out_dir=self.out,
+                    sender=transport,
+                )
+        self.assertIn("/view", str(caught.exception))
+        self.assertIn("404", str(caught.exception))
+        self.assertEqual(list(self.out.glob("studio_*")), [], "no plate on a failure")
 
     def test_a_missing_endpoint_is_refused_by_name(self) -> None:
         with self.assertRaises(RuntimeError) as caught:

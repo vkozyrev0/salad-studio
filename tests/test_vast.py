@@ -559,6 +559,23 @@ class VastTabAndGenerate(unittest.TestCase):
         )
         self.assertEqual(fresh.gen_mode(), "vast", "and so must the engine choice")
 
+    def test_selecting_a_row_points_generate_at_that_instance(self) -> None:
+        app = self._window()
+        app.var_vast_new.set("203.0.113.9:31234, 198.51.100.7:40111")
+        app._on_vast_add()
+        second = app.vast_tree.get_children()[1]
+        app.vast_tree.selection_set(second)
+        app._on_vast_select()
+
+        self.assertEqual(app._vast_active()["endpoint"], "http://198.51.100.7:40111")
+        self.assertEqual(
+            vast.load_doc()["active"],
+            "http://198.51.100.7:40111",
+            "the choice must be on disk, not only on the page",
+        )
+        marks = [app.vast_tree.item(i, "values")[0] for i in app.vast_tree.get_children()]
+        self.assertEqual(marks, ["", "●"], "the row Generate uses is the marked one")
+
     def test_pressing_generate_renders_on_the_selected_instance(self) -> None:
         """The whole press: the page's selection, the real POST, the plate."""
         app = self._window()

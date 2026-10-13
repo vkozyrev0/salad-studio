@@ -1629,12 +1629,14 @@ class SaladStudio(tk.Tk):
         doc = self._vast_doc
         added: list[str] = []
         for row in rows:
-            doc, refusal = vast.add_instance(doc, row["endpoint"], **{
-                "label": row.get("label") or "",
-                "id": row.get("id"),
-                "gpu": row.get("gpu") or "",
-                "state": row.get("state") or "",
-            })
+            doc, refusal = vast.add_instance(
+                doc,
+                row["endpoint"],
+                label=row.get("label") or "",
+                id=row.get("id"),
+                gpu=row.get("gpu") or "",
+                state=row.get("state") or "",
+            )
             if not refusal:
                 added.append(str(row["endpoint"]))
         note = f"vast.ai listed {len(rows)} instance(s); added {len(added)}"

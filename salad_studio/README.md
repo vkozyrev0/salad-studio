@@ -472,7 +472,7 @@ the real freeze path the moment that gap is closed.
 Two test commands, and the second is not part of the first:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"   # 875 tests, ~6 min
+python -m unittest discover -s tests -p "test_*.py"   # 876 tests, ~6 min
 python test_salad_comfy_live_findings.py              # root structural checks
 ```
 

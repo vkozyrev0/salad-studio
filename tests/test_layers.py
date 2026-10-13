@@ -1,9 +1,10 @@
-"""The five non-UI layers run in a process where tkinter is never imported.
+"""The six non-UI layers run in a process where tkinter is never imported.
 
 A subprocess drives one real call per layer -- import, persistence, logging,
-Salad communication, AI communication -- and then asserts that ``tkinter`` is
-not in ``sys.modules``. The UI layer is the one that is allowed to import it, so
-a regression here means widget code crept back into a layer.
+Salad communication, Vast.ai communication, AI communication -- and then asserts
+that ``tkinter`` is not in ``sys.modules``. The UI layer is the one that is
+allowed to import it, so a regression here means widget code crept back into a
+layer.
 """
 from __future__ import annotations
 
@@ -28,7 +29,7 @@ for p in (root, root / "salad_studio"):
 tmp = Path(tempfile.mkdtemp())
 
 import ai_helper, comfy_import, profiles, prompt_history, request_json
-import salad_queue, studio_log, studio_meta, tokens
+import salad_queue, studio_log, studio_meta, tokens, vast
 
 # --- import layer: build the Comfy graph the replica will run -------------
 body = request_json.build_request(
@@ -79,6 +80,30 @@ print(
     f"profile klein5090 serves {len(seed)} checkpoint(s), queued job {job.state}"
 )
 
+# --- Vast.ai communication layer: list an account, keep two instances -----
+vast.INSTANCES_PATH = tmp / "studio-vast.json"
+sent = []
+
+
+def fake_send(request, timeout):
+    sent.append(request)
+    return 200, b'{"instances": [{"id": 1, "label": "probe", "public_ipaddr": "203.0.113.9", ' \
+                b'"ports": {"8188/tcp": [{"HostPort": 31234}]}}]}'
+
+
+listed = vast.fetch_instances("probe-vast-key", sender=fake_send)
+assert listed["status"] == 200 and len(listed["instances"]) == 1, listed
+assert sent[0].full_url == vast.INSTANCES_URL, sent[0].full_url
+assert dict(sent[0].headers)["Authorization"] == "Bearer probe-vast-key"
+doc, refusal = vast.add_instance(vast.empty_doc(), "203.0.113.9:31234", label="probe")
+assert refusal == "", refusal
+doc, refusal = vast.add_instance(doc, "198.51.100.7:40111")
+assert refusal == "", refusal
+vast.save_doc(doc)
+kept = vast.load_doc()["instances"]
+assert [row["endpoint"] for row in kept] == ["http://203.0.113.9:31234", "http://198.51.100.7:40111"], kept
+print(f"vast: listed {len(listed['instances'])} instance(s), {len(kept)} kept across a reload")
+
 # --- AI communication layer: build the request, parse a reply ------------
 payload = ai_helper.build_payload(editor_positive="a plate")
 system = payload["messages"][0]["content"]
@@ -108,7 +133,7 @@ class LayerSeparability(unittest.TestCase):
         print(output)
         self.assertEqual(proc.returncode, 0, f"probe failed:\n{proc.stdout}\n{proc.stderr}")
         lines = [line for line in output.splitlines() if line.strip()]
-        for prefix in ("import:", "persistence:", "logging:", "salad:", "ai:"):
+        for prefix in ("import:", "persistence:", "logging:", "salad:", "vast:", "ai:"):
             self.assertTrue(
                 any(line.startswith(prefix) for line in lines),
                 f"no result line for {prefix}\n{output}",
@@ -131,6 +156,7 @@ class LayerSeparability(unittest.TestCase):
             "studio_log.py",
             "studio_meta.py",
             "tokens.py",
+            "vast.py",
         ):
             text = (PKG / module).read_text(encoding="utf-8")
             self.assertNotIn(

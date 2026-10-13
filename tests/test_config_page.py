@@ -900,10 +900,10 @@ class ConfigPage(unittest.TestCase):
             "session leaves it alone",
         )
 
-    def test_generate_starts_the_routed_profiles_container(self) -> None:
-        """A stopped container is started for the profile routing picked."""
+    def test_the_apps_tick_stops_the_container_the_render_used(self) -> None:
+        """A container this app has rendered on is stopped once it idles."""
         app = self.app
-        fake = _FakeLifecycle({"klein5090": False, "klein": True})
+        fake = _FakeLifecycle({"klein5090": True, "klein": True})
         # idle_stop_s=0 so the tick below is allowed to stop it straight away.
         app.gen_queue = salad_queue.SaladQueue(
             on_log=app._on_queue_log, lifecycle=fake, sleep=lambda _s: None, idle_stop_s=0
@@ -920,8 +920,8 @@ class ConfigPage(unittest.TestCase):
 
         self.assertEqual(
             fake.actions("start"),
-            [("start", "klein5090", want_gateway)],
-            "the routed profile's container was started, once",
+            [],
+            "the queue never starts a container",
         )
         self.assertEqual(len(posts), 1, "the render POSTed once")
         self.assertIn(urlparse(posts[0]).hostname, want_gateway)
@@ -931,8 +931,8 @@ class ConfigPage(unittest.TestCase):
             "the app's tick stopped the idle container",
         )
 
-    def test_a_stopped_routed_container_is_started_and_the_render_runs(self) -> None:
-        """The press is not refused, the queue starts the container, the plate lands."""
+    def test_a_stopped_routed_container_is_refused_and_not_started(self) -> None:
+        """The press reports the container is down; the app starts nothing."""
         app = self.app
         fake = _FakeLifecycle({"klein5090": False, "klein": True})
         app.gen_queue = salad_queue.SaladQueue(
@@ -942,34 +942,46 @@ class ConfigPage(unittest.TestCase):
         _line, gateway = self._prepare_snofs_generate(app)
         app.var_salad_status.set("Stopped")  # what the badge shows for a stopped group
         app.log_text.delete("1.0", "end")
-        refusals: list[str] = []
-        with mock.patch.object(
-            self.app_mod.messagebox, "showinfo", lambda *a, **k: refusals.append(str(a))
-        ):
-            posts = self._render_once(app)
+        posts = self._render_once(app)
 
-        self.assertEqual(refusals, [], "a stopped container must not be refused")
-        self.assertNotIn(
-            "Generate blocked", app.log_text.get("1.0", "end"), "no refusal for a stopped group"
-        )
+        self.assertEqual(posts, [], "nothing may be POSTed to a container that is down")
         self.assertEqual(
             fake.actions("start"),
-            [("start", "klein5090", gateway)],
-            "the routed profile's stopped container is started once",
+            [],
+            "a stopped container must never be started for a press",
         )
         self.assertEqual(fake.actions("is_running"), [("is_running", "klein5090", gateway)])
-        self.assertEqual(len(posts), 1, "the render is POSTed after the start")
-        self.assertIn(urlparse(posts[0]).hostname, gateway)
+        log = app.log_text.get("1.0", "end")
+        self.assertIn("down", log, "the press must say the container is down")
+        self.assertIn("klein5090", log, "and name the profile")
+        jobs = app.gen_queue.jobs()
+        self.assertEqual(len(jobs), 1, "the refused request is a row on the queue page")
+        self.assertEqual(jobs[0].state, salad_queue.FAILED)
+        self.assertIn("down", jobs[0].reason)
 
     def test_an_idle_container_is_stopped_after_a_restart(self) -> None:
         """The app the user reopened still knows which container to stop.
 
         This is the failure: the queue's record lived in memory, so closing and
         reopening Studio forgot the container and the idle hour never arrived.
+        The record is one an earlier session wrote when it asked Salad to start
+        the container; the app no longer starts containers itself, so such a
+        record is what a reopened window still reads and honors.
         """
         clock = {"t": 5_000_000.0}
-        first = _FakeLifecycle({"klein5090": False, "klein": True})
         app = self.app
+        routed = profiles.load_all()["klein5090"]
+        salad_queue.save_ledger(
+            Path(salad_queue.LEDGER_PATH),
+            {
+                "klein5090": {
+                    "gateway": routed.gateway,
+                    "last_active": clock["t"] - 10,
+                    "started_by_app": True,
+                }
+            },
+        )
+        first = _FakeLifecycle({"klein5090": True, "klein": True})
         app.gen_queue = salad_queue.SaladQueue(
             on_log=app._on_queue_log,
             lifecycle=first,
@@ -977,18 +989,7 @@ class ConfigPage(unittest.TestCase):
             ledger_path=salad_queue.LEDGER_PATH,
             idle_stop_s=3600,
         )
-        tok.write_token("salad", "restart-key")
-        _line, gateway = self._prepare_snofs_generate(app)
-        self._render_once(app)
-        self.assertEqual(
-            first.actions("start"),
-            [("start", "klein5090", gateway)],
-            "the app asks Salad to start it, which is what makes it ours",
-        )
-        self.assertEqual(app.gen_queue.containers(), {"klein5090": gateway})
-        self.assertTrue(
-            salad_queue.LEDGER_PATH.is_file(), "the record must be on disk"
-        )
+        self.assertEqual(app.gen_queue.containers(), {"klein5090": routed.gateway})
         self._tick(app)
         self.assertEqual(first.actions("stop"), [], "not idle yet")
         _destroy_quietly(app)  # the user closes Studio
@@ -1008,7 +1009,7 @@ class ConfigPage(unittest.TestCase):
         )
         self.assertEqual(
             fresh.gen_queue.containers(),
-            {"klein5090": gateway},
+            {"klein5090": routed.gateway},
             "the reopened app must still own the container",
         )
         self._tick(fresh)
@@ -1016,7 +1017,7 @@ class ConfigPage(unittest.TestCase):
             _pump(fresh, lambda: bool(second.actions("stop")), 30),
             "the reopened app never asked for the idle stop",
         )
-        self.assertEqual(second.actions("stop"), [("stop", "klein5090", gateway)])
+        self.assertEqual(second.actions("stop"), [("stop", "klein5090", routed.gateway)])
         self.assertEqual(second.actions("start"), [], "it was already up")
 
 

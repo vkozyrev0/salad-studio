@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Salad Studio Windows UI: the window, its eleven tabs and the prompt graph pane.
+"""Salad Studio Windows UI: the window, its twelve tabs and the prompt graph pane.
 
-The tabs are **Config**, **Prompt Settings**, **Tokens**, **LoRAs**,
+The tabs are **Config**, **Prompt Settings**, **Tokens**, **Vast.ai**, **LoRAs**,
 **Prompt Editor**, **Prompt Assist**, **Prompt Catalog**, **Import**, **Prompt
 History**, **Queue** and **Logs**, plus the always-visible history strip. Each
 config carries its own Salad policy (image, GPU classes, country codes and the
 startup/readiness probes), edited on the Config page beside that config's
-checkpoints. This module is the UI layer: it holds the widgets and the wiring
-and calls the other five layers (`TAB_ORDER` is the one list the notebook, the
-sidebar and the tab lookup all follow).
+checkpoints, and the Vast.ai page chooses between the Salad profiles and the
+vast.ai instances Generate renders on. This module is the UI layer: it holds the
+widgets and the wiring and calls the other six layers (`TAB_ORDER` is the one
+list the notebook, the sidebar and the tab lookup all follow).
 """
 from __future__ import annotations
 
@@ -28,7 +29,7 @@ if str(_TOOLS) not in sys.path:
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
-from salad_studio import ai_helper, comfy_import, generator, graph_view, json_highlight, lora_store, profiles, prompt_catalog, prompt_history, ref_check, request_json, salad_status, studio_log, theme, tokens, ui_state  # noqa: E402
+from salad_studio import ai_helper, comfy_import, generator, graph_view, json_highlight, lora_store, profiles, prompt_catalog, prompt_history, ref_check, request_json, salad_status, studio_log, theme, tokens, ui_state, vast  # noqa: E402
 # Top-level, like studio_log: the generator and this module must hold the same
 # salad_queue object, or a job this app submits is not a job the generator's
 # type checks accept.
@@ -45,6 +46,7 @@ TAB_ORDER = (
     "Config",
     "Prompt Settings",
     "Tokens",
+    "Vast.ai",
     "LoRAs",
     "Prompt Editor",
     "Prompt Assist",
@@ -170,6 +172,7 @@ class SaladStudio(tk.Tk):
         self._idle_check_busy = False
         self._helper_busy = False
         self._token_probe_busy = False
+        self._vast_fetch_busy = False
         self._token_detail: dict[str, str] = {}
         self._lora_vars: dict[str, tk.BooleanVar] = {}
         self._lora_checks: dict[str, ttk.Checkbutton] = {}
@@ -209,6 +212,7 @@ class SaladStudio(tk.Tk):
         self._build_config_tab()
         self._build_prompt_settings_tab()
         self._build_tokens_tab()
+        self._build_vast_tab()
         self._build_loras_tab()
         self._build_editor_tab()
         self._build_prompt_helper_tab()
@@ -220,6 +224,7 @@ class SaladStudio(tk.Tk):
         self.nb.add(self._config, text="Config")
         self.nb.add(self._settings, text="Prompt Settings")
         self.nb.add(self._tokens, text="Tokens")
+        self.nb.add(self._vast, text="Vast.ai")
         self.nb.add(self._loras, text="LoRAs")
         self.nb.add(self._editor, text="Prompt Editor")
         self.nb.add(self._helper, text="Prompt Assist")
@@ -748,9 +753,10 @@ class SaladStudio(tk.Tk):
         """The one status word the dispatch decision reads. The strip shows counts.
 
         Generate's button state does not follow it: the press is the gate. A
-        queued or in-flight request, a stopped container or a booting replica all
-        leave the button live, and a press that cannot be dispatched is refused
-        with a reason when it is made (``_on_generate``).
+        queued or in-flight request and a booting replica both leave the button
+        live, and a press that cannot be dispatched — a replica that is gone, or
+        a group that is not running — is refused with a reason when it is made
+        (``_on_generate``).
         """
         self.var_salad_status.set(word)
 
@@ -1378,6 +1384,265 @@ class SaladStudio(tk.Tk):
         self._token_detail[kind] = ""
         self._render_token_state(kind)
         self._probe_tokens([kind])
+
+    def _build_vast_tab(self) -> None:
+        """Vast.ai picture generation: which engine Generate uses, and the instances.
+
+        The key is not here: it is the ``vast`` slot on the Tokens tab, stored in
+        the gitignored token file. What this page owns is the instance list and
+        the engine choice, both in ``~/.config/salad/studio-vast.json``, so
+        closing and reopening the window keeps them.
+        """
+        self._vast = ttk.Frame(self.nb, padding=10)
+        self._vast.columnconfigure(0, weight=1)
+        self._vast.rowconfigure(2, weight=1)
+        self._vast_doc = vast.load_doc()
+        ttk.Label(
+            self._vast,
+            text=(
+                "Picture generation can run on the Salad container groups or on "
+                "vast.ai instances. The Vast.ai key is the Vast.ai slot on the "
+                "Tokens tab; the instances below are stored in "
+                f"{vast.INSTANCES_PATH} (not git)."
+            ),
+            wraplength=760,
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+        mode = ttk.LabelFrame(self._vast, text="Generate with", padding=8)
+        mode.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        self.var_gen_mode = tk.StringVar(value=self._vast_doc.get("mode") or vast.MODE_SALAD)
+        ttk.Radiobutton(
+            mode,
+            text="Salad profiles",
+            value=vast.MODE_SALAD,
+            variable=self.var_gen_mode,
+            command=self._on_gen_mode,
+        ).pack(side="left")
+        ttk.Radiobutton(
+            mode,
+            text="Vast.ai instance",
+            value=vast.MODE_VAST,
+            variable=self.var_gen_mode,
+            command=self._on_gen_mode,
+        ).pack(side="left", padx=(16, 0))
+        self.var_vast_mode_note = tk.StringVar(value="")
+        ttk.Label(mode, textvariable=self.var_vast_mode_note, style="Status.TLabel").pack(
+            side="left", padx=(16, 0)
+        )
+
+        box = ttk.LabelFrame(self._vast, text="Instances", padding=8)
+        box.grid(row=2, column=0, sticky="nsew")
+        box.columnconfigure(0, weight=1)
+        box.rowconfigure(1, weight=1)
+        add = ttk.Frame(box)
+        add.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
+        ttk.Label(add, text="Address").pack(side="left")
+        self.var_vast_new = tk.StringVar(value="")
+        ttk.Entry(add, textvariable=self.var_vast_new, width=30).pack(side="left", padx=6)
+        ttk.Label(add, text="Label").pack(side="left")
+        self.var_vast_label = tk.StringVar(value="")
+        ttk.Entry(add, textvariable=self.var_vast_label, width=16).pack(side="left", padx=6)
+        ttk.Button(add, text="Add instance", command=self._on_vast_add).pack(side="left")
+        ttk.Label(
+            add, text="(one address, or several separated by commas)", style="Status.TLabel"
+        ).pack(side="left", padx=(6, 0))
+
+        cols = ("use", "label", "endpoint", "state", "gpu")
+        self.vast_tree = ttk.Treeview(box, columns=cols, show="headings", height=10)
+        for col, heading, width, stretch in (
+            ("use", "Use", 40, False),
+            ("label", "Label", 150, False),
+            ("endpoint", "Address", 240, True),
+            ("state", "State", 100, False),
+            ("gpu", "GPU", 160, True),
+        ):
+            self.vast_tree.heading(col, text=heading)
+            self.vast_tree.column(col, width=width, stretch=stretch, anchor="w")
+        self.vast_tree.tag_configure("active", foreground=theme.PALETTE["valid"])
+        vscroll = ttk.Scrollbar(box, orient="vertical", command=self.vast_tree.yview)
+        self.vast_tree.configure(yscrollcommand=vscroll.set)
+        self.vast_tree.grid(row=1, column=0, sticky="nsew")
+        vscroll.grid(row=1, column=1, sticky="ns")
+        self.vast_tree.bind("<<TreeviewSelect>>", self._on_vast_select)
+
+        bar = ttk.Frame(box)
+        bar.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ttk.Button(bar, text="Remove selected", command=self._on_vast_remove).pack(
+            side="left"
+        )
+        ttk.Button(bar, text="Save list", command=self._on_vast_save).pack(
+            side="left", padx=(6, 0)
+        )
+        self.vast_fetch_btn = ttk.Button(
+            bar, text="Fetch instances from Vast.ai", command=self._on_vast_fetch
+        )
+        self.vast_fetch_btn.pack(side="left", padx=(6, 0))
+        self.var_vast_status = tk.StringVar(value="")
+        ttk.Label(bar, textvariable=self.var_vast_status, style="Status.TLabel").pack(
+            side="left", padx=(12, 0)
+        )
+        self._refresh_vast_page()
+
+    def gen_mode(self) -> str:
+        """Which engine Generate uses: ``"salad"`` or ``"vast"``."""
+        mode = str(self.var_gen_mode.get() or "").strip().lower()
+        return mode if mode in vast.MODES else vast.MODE_SALAD
+
+    def _vast_active(self) -> dict | None:
+        """The instance Generate will POST to, or None when none is selected."""
+        return vast.active_row(self._vast_doc)
+
+    def _refresh_vast_page(self) -> None:
+        """Show the stored instances and mark the one Generate uses."""
+        active = str(self._vast_doc.get("active") or "")
+        self.vast_tree.delete(*self.vast_tree.get_children())
+        for row in self._vast_doc.get("instances") or []:
+            endpoint = str(row.get("endpoint") or "")
+            iid = self.vast_tree.insert(
+                "",
+                "end",
+                values=(
+                    "●" if endpoint == active else "",
+                    vast.row_label(row),
+                    endpoint,
+                    row.get("state") or "",
+                    row.get("gpu") or "",
+                ),
+                tags=("active",) if endpoint == active else (),
+            )
+            if endpoint == active:
+                self.vast_tree.selection_set(iid)
+        count = len(self._vast_doc.get("instances") or [])
+        chosen = vast.row_label(self._vast_active() or {}) or "(none selected)"
+        self.var_vast_mode_note.set(
+            f"{count} instance(s) saved; Generate uses {chosen} when Vast.ai is selected"
+        )
+
+    def _store_vast_doc(self, doc: dict, note: str) -> None:
+        """Keep an edited document in memory and on disk, then redraw the page."""
+        self._vast_doc = doc
+        try:
+            path = vast.save_doc(doc)
+        except OSError as e:
+            messagebox.showerror("Salad Studio", str(e))
+            return
+        self._refresh_vast_page()
+        self.var_vast_status.set(note)
+        self.status.set(note)
+        self.log("ok", f"vast.ai: {note} -> {path}")
+
+    def _on_gen_mode(self) -> None:
+        """Record the engine choice, so a reopened window still uses it."""
+        mode = self.gen_mode()
+        self._store_vast_doc(vast.set_mode(self._vast_doc, mode), f"Generate uses {mode}")
+        if mode == vast.MODE_VAST and not self._vast_active():
+            self.log("warn", "vast.ai mode selected with no instance selected")
+
+    def _on_vast_add(self) -> None:
+        """Add one or more instances the user typed, comma- or space-separated."""
+        parts = str(self.var_vast_new.get() or "").replace(",", " ").split()
+        if not parts:
+            messagebox.showinfo("Salad Studio", "Type an instance address first.")
+            return
+        label = self.var_vast_label.get().strip()
+        doc = self._vast_doc
+        added: list[str] = []
+        refusals: list[str] = []
+        for i, part in enumerate(parts):
+            doc, refusal = vast.add_instance(doc, part, label=label if i == 0 else "")
+            if refusal:
+                refusals.append(refusal)
+            else:
+                added.append(vast.normalize_endpoint(part))
+        if not added:
+            messagebox.showinfo("Salad Studio", " ".join(refusals))
+            return
+        self.var_vast_new.set("")
+        self.var_vast_label.set("")
+        self._store_vast_doc(doc, f"added {len(added)} instance(s): {', '.join(added)}")
+        if refusals:
+            self.log("warn", "vast.ai: " + " ".join(refusals))
+
+    def _on_vast_remove(self) -> None:
+        selection = self.vast_tree.selection()
+        if not selection:
+            messagebox.showinfo("Salad Studio", "Select an instance row first.")
+            return
+        endpoint = str(self.vast_tree.item(selection[0], "values")[2])
+        doc, removed = vast.remove_instance(self._vast_doc, endpoint)
+        if not removed:
+            return
+        self._store_vast_doc(doc, f"removed {endpoint}")
+
+    def _on_vast_select(self, _event=None) -> None:
+        """Selecting a row points Generate at that instance."""
+        selection = self.vast_tree.selection()
+        if not selection:
+            return
+        endpoint = str(self.vast_tree.item(selection[0], "values")[2])
+        if endpoint == str(self._vast_doc.get("active") or ""):
+            return
+        self._store_vast_doc(vast.set_active(self._vast_doc, endpoint), f"using {endpoint}")
+
+    def _on_vast_save(self) -> None:
+        count = len(self._vast_doc.get("instances") or [])
+        self._store_vast_doc(self._vast_doc, f"saved {count} instance(s)")
+
+    def _on_vast_fetch(self) -> None:
+        """List this account's instances with the stored key, off the Tk thread."""
+        if getattr(self, "_vast_fetch_busy", False):
+            return
+        key = tokens.read_token("vast")
+        if not key:
+            messagebox.showinfo(
+                "Salad Studio",
+                "Save the Vast.ai key on the Tokens tab, then fetch again.",
+            )
+            return
+        self._vast_fetch_busy = True
+        self.vast_fetch_btn.configure(state="disabled")
+        self.var_vast_status.set("asking vast.ai for this account's instances…")
+
+        def work() -> None:
+            result = vast.fetch_instances(key)
+
+            def done() -> None:
+                self._vast_fetch_busy = False
+                self.vast_fetch_btn.configure(state="normal")
+                self._apply_vast_fetch(result)
+
+            self.after(0, done)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _apply_vast_fetch(self, result: dict) -> None:
+        """Add what the vast.ai listing returned, and say what it did not."""
+        status = int(result.get("status") or 0)
+        rows = list(result.get("instances") or [])
+        if status != 200:
+            note = str(result.get("error") or f"HTTP {status}")
+            if status in (401, 403):
+                note = f"vast.ai rejected the key ({note}). Fix it on the Tokens tab."
+            self.var_vast_status.set(note)
+            self.log("warn", f"vast.ai: {note}")
+            return
+        doc = self._vast_doc
+        added: list[str] = []
+        for row in rows:
+            doc, refusal = vast.add_instance(doc, row["endpoint"], **{
+                "label": row.get("label") or "",
+                "id": row.get("id"),
+                "gpu": row.get("gpu") or "",
+                "state": row.get("state") or "",
+            })
+            if not refusal:
+                added.append(str(row["endpoint"]))
+        note = f"vast.ai listed {len(rows)} instance(s); added {len(added)}"
+        if added:
+            self._store_vast_doc(doc, note)
+        else:
+            self.var_vast_status.set(note)
+            self.log("info", f"vast.ai: {note}")
 
     def _salad_api_key(self) -> str:
         return tokens.resolve_salad_key()
@@ -4094,6 +4359,10 @@ class SaladStudio(tk.Tk):
             messagebox.showerror("Salad Studio", str(e))
 
     def _on_generate(self) -> None:
+        """Generate: Salad profiles, or a vast.ai instance, per the Vast.ai tab."""
+        if self.gen_mode() == vast.MODE_VAST:
+            self._on_generate_vast()
+            return
         # No early return on a render already in flight: the press is queued and
         # starts when the container is free, which is what salad_queue is for.
         raw = self.editor_text.get("1.0", "end").strip()
@@ -4241,6 +4510,90 @@ class SaladStudio(tk.Tk):
                 else:
                     self.var_gen_state.set(f"{self._gen_jobs} render(s) still queued")
                 self._refresh_queue_page()
+
+            self.after(0, done)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_generate_vast(self) -> None:
+        """Generate against the selected vast.ai instance.
+
+        The vast half of the press: the same editor JSON, POSTed to the
+        instance's own ComfyUI instead of a Salad gateway. No Salad queue line
+        is involved, because the instance is the user's own machine rather than
+        a container this app shares and serializes; the press runs one worker
+        and reports its outcome the way the Salad path does. The key is not
+        required here: it authenticates the vast.ai control API (the Vast.ai
+        tab's listing and the Tokens tab's check), while the render goes
+        straight to the instance.
+        """
+        raw = self.editor_text.get("1.0", "end").strip()
+        try:
+            payload = generator.parse_request_json(raw)
+        except (ValueError, json.JSONDecodeError) as e:
+            self.log("error", f"Generate aborted: invalid JSON: {e}")
+            messagebox.showerror("Salad Studio", f"Prompt Editor JSON is invalid: {e}")
+            return
+        row = self._vast_active()
+        if row is None:
+            self.log("error", "Generate aborted: no vast.ai instance is selected")
+            messagebox.showinfo(
+                "Salad Studio",
+                "No vast.ai instance is selected. Add one on the Vast.ai tab "
+                "and select it, then Generate again.",
+            )
+            return
+        endpoint = str(row["endpoint"])
+        self._gen_jobs += 1
+        first = self._gen_jobs == 1
+        self._busy = True
+        if first:
+            self._gen_t0 = time.monotonic()
+        self._gen_last_note = "queued"
+        self.var_gen_state.set("Starting…" if first else "Queued…")
+        self.status.set("Generating…")
+        self._schedule_gen_tick()
+        self._remember_request(payload)
+        self.log("info", f"Generate  vast.ai {endpoint}  {vast.row_label(row)}")
+        self.log("debug", studio_log.summarize_payload(payload))
+
+        def work() -> None:
+            err = ""
+            out: Path | None = None
+            try:
+                out = generator.generate_from_vast(
+                    endpoint=endpoint,
+                    payload=payload,
+                    out_dir=OUT_DIR,
+                    on_log=self.log,
+                )
+            except Exception as e:
+                err = str(e)
+                self.log("error", err)
+
+            def done() -> None:
+                self._gen_jobs = max(0, self._gen_jobs - 1)
+                elapsed = max(0, int(time.monotonic() - self._gen_t0))
+                if err:
+                    self.var_gen_state.set(f"Failed after {elapsed}s")
+                    self.status.set("Failed. See Logs")
+                    messagebox.showerror("Salad Studio", err)
+                else:
+                    self.var_gen_state.set(f"Done in {elapsed}s")
+                    self.status.set(f"Wrote {out}")
+                    self.log("ok", f"Generate finished  {out}")
+                    if out:
+                        try:
+                            prompt_history.attach_image(Path(out))
+                        except Exception as e:
+                            self.log("warn", f"history thumb skipped: {e}")
+                        self._refresh_prompt_history()
+                    self._refresh_history()
+                if self._gen_jobs <= 0:
+                    self._busy = False
+                    self._cancel_gen_tick()
+                else:
+                    self.var_gen_state.set(f"{self._gen_jobs} render(s) still queued")
 
             self.after(0, done)
 

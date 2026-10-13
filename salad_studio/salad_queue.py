@@ -666,14 +666,23 @@ class SaladQueue:
 
     # -- container lifecycle ----------------------------------------------
     def ensure_container(self, profile: str, gateway: str) -> str:
-        """Start ``profile``'s group when it reads stopped. Returns a refusal or "".
+        """Whether ``profile``'s group can take a request. Returns a refusal or "".
+
+        A group that is **not running** is refused, naming the profile and its
+        gateway. Starting a container is the user's call, not a side effect of
+        pressing Generate: an app that boots a container on its own also runs up
+        a bill, and a request aimed at a container the user deliberately stopped
+        must not quietly start it. The refusal tells the user to start it in the
+        Salad console and press Generate again.
 
         The state is read **every** time a request is about to be submitted: a
-        container started earlier in the session may have been stopped since
-        (the idle stop, the Salad console, a crash), so an earlier start is not
-        evidence that it is still up. A group that is already running is left
-        alone, and an inconclusive read (pending, failed, an API error) starts
-        nothing: starting on a guess could double-start it.
+        container that was up earlier in the session may have been stopped since
+        (the idle stop, the console, a crash), so an earlier read is not evidence
+        that it is still up. A group that is already running is left alone, and
+        an inconclusive read (pending, failed, an API error) refuses nothing and
+        starts nothing: a request aimed at a group whose state cannot be read is
+        still worth trying, and the readiness wait reports what the container
+        does.
         """
         name = str(profile or "").strip()
         if self.lifecycle is None or not name or not gateway:
@@ -687,22 +696,12 @@ class SaladQueue:
                 f"queue: {name} container state unknown; not starting it",
             )
             return ""
-        code, message = self.lifecycle.start(name, gateway)
-        code = int(code)
-        if 200 <= code < 300:
-            # This is where ownership comes from: the app asked for that start,
-            # so it is the one that stops the container when it idles - now, and
-            # after a restart, because the record says so.
-            self.adopt(name, gateway, started_by_app=True)
-            self._log(
-                "info",
-                f"queue: asked Salad to start {name} (HTTP {code}); the request "
-                "waits for it to become ready",
-            )
-            return ""
-        refusal = f"could not start the container for {name}: HTTP {code}"
-        if message:
-            refusal += f" ({message})"
+        refusal = (
+            f"the container for profile {name!r} ({gateway}) is down: its group is "
+            "not running, and this app does not start containers. Start it in the "
+            "Salad console, then Generate again."
+        )
+        self._log("warn", f"queue: {name} is down; not starting it ({gateway})")
         return refusal
 
     def group_state(self, profile: str, gateway: str) -> str:

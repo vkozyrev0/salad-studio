@@ -29,9 +29,13 @@ from lora_store import DEFAULT_KLEIN_LORA_IDS  # noqa: E402
 _LEDGER_DIR = tempfile.TemporaryDirectory()
 import salad_queue as _top_queue  # noqa: E402
 from salad_studio import salad_queue as _pkg_queue  # noqa: E402
+from salad_studio import vast as _vast  # noqa: E402
 
 _top_queue.LEDGER_PATH = Path(_LEDGER_DIR.name) / "studio-queue.json"
 _pkg_queue.LEDGER_PATH = _top_queue.LEDGER_PATH
+# Same reason for the Vast.ai page: its engine choice decides where a Generate
+# press goes, so a window built here must not read the user's own file.
+_vast.INSTANCES_PATH = Path(_LEDGER_DIR.name) / "studio-vast.json"
 
 
 class AppTabs(unittest.TestCase):
@@ -1123,6 +1127,7 @@ class LiveFieldSync(unittest.TestCase):
                 "Config",
                 "Prompt Settings",
                 "Tokens",
+                "Vast.ai",
                 "LoRAs",
                 "Prompt Editor",
                 "Prompt Assist",
@@ -2616,8 +2621,13 @@ class NewPagesAndPlacement(unittest.TestCase):
             if isinstance(w, ttk.LabelFrame)
         ]
         self.assertNotIn("fal.ai", boxes)
-        self.assertEqual(boxes, ["Salad API", "Hugging Face", "Civitai", "DeepSeek"])
-        self.assertEqual(list(app._token_entry), ["salad", "huggingface", "civitai", "deepseek"])
+        self.assertEqual(
+            boxes, ["Salad API", "Hugging Face", "Civitai", "DeepSeek", "Vast.ai"]
+        )
+        self.assertEqual(
+            list(app._token_entry),
+            ["salad", "huggingface", "civitai", "deepseek", "vast"],
+        )
         for kind in app._token_entry:
             with self.subTest(kind=kind):
                 self.assertIn(kind, app._token_valid_dot)

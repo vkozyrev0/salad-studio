@@ -76,11 +76,18 @@ class KeyValidity(unittest.TestCase):
 
     def test_fal_is_gone_and_every_remaining_kind_can_be_checked(self) -> None:
         kinds = [kind for kind, _l, _r in tok.TOKEN_SPECS]
-        self.assertEqual(kinds, ["salad", "huggingface", "civitai", "deepseek"])
+        self.assertEqual(kinds, ["salad", "huggingface", "civitai", "deepseek", "vast"])
         self.assertNotIn("fal", kinds)
         with self.assertRaises(KeyError):
             tok.default_path("fal")
         self.assertEqual(sorted(tok.PROBE_SPECS), sorted(kinds))
+
+    def test_the_vast_probe_url_is_the_one_the_vast_client_calls(self) -> None:
+        """The key check must exercise the call the Vast.ai page makes."""
+        from salad_studio import vast
+
+        self.assertEqual(tok.PROBE_SPECS["vast"][0], vast.INSTANCES_URL)
+        self.assertEqual(tok.token_label("vast"), "Vast.ai")
 
     def test_salad_probe_url_agrees_with_salad_status(self) -> None:
         from salad_studio import salad_status

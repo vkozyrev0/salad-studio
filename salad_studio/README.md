@@ -18,7 +18,7 @@ compact container strip with the Salad probe, right-aligned: a green dot with
 the number of ready containers, an amber dot with the number still starting and
 a red dot with the number not started, separated by `|`; a press made while a
 render is in flight is queued, not dropped), **vertical tabs** on the left
-(**Config**, **Prompt Settings**, **Tokens**, **LoRAs**,
+(**Config**, **Prompt Settings**, **Tokens**, **Vast.ai**, **LoRAs**,
 **Prompt Editor**, **Prompt Assist**, **Prompt Catalog**, **Import**,
 **Prompt History**, **Queue**, **Logs**).
 Bottom (always visible) = horizontal history strip with a tall button on
@@ -66,16 +66,34 @@ the left and right.
   **Graph** (Flux.2 Klein / Flux.1 Dev), **Scheduler** (Flux2 / Simple), the
   **Checkpoint** (Base 9B / Distilled 9B) and the **LoRA** checkboxes. These are
   the values the Prompt Editor's JSON is rebuilt from.
-- **Tokens**. Salad / Hugging Face / Civitai / DeepSeek keys in
+- **Tokens**. Salad / Hugging Face / Civitai / DeepSeek / Vast.ai keys in
   `studio-tokens.json` (gitignored). Empty slots copy from `~/.config`; the
   DeepSeek slot also reads `DEEPSEEK_API_KEY` from the environment when no
-  file has one (that value is never copied into the store).
+  file has one (that value is never copied into the store). Vast.ai has no
+  provider file convention, so the store is its only home: the **Vast.ai** page
+  reads it from there.
   Generate sends the Salad key as `Salad-Api-Key` and appends Civitai
   `?token=` on LoRA URLs at POST time. Each slot carries a validity dot:
   **green** only when a real provider call accepted the key, **red** when the
   provider rejected it, **grey** when it could not be confirmed. **Check keys**
   re-probes every slot (the page also probes when you open it, and a freshly
   saved key is probed on the spot).
+- **Vast.ai**. Which engine Generate renders on, and the vast.ai instances it
+  may use. **Generate with** chooses **Salad profiles** (the Config page's
+  containers) or **Vast.ai instance**; the choice is stored, so a reopened
+  window still uses it. The instance list holds **one or more** addresses: type
+  an address (`http://1.2.3.4:31234`, or several separated by commas) and press
+  **Add instance**, and **Fetch instances from Vast.ai** lists the account's own
+  machines with the stored key — the Bearer call to
+  `https://console.vast.ai/api/v1/instances/` — and adds the ones that publish
+  a ComfyUI port (the template's 8188, or the one other port the template maps). Selecting a row points Generate at that instance (the row is
+  marked), **Remove selected** drops one, and **Save list** writes them to
+  `~/.config/salad/studio-vast.json` beside the profiles, the queue's record and
+  the tokens, so nothing about a vast account lands in the repo. The key is
+  never sent to an instance: it authenticates the vast.ai control API only,
+  while a render goes straight to the instance's own ComfyUI `/prompt` with the
+  same body the Salad path POSTs and the same accepted-image transform, so the
+  plate lands in the gallery and the prompt history like any other.
 - **Logs**. Salad container log-entries for the active gateway, plus
   Studio/HTTP events (secrets redacted).
 - **LoRAs**. Known catalog LoRAs plus extras you add from a Civitai
@@ -284,10 +302,11 @@ the left and right.
   not retryable; **Clear finished** drops the terminal rows.
 
   **Generate is never disabled by the queue or by the status word**: a request
-  already queued or in flight, a stopped container and a booting replica all
-  leave the button live, and the press queues behind the first request instead of
-  being blocked. The press is the gate — a replica that is gone is refused with
-  its reason when the press is made, not by greying the button out. A press that
+  already queued or in flight and a booting replica both leave the button live,
+  and the press queues behind the first request instead of
+  being blocked. The press is the gate — a replica that is gone, and a group that
+  is not running, are refused with their reason when the press is made, not by
+  greying the button out. A press that
   repeats the request at the **head** of the queue adds nothing: the app digests
   the request it is about to submit and, when the queue's first item carries the
   same digest, it reports that the identical request is already queued (naming
@@ -295,30 +314,32 @@ the left and right.
   row is finished). The identical request is still accepted when it is not the
   head, so a second copy can be queued behind a different request.
 
-  The queue also owns the containers' **lifecycle**, so nothing has to be started
-  or stopped by hand. Before a request's first attempt, the queue asks Salad to
-  **start** the group behind that profile's gateway when the group is stopped
-  (`POST …/containers/{name}/start`): a container that is already running is
-  left alone, an unknown state is left alone rather than guessed at, and a start
-  Salad rejects fails that request with the control plane's own reason instead
-  of hanging. One request asks at most once — the generator asks before its own
-  readiness wait, and the dispatch that follows does not ask again.
-  The start uses the Salad token the app already stores. **Generate is not
-  refused for a stopped group**: the request is dispatched, the queue starts the
-  container it routes to, and the render waits for that container's `/ready`
-  before it POSTs — a cold start is minutes (allocate, pull, boot Comfy, finish
-  the prefetch; a replica has been seen still prefetching ten minutes in, and a
-  spawn has been seen to run past an hour), so the wait covers about ninety
-  minutes, asking every 10 s at first, then every 30 s, then every 60 s
-  (`generator.ready_sleep_s`). That is 118 requests for the whole window, where a
-  flat 10 s wait would be 540 — while the container has no ready replica every
-  answer is the same 503 page, and the status line says so in one line: the
-  gateway's HTML error page is never pasted into a log. A container
-  that never answers fails the request naming the profile, the gateway and the
-  last status it saw. Only a replica that is *gone* — failed, or an origin that
-  does not answer — is refused up front, because no start can fix it. The state
-  is read again at every dispatch, so a container stopped since the last render
-  (the idle stop, the Salad console, a crash) is started for the next request.
+  The queue also owns the containers' **lifecycle**, and it never **starts** a
+  container. Before a request's first attempt, the queue reads the state of the
+  group behind that profile's gateway: a group that is already running is left
+  alone, an unknown state is left alone rather than guessed at, and a group that
+  is **not running** refuses the request with a message naming the profile and
+  its gateway — the press reports the container is **down** and tells you to
+  start it in the Salad console, then Generate again. Starting a container is
+  your call: an app that boots one on its own runs up a bill, and a press aimed
+  at a container you deliberately stopped must not quietly start it.
+  `salad_status.start_container_group` and `stop_container_group` are the
+  control-plane calls; the app only ever uses the stop. **Generate is not
+  refused for a container that is up but not serving yet**: the request is
+  dispatched, the queue reads the state, and the render waits for that
+  container's `/ready` before it POSTs — a boot is minutes (allocate, pull, boot
+  Comfy, finish the prefetch; a replica has been seen still prefetching ten
+  minutes in, and a spawn has been seen to run past an hour), so the wait covers
+  about ninety minutes, asking every 10 s at first, then every 30 s, then every
+  60 s (`generator.ready_sleep_s`). That is 118 requests for the whole window,
+  where a flat 10 s wait would be 540 — while the container has no ready replica
+  every answer is the same 503 page, and the status line says so in one line:
+  the gateway's HTML error page is never pasted into a log. A container that
+  never answers fails the request naming the profile, the gateway and the last
+  status it saw. Only a replica that is *gone* — failed, or an origin that does
+  not answer — is refused up front, with the badge's own reason. The state is
+  read again at every dispatch, so a container stopped since the last render is
+  refused for the next request instead of being started.
   When a profile's last request has finished, the queue **stops** its group once
   it has been idle for the `queue.idle_stop_s` timeout in the metadata document
   (3600 seconds, one hour, by default), from the app's existing 15 s tick: a
@@ -328,21 +349,20 @@ the left and right.
   and when each last had work is written to `~/.config/salad/studio-queue.json`,
   so **closing and reopening Studio does not forget a container**: the idle hour
   still arrives, and the first tick past it asks for the stop. **The app stops
-  only containers it asked Salad to start.** Salad does not report who started a
-  container, so the record carries that fact itself (`started_by_app`): it is
-  written where the app asks for a start, and it is what a later session reads to
-  decide whether the stop is its to make. A record that cannot say so — one
-  written before this field existed, or one that says the app did not start that
-  container — is dropped at load with a line in the log, and its container is
-  left running, so **opening Studio never shuts down a container you started by
-  hand**. The status probe may only *follow* a container the record already owns
-  (`SaladQueue.refresh`), never claim one: finding a group running is not
-  evidence that this app started it. A request the app dispatches claims its
-  container for that session only (the app has used it, so it may stop it once it
-  idles), and a container the app started stays the app's to stop across
-  restarts. A request that runs through the queue claims its container whatever
-  the group-state read said, and a container with a request queued or in flight
-  is never stopped. The check runs off the
+  only containers it may stop.** Salad does not report who started a container,
+  so the record carries that fact itself (`started_by_app`), written by the
+  sessions that asked for a start (this app no longer starts any, so only a
+  record from an older session can carry it): a record that says so is what a
+  later session reads to decide the stop is its to make, and a record that
+  cannot say so — one written before this field existed, or one that says the
+  app did not start that container — is dropped at load with a line in the log,
+  and its container is left running, so **opening Studio never shuts down a
+  container you started by hand**. The status probe may only *follow* a
+  container the record already owns (`SaladQueue.refresh`), never claim one:
+  finding a group running is not evidence that this app started it. A request
+  the app dispatches claims its container for that session only (the app has
+  used it, so it may stop it once it idles). A container with a request queued
+  or in flight is never stopped. The check runs off the
   Tk thread, so the window never freezes while the control plane is called.
 
 Klein group, prefetch image, Civitai-vs-Comfy quality, and startup
@@ -357,7 +377,7 @@ JSON): `~/.config/salad/studio-prompt-catalog.json`.
 
 ## Layers
 
-Six layers, one seam. `app.py` owns the window, the tab wiring and the thread
+Seven layers, one seam. `app.py` owns the window, the tab wiring and the thread
 starts; every module outside the UI layer imports and runs in a process where
 `tkinter` is never loaded. `tests/test_layers.py` drives one real call per non-UI
 layer in a subprocess and asserts exactly that, and a second test keeps the
@@ -369,7 +389,8 @@ window in `app.py`.
 | Import | `comfy_import.py`, `civitai_verify.py`, `request_json.py` | a Comfy graph built from a Civitai page, a Comfy workflow, or the prompt knobs |
 | Persistence | `tokens.py`, `prompt_history.py`, `prompt_catalog.py`, `lora_store.py`, `profiles.py`, `studio_meta.py` | stored tokens, prompts, configurations, LoRAs, model info and the metadata document |
 | Logging | `studio_log.py` | formatted redacted log lines, and an explanation for an HTTP failure |
-| Salad communication | `generator.py`, `salad_status.py`, `salad_queue.py`, `salad_gen.py` (repo root) | a routed, queued render request, the plate it wrote, and the container lifecycle (start on demand, stop when idle) |
+| Salad communication | `generator.py`, `salad_status.py`, `salad_queue.py`, `salad_gen.py` (repo root) | a routed, queued render request, the plate it wrote, and the container lifecycle (never start, stop when idle) |
+| Vast.ai communication | `vast.py` | the account's instance list behind the Bearer key, the endpoint each instance maps, the stored instance list, and the POST that renders on one |
 | AI communication | `ai_helper.py`, `ref_check.py` | the Prompt Assist request and its parsed reply |
 
 `app.py` keeps the widgets and the wiring and nothing else that belongs to a
@@ -451,7 +472,7 @@ the real freeze path the moment that gap is closed.
 Two test commands, and the second is not part of the first:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"   # 838 tests, ~6 min
+python -m unittest discover -s tests -p "test_*.py"   # 875 tests, ~6 min
 python test_salad_comfy_live_findings.py              # root structural checks
 ```
 

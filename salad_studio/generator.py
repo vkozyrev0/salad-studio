@@ -23,6 +23,7 @@ from request_json import (  # noqa: E402
     lora_url_label,
     payload_has_civitai_download,
 )
+from salad_studio import vast  # noqa: E402
 from studio_log import (  # noqa: E402
     explain_http,
     prompt_url,
@@ -207,25 +208,29 @@ def first_image_b64(data: Any) -> str | None:
     return None
 
 
-def wait_history_image(
-    gateway: str,
-    key: str,
+def poll_history_image(
+    fetch: Any,
+    url: str,
     prompt_id: str,
     *,
     on_log: Any | None = None,
     tries: int = 24,
     sleep_s: int = 8,
 ) -> str | None:
-    """Poll Comfy ``/history/{id}`` when POST /prompt only returned a prompt_id."""
+    """Poll a Comfy ``/history/{id}`` URL until it carries an image.
+
+    ``fetch(url)`` performs one GET and returns ``(status, body)``, so the Salad
+    path passes its keyed transport and the vast path a keyless one. A non-200
+    answer, a body that is not JSON and an entry with no image all just wait for
+    the next try: the render is still running until Comfy says otherwise.
+    """
     def _log(level: str, message: str) -> None:
         if on_log is not None:
             on_log(level, message)
 
-    base = (gateway or "").rstrip("/")
-    url = f"{base}/history/{prompt_id}"
     for attempt in range(tries):
         _log("http", f"GET {url}  {attempt + 1}/{tries}")
-        code, body = salad_gen._req(url, key, timeout=30)
+        code, body = fetch(url)
         if code != 200:
             _log("warn", f"GET {url} HTTP {code}")
             salad_gen.time.sleep(sleep_s)
@@ -247,6 +252,43 @@ def wait_history_image(
                 return None
         salad_gen.time.sleep(sleep_s)
     return None
+
+
+def wait_history_image(
+    gateway: str,
+    key: str,
+    prompt_id: str,
+    *,
+    on_log: Any | None = None,
+    tries: int = 24,
+    sleep_s: int = 8,
+) -> str | None:
+    """Poll Comfy ``/history/{id}`` on a Salad gateway for a prompt_id answer."""
+    base = (gateway or "").rstrip("/")
+    return poll_history_image(
+        lambda url: salad_gen._req(url, key, timeout=30),
+        f"{base}/history/{prompt_id}",
+        prompt_id,
+        on_log=on_log,
+        tries=tries,
+        sleep_s=sleep_s,
+    )
+
+
+def write_plate(raw: str, out_dir: Path) -> Path:
+    """Decode one accepted image and write it as ``studio_<ms>.jpg``.
+
+    Both engines end here: the accepted response carries the JPEG as base64,
+    sometimes behind a ``data:`` URL, and this file is what the gallery, the
+    history strip and the prompt history all read.
+    """
+    if isinstance(raw, str) and raw.startswith("data:"):
+        raw = raw.split(",", 1)[-1]
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"studio_{int(time.time() * 1000)}.jpg"
+    out.write_bytes(salad_gen.base64.b64decode(raw))
+    return out
 
 
 def parse_request_json(text: str) -> dict[str, Any]:
@@ -349,31 +391,24 @@ def _attempt_error(attempt: salad_queue.Attempt, url: str, job: salad_queue.Job)
     return f"POST {url} never answered: {attempt.error or job.reason or 'no response'}"
 
 
-def generate_from_payload(
-    *,
-    gateway: str,
-    key: str,
+def prepare_body(
     payload: dict[str, Any] | str,
-    out_dir: Path,
+    *,
     on_log: Any | None = None,
-    queue: salad_queue.SaladQueue | None = None,
-    line: str = "",
-    checksum: str = "",
-) -> Path:
-    """POST the Prompt Editor JSON to Salad ``/prompt`` and write a JPEG.
+    label: str = "Salad",
+) -> dict[str, Any]:
+    """The body a Comfy replica is POSTed, built from the Prompt Editor JSON.
 
-    The POST goes through ``queue`` (the process-wide one by default), on the
-    line named by ``line``: the profile whose container serves this graph. Jobs
-    on other lines run beside it, jobs on this line wait their turn, and one the
-    container cannot serve yet is retried there. ``checksum`` is the caller's
-    digest of the request, carried on the job so the press that submitted it can
-    recognise a repeat of the queue's head (see ``salad_queue.request_checksum``).
+    Both engines POST the same graph, so the work between the editor's JSON and
+    the bytes on the wire lives here once: attach the Civitai token the graph's
+    LoRA downloads need, drop the node types the replica is known to lack, and
+    check the LoRA URLs while that is still cheap (a dead URL otherwise surfaces
+    as an opaque 524 after the GPU has done the work). ``label`` only names the
+    engine in the log line.
     """
     def _log(level: str, message: str) -> None:
         if on_log is not None:
             on_log(level, message)
-
-    line_queue = queue if queue is not None else salad_queue.shared()
 
     if isinstance(payload, str):
         body_obj = parse_request_json(payload)
@@ -401,7 +436,7 @@ def generate_from_payload(
             body_obj["prompt"] = safe
             _log(
                 "info",
-                "Salad POST omits replica-missing node types "
+                f"{label} POST omits replica-missing node types "
                 "(editor graph unchanged).",
             )
     if isinstance(body_obj.get("prompt"), dict):
@@ -410,6 +445,35 @@ def generate_from_payload(
         # fetches each LoRA itself when the Comfy graph runs, using the ?token=
         # that authorize_civitai_urls put on the node's lora_name.
         check_lora_urls(body_obj["prompt"], on_log=_log)
+    return body_obj
+
+
+def generate_from_payload(
+    *,
+    gateway: str,
+    key: str,
+    payload: dict[str, Any] | str,
+    out_dir: Path,
+    on_log: Any | None = None,
+    queue: salad_queue.SaladQueue | None = None,
+    line: str = "",
+    checksum: str = "",
+) -> Path:
+    """POST the Prompt Editor JSON to Salad ``/prompt`` and write a JPEG.
+
+    The POST goes through ``queue`` (the process-wide one by default), on the
+    line named by ``line``: the profile whose container serves this graph. Jobs
+    on other lines run beside it, jobs on this line wait their turn, and one the
+    container cannot serve yet is retried there. ``checksum`` is the caller's
+    digest of the request, carried on the job so the press that submitted it can
+    recognise a repeat of the queue's head (see ``salad_queue.request_checksum``).
+    """
+    def _log(level: str, message: str) -> None:
+        if on_log is not None:
+            on_log(level, message)
+
+    line_queue = queue if queue is not None else salad_queue.shared()
+    body_obj = prepare_body(payload, on_log=on_log, label="Salad")
     blob = salad_gen.json.dumps(body_obj).encode()
     url = prompt_url(gateway)
     _log("http", f"POST {url}  {len(blob)} bytes  {summarize_payload(body_obj)}")
@@ -508,14 +572,81 @@ def generate_from_payload(
         msg = _attempt_error(attempt, url, job)
         _log("error", msg)
         raise RuntimeError(msg)
-    raw = attempt.result
-    if isinstance(raw, str) and raw.startswith("data:"):
-        raw = raw.split(",", 1)[-1]
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    unixms = int(time.time() * 1000)
-    out = out_dir / f"studio_{unixms}.jpg"
-    out.write_bytes(salad_gen.base64.b64decode(raw))
+    out = write_plate(attempt.result, out_dir)
+    _log("ok", f"wrote {out}  {out.stat().st_size} bytes")
+    return out
+
+
+def generate_from_vast(
+    *,
+    endpoint: str,
+    payload: dict[str, Any] | str,
+    out_dir: Path,
+    on_log: Any | None = None,
+    sender: Any | None = None,
+    timeout: int = _PROMPT_TIMEOUT_S,
+) -> Path:
+    """POST the Prompt Editor JSON to a vast.ai instance's ComfyUI and write a JPEG.
+
+    The vast half of Generate: the same body preparation and the same
+    accepted-image transform the Salad path uses, with the instance's own
+    ``/prompt`` as the target instead of a Salad gateway. There is no readiness
+    wait and no queue line, because the instance is the user's own machine: it
+    is either up and answering or the POST says why not.
+
+    ``sender(request, timeout)`` replaces the transport, so a test drives a real
+    POST through a recorded request. No token is sent to the instance — the
+    vast.ai key only ever authenticates the control API — so ``sender`` sees a
+    request that carries none.
+    """
+    def _log(level: str, message: str) -> None:
+        if on_log is not None:
+            on_log(level, message)
+
+    base = vast.normalize_endpoint(endpoint)
+    if not base:
+        raise RuntimeError(
+            "No vast.ai instance is selected. Add one on the Vast.ai tab and "
+            "select it, then Generate again."
+        )
+    body_obj = prepare_body(payload, on_log=on_log, label="Vast")
+    blob = salad_gen.json.dumps(body_obj).encode()
+    url = vast.prompt_url(base)
+    _log("http", f"POST {url}  {len(blob)} bytes  {summarize_payload(body_obj)}")
+    code, body = vast.post_prompt(base, blob, sender=sender, timeout=timeout)
+    code = int(code)
+    if code != 200:
+        msg = explain_http(code, body, url)
+        _log("error", msg)
+        raise RuntimeError(msg)
+    _log("ok", f"HTTP 200 from {url}")
+    try:
+        data = salad_gen.json.loads(body.decode("utf-8", "replace"))
+    except json.JSONDecodeError:
+        raise RuntimeError(f"POST {url} answered 200 with a body that is not JSON") from None
+    raw = first_image_b64(data)
+    if not raw and isinstance(data, dict) and data.get("prompt_id"):
+        pid = str(data.get("prompt_id"))
+        errs = data.get("node_errors") or {}
+        if errs:
+            raise RuntimeError(
+                f"Comfy node_errors for {pid}: {json.dumps(errs)[:800]}"
+            )
+        _log(
+            "info",
+            f"Comfy queued prompt_id={pid}; polling /history "
+            "(wrapper returned no images[])",
+        )
+        raw = poll_history_image(
+            lambda u: vast.get_url(u, sender=sender),
+            f"{base}/history/{pid}",
+            pid,
+            on_log=_log,
+        )
+    if not raw:
+        keys = list(data)[:16] if isinstance(data, dict) else type(data)
+        raise RuntimeError(f"no images in the response from {url}; keys={keys}")
+    out = write_plate(raw, out_dir)
     _log("ok", f"wrote {out}  {out.stat().st_size} bytes")
     return out
 

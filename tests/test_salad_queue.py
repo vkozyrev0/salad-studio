@@ -607,7 +607,13 @@ class _FakeLifecycle:
 
 
 class LifecycleStartTest(unittest.TestCase):
-    """The queue starts the container a request needs, once."""
+    """A container that is not running is refused, never started.
+
+    Starting a container is the user's call: an app that boots one on its own
+    runs up a bill, and a request aimed at a container the user stopped must not
+    quietly start it. Every test here that used to assert a start asserts the
+    refusal instead, and that Salad was never asked.
+    """
 
     KLEIN_GW = "https://klein.example/"
     SNOFS_GW = "https://snofs.example/"
@@ -621,7 +627,7 @@ class LifecycleStartTest(unittest.TestCase):
 
         return transport
 
-    def test_a_stopped_container_is_started_once_and_the_request_runs(self) -> None:
+    def test_a_stopped_container_is_refused_and_never_started(self) -> None:
         life = _FakeLifecycle({"klein": False})
         line, _gate, logs = _queue(lifecycle=life)
         calls: list[str] = []
@@ -630,19 +636,16 @@ class LifecycleStartTest(unittest.TestCase):
             self._accept(calls),
             line="klein",
         )
-        self.assertEqual(job.state, q.ACCEPTED)
-        self.assertEqual(job.result.result, "plate-klein")
-        self.assertEqual(
-            life.actions("start"),
-            [("start", "klein", self.KLEIN_GW)],
-            "exactly one start, naming that profile's gateway",
-        )
-        self.assertEqual(calls, ["klein"], "the request ran after the start")
-        self.assertEqual(line.containers(), {"klein": self.KLEIN_GW})
-        self.assertTrue(any("asked Salad to start" in entry for entry in logs))
+        self.assertEqual(job.state, q.FAILED)
+        self.assertEqual(life.actions("start"), [], "no start may be asked for")
+        self.assertEqual(calls, [], "the request never reached the transport")
+        self.assertIn("klein", job.reason, "the refusal names the profile")
+        self.assertIn(self.KLEIN_GW, job.reason, "and its gateway")
+        self.assertIn("down", job.reason)
+        self.assertTrue(any("is down; not starting it" in entry for entry in logs))
 
-    def test_a_container_that_went_stopped_since_the_last_request_is_started_again(self) -> None:
-        """A start earlier in the session is not proof the container is still up."""
+    def test_a_container_that_went_stopped_since_the_last_request_is_refused(self) -> None:
+        """A state read earlier in the session is not evidence it is still up."""
         life = _FakeLifecycle({"klein": True})
         line, _gate, _logs = _queue(lifecycle=life)
         calls: list[str] = []
@@ -656,11 +659,9 @@ class LifecycleStartTest(unittest.TestCase):
         second = line.deliver(
             {"gateway": self.KLEIN_GW, "profile": "klein"}, self._accept(calls), line="klein"
         )
-        self.assertEqual(second.state, q.ACCEPTED)
+        self.assertEqual(second.state, q.FAILED)
         self.assertEqual(
-            life.actions("start"),
-            [("start", "klein", self.KLEIN_GW)],
-            "the second request must start it again",
+            life.actions("start"), [], "the second request must not start it"
         )
         self.assertEqual(
             life.actions("is_running"),
@@ -671,9 +672,9 @@ class LifecycleStartTest(unittest.TestCase):
             "the state is read again at every dispatch",
         )
 
-    def test_a_dispatch_that_already_ensured_the_container_does_not_ask_twice(self) -> None:
+    def test_a_dispatch_that_already_ensured_the_container_reads_the_state_once(self) -> None:
         """The generator ensures before it waits, then dispatches with ensure=False."""
-        life = _FakeLifecycle({"klein": False})
+        life = _FakeLifecycle({"klein": True})
         line, _gate, _logs = _queue(lifecycle=life)
         calls: list[str] = []
         refusal = line.ensure_container("klein", self.KLEIN_GW)
@@ -686,10 +687,11 @@ class LifecycleStartTest(unittest.TestCase):
         )
         self.assertEqual(job.state, q.ACCEPTED)
         self.assertEqual(
-            life.actions("start"),
-            [("start", "klein", self.KLEIN_GW)],
-            "one start for the request, not two",
+            life.actions("is_running"),
+            [("is_running", "klein", self.KLEIN_GW)],
+            "one read for the request, not two",
         )
+        self.assertEqual(life.actions("start"), [])
 
     def test_a_running_container_is_not_started(self) -> None:
         life = _FakeLifecycle({"klein": True})
@@ -713,7 +715,7 @@ class LifecycleStartTest(unittest.TestCase):
         self.assertEqual(life.actions("start"), [], "never start on a guess")
         self.assertTrue(any("state unknown" in entry for entry in logs))
 
-    def test_two_profiles_each_start_their_own_container(self) -> None:
+    def test_two_profiles_each_refuse_their_own_stopped_container(self) -> None:
         life = _FakeLifecycle({"klein": False, "snofs": False})
         line, _gate, _logs = _queue(lifecycle=life)
         calls: list[str] = []
@@ -723,33 +725,30 @@ class LifecycleStartTest(unittest.TestCase):
         snofs = line.deliver(
             {"gateway": self.SNOFS_GW, "profile": "snofs"}, self._accept(calls), line="snofs"
         )
-        self.assertEqual(klein.state, q.ACCEPTED)
-        self.assertEqual(snofs.state, q.ACCEPTED)
-        self.assertEqual(
-            life.actions("start"),
-            [("start", "klein", self.KLEIN_GW), ("start", "snofs", self.SNOFS_GW)],
-        )
-        self.assertEqual(
-            line.containers(), {"klein": self.KLEIN_GW, "snofs": self.SNOFS_GW}
-        )
+        self.assertEqual([klein.state, snofs.state], [q.FAILED, q.FAILED])
+        self.assertIn(self.KLEIN_GW, klein.reason)
+        self.assertIn(self.SNOFS_GW, snofs.reason, "each refusal names its own gateway")
+        self.assertEqual(life.actions("start"), [])
+        self.assertEqual(calls, [], "neither request reached a transport")
 
-    def test_a_rejected_start_ends_the_request_with_the_reason(self) -> None:
-        life = _FakeLifecycle({"klein": False}, start_code=403, start_message="quota exceeded")
+    def test_a_refused_container_does_not_refuse_a_running_one(self) -> None:
+        """One profile being down must not block a request for another profile."""
+        life = _FakeLifecycle({"klein": False, "snofs": True})
         line, _gate, _logs = _queue(lifecycle=life)
         calls: list[str] = []
-        job = line.deliver(
+        down = line.deliver(
             {"gateway": self.KLEIN_GW, "profile": "klein"}, self._accept(calls), line="klein"
         )
-        self.assertEqual(job.state, q.FAILED)
-        self.assertIn("HTTP 403", job.reason)
-        self.assertIn("quota exceeded", job.reason)
-        self.assertEqual(calls, [], "the request never reached the transport")
-        # The app asked for that container, so it owns stopping it: a refused
-        # start must not exempt it from the idle stop for the session.
-        self.assertEqual(line.containers(), {"klein": self.KLEIN_GW})
+        up = line.deliver(
+            {"gateway": self.SNOFS_GW, "profile": "snofs"}, self._accept(calls), line="snofs"
+        )
+        self.assertEqual(down.state, q.FAILED)
+        self.assertEqual(up.state, q.ACCEPTED)
+        self.assertEqual(up.result.result, "plate-snofs")
+        self.assertEqual(calls, ["snofs"], "only the running container was POSTed to")
 
-    def test_the_start_is_asked_once_however_many_attempts_the_request_makes(self) -> None:
-        life = _FakeLifecycle({"klein": False})
+    def test_the_state_is_read_once_per_dispatch_not_once_per_attempt(self) -> None:
+        life = _FakeLifecycle({"klein": True})
         line, gate, _logs = _queue(lifecycle=life)
         seen: list[int] = []
 
@@ -764,11 +763,14 @@ class LifecycleStartTest(unittest.TestCase):
         )
         self.assertEqual(job.state, q.ACCEPTED)
         self.assertEqual(job.attempts, 2, "the busy attempt was retried")
-        self.assertEqual(len(life.actions("start")), 1, "one start, not one per attempt")
+        self.assertEqual(life.actions("start"), [])
+        self.assertEqual(
+            len(life.actions("is_running")), 1, "one read for the whole dispatch"
+        )
         self.assertEqual(gate.slept, [8])
 
-    def test_a_retry_does_not_start_the_container_again(self) -> None:
-        life = _FakeLifecycle({"klein": False})
+    def test_a_retry_does_not_read_the_container_state_again(self) -> None:
+        life = _FakeLifecycle({"klein": True})
         line, _gate, _logs = _queue(lifecycle=life)
         seen: list[int] = []
 
@@ -782,10 +784,13 @@ class LifecycleStartTest(unittest.TestCase):
             {"gateway": self.KLEIN_GW, "profile": "klein"}, transport, line="klein"
         )
         self.assertEqual(job.state, q.FAILED)
-        self.assertEqual(len(life.actions("start")), 1)
+        self.assertEqual(len(life.actions("is_running")), 1)
         line.retry(job)
         self.assertEqual(job.state, q.ACCEPTED)
-        self.assertEqual(len(life.actions("start")), 1, "the retry reuses the running container")
+        self.assertEqual(
+            len(life.actions("is_running")), 1, "the retry reuses the state it read"
+        )
+        self.assertEqual(life.actions("start"), [])
 
     def test_a_queue_without_a_lifecycle_still_delivers(self) -> None:
         line, _gate, _logs = _queue()
@@ -814,7 +819,7 @@ class LifecycleIdleTest(unittest.TestCase):
         )
 
     def test_no_stop_before_the_timeout_and_one_after_it(self) -> None:
-        life = _FakeLifecycle({"klein": False})
+        life = _FakeLifecycle({"klein": True})
         line, gate, logs = _queue(lifecycle=life, idle_stop_s=3600)
         job = self._run_one(line, gate=gate)
         self.assertEqual(job.state, q.ACCEPTED)
@@ -830,7 +835,7 @@ class LifecycleIdleTest(unittest.TestCase):
         self.assertTrue(any("stopped klein after 3600s idle" in entry for entry in logs))
 
     def test_a_second_check_does_not_stop_it_twice(self) -> None:
-        life = _FakeLifecycle({"klein": False})
+        life = _FakeLifecycle({"klein": True})
         line, gate, _logs = _queue(lifecycle=life, idle_stop_s=3600)
         self._run_one(line, gate=gate)
         gate.t += 3601
@@ -839,7 +844,7 @@ class LifecycleIdleTest(unittest.TestCase):
         self.assertEqual(len(life.actions("stop")), 1)
 
     def test_a_request_in_flight_holds_the_container_open(self) -> None:
-        life = _FakeLifecycle({"klein": False})
+        life = _FakeLifecycle({"klein": True})
         line, gate, _logs = _queue(lifecycle=life, idle_stop_s=60)
         entered = threading.Event()
         release = threading.Event()
@@ -874,7 +879,7 @@ class LifecycleIdleTest(unittest.TestCase):
         self.assertEqual(len(life.actions("stop")), 1)
 
     def test_a_queued_request_holds_the_container_open(self) -> None:
-        life = _FakeLifecycle({"klein": False})
+        life = _FakeLifecycle({"klein": True})
         line, gate, _logs = _queue(lifecycle=life, idle_stop_s=60)
         self._run_one(line, gate=gate)
         queued = line.enqueue({"gateway": self.GW, "profile": "klein"}, line="klein")
@@ -884,7 +889,7 @@ class LifecycleIdleTest(unittest.TestCase):
         self.assertEqual(life.actions("stop"), [])
 
     def test_the_timeout_comes_from_the_metadata_document(self) -> None:
-        life = _FakeLifecycle({"klein": False})
+        life = _FakeLifecycle({"klein": True})
         with TemporaryDirectory() as td:
             path = Path(td) / "studio-metadata.json"
             path.write_text(json.dumps({"queue": {"idle_stop_s": 45}}), encoding="utf-8")
@@ -898,7 +903,7 @@ class LifecycleIdleTest(unittest.TestCase):
             self.assertEqual(line.idle_check(), ["klein"], "the document's timeout")
 
         # The shipped document says one hour, so the same run would not stop yet.
-        shipped = _FakeLifecycle({"klein": False})
+        shipped = _FakeLifecycle({"klein": True})
         line2, gate2, _logs2 = _queue(lifecycle=shipped, meta=studio_meta.load())
         self.assertEqual(line2.idle_timeout_s(), studio_meta.DEFAULT_IDLE_STOP_S)
         self._run_one(line2, gate=gate2)
@@ -906,7 +911,7 @@ class LifecycleIdleTest(unittest.TestCase):
         self.assertEqual(line2.idle_check(), [])
 
     def test_a_rejected_stop_is_reported_and_not_retried_immediately(self) -> None:
-        life = _FakeLifecycle({"klein": False}, stop_code=500)
+        life = _FakeLifecycle({"klein": True}, stop_code=500)
         line, gate, logs = _queue(lifecycle=life, idle_stop_s=60)
         self._run_one(line, gate=gate)
         gate.t += 61
@@ -962,22 +967,32 @@ class ContainerLedgerTest(unittest.TestCase):
     def _accept(_job):
         return q.Attempt(status=200, accepted=True, result="plate")
 
-    def test_a_fresh_process_stops_the_container_the_app_started(self) -> None:
-        """A container the app asked Salad to start is still stopped after a restart."""
-        clock = [1_000_000.0]
-        first = _FakeLifecycle({"klein": False})  # stopped, so the dispatch starts it
-        line = self._queue(first, clock)
-        job = line.deliver(
-            {"gateway": self.GW, "profile": "klein"}, self._accept, line="klein"
+    def _write_record(self, name: str, gateway: str, *, started_by_app: bool, last: float) -> None:
+        """A ledger as an earlier session left it, written before the queue starts."""
+        q.save_ledger(
+            self.ledger,
+            {
+                name: {
+                    "gateway": gateway,
+                    "last_active": last,
+                    "started_by_app": started_by_app,
+                }
+            },
         )
-        self.assertEqual(job.state, q.ACCEPTED)
-        self.assertEqual(first.actions("start"), [("start", "klein", self.GW)])
-        self.assertEqual(line.containers(), {"klein": self.GW})
-        self.assertTrue(self.ledger.is_file(), "the record must be on disk")
+
+    def test_a_fresh_process_stops_the_container_an_older_session_started(self) -> None:
+        """A record that says this app started a container is still honored.
+
+        The app no longer starts containers, so it writes no such record itself;
+        one written by an older session is what a reopened app still reads, and
+        that container is the app's to stop.
+        """
+        clock = [1_000_000.0]
+        self._write_record("klein", self.GW, started_by_app=True, last=clock[0] - 10)
+        first = _FakeLifecycle({"klein": True})
+        line = self._queue(first, clock)
         self.assertEqual(
-            q.load_ledger(self.ledger)["klein"]["started_by_app"],
-            True,
-            "the record says who started it",
+            line.containers(), {"klein": self.GW}, "the reopened app still owns it"
         )
         self.assertEqual(line.idle_check(), [], "not idle yet")
 
@@ -1127,6 +1142,19 @@ class OwnershipProvenanceTest(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def _started_record(self, last_active: float) -> None:
+        """A ledger as a session that asked Salad to start the container left it."""
+        q.save_ledger(
+            self.ledger,
+            {
+                "klein": {
+                    "gateway": self.GW,
+                    "last_active": last_active,
+                    "started_by_app": True,
+                }
+            },
+        )
+
     def test_a_stale_record_that_cannot_say_who_started_it_stops_nothing(self) -> None:
         """Criterion 1: an old record for a running container leaves it running."""
         clock = [1_000_000.0]
@@ -1172,15 +1200,21 @@ class OwnershipProvenanceTest(unittest.TestCase):
     def test_the_verdict_survives_a_restart_for_both_kinds_of_record(self) -> None:
         """Criterion 3: after one session that started a container and one that found one."""
         clock = [1_500_000.0]
-        started_life = _FakeLifecycle({"klein": False})  # stopped: the app starts it
-        first = self._queue(started_life, clock)
+        # klein's record comes from a session that asked Salad to start it; the
+        # app writes no such record itself any more, an older one still counts.
+        self._started_record(clock[0] - 10)
+        first = self._queue(_FakeLifecycle({"klein": True}), clock)
+        self.assertEqual(
+            first.containers(),
+            {"klein": self.GW},
+            "the reopened app owns the container an older session started",
+        )
 
         def accept(_job):
             return q.Attempt(status=200, accepted=True, result="plate")
 
         first.deliver({"gateway": self.GW, "profile": "klein"}, accept, line="klein")
         first.adopt("snofs", self.SNOFS_GW)  # found running, only used in this session
-        self.assertEqual(started_life.actions("start"), [("start", "klein", self.GW)])
         self.assertEqual(
             {name: row["started_by_app"] for name, row in q.load_ledger(self.ledger).items()},
             {"klein": True, "snofs": False},
@@ -1479,8 +1513,53 @@ class GeneratorThroughTheQueue(unittest.TestCase):
         self.assertEqual(line.jobs()[0].attempts, 2)
 
 
-    def test_a_stopped_container_is_started_then_waited_for_before_the_post(self) -> None:
-        """The readiness wait covers the cold start the queue asked for."""
+    def test_a_stopped_container_refuses_the_request_without_a_post(self) -> None:
+        """The press is refused and Salad is never asked to start the container."""
+        calls: list[str] = []
+
+        def _req(url, key, data=None, timeout=30):
+            calls.append("probe" if url.endswith("/ready") else "prompt")
+            return 200, json.dumps({"images": ["QUJD"]}).encode()
+
+        life = _FakeLifecycle({"klein": False})
+        line = q.SaladQueue(
+            lifecycle=life, sleep=lambda _s: None, now=lambda: 0.0, idle_stop_s=3600
+        )
+        payload = {
+            "prompt": {
+                "9": {
+                    "class_type": "SaveImage",
+                    "inputs": {"filename_prefix": "x", "images": ["8", 0]},
+                }
+            },
+            "convert_output": {"format": "jpeg"},
+        }
+        with TemporaryDirectory() as td, patch.object(
+            generator.salad_gen, "_req", side_effect=_req
+        ), patch.object(generator.salad_gen.time, "sleep", lambda _s: None):
+            with self.assertRaises(RuntimeError) as caught:
+                generator.generate_from_payload(
+                    gateway="https://klein.example/",
+                    key="test-key",
+                    payload=payload,
+                    out_dir=Path(td),
+                    queue=line,
+                    line="klein",
+                )
+        message = str(caught.exception)
+        self.assertIn("profile 'klein'", message, "the refusal must name the profile")
+        self.assertIn("https://klein.example/", message, "and its gateway")
+        self.assertIn("down", message)
+        self.assertEqual(life.actions("start"), [], "no start may be POSTed to Salad")
+        self.assertEqual(calls, [], "nothing was POSTed to the container either")
+        self.assertEqual(list(Path(td).glob("studio_*.jpg")), [], "no plate on a refusal")
+        jobs = line.jobs()
+        self.assertEqual(len(jobs), 1, "the refused request is still a row on the page")
+        self.assertEqual(jobs[0].state, q.FAILED)
+        self.assertIn("down", jobs[0].reason)
+
+    def test_a_running_container_is_waited_for_before_the_post(self) -> None:
+        """A container that is up but not serving yet is waited for, not refused."""
         plate = base64.b64encode(b"jpeg-bytes").decode("ascii")
         calls: list[str] = []
         probes = {"n": 0}
@@ -1495,7 +1574,7 @@ class GeneratorThroughTheQueue(unittest.TestCase):
             calls.append("prompt")
             return 200, json.dumps({"images": [plate]}).encode()
 
-        life = _FakeLifecycle({"klein": False})
+        life = _FakeLifecycle({"klein": True})
         line = q.SaladQueue(
             lifecycle=life, sleep=lambda _s: None, now=lambda: 0.0, idle_stop_s=3600
         )
@@ -1524,8 +1603,8 @@ class GeneratorThroughTheQueue(unittest.TestCase):
 
         self.assertEqual(
             life.actions("start"),
-            [("start", "klein", "https://klein.example/")],
-            "the stopped container is started once, before the wait",
+            [],
+            "a running container is never started",
         )
         self.assertEqual(calls, ["probe", "probe", "probe", "probe", "prompt"],
                          "the POST comes only after the ready answer")
@@ -1554,7 +1633,7 @@ class GeneratorThroughTheQueue(unittest.TestCase):
                 self.calls.append(("group_state", profile, gateway))
                 return "pending" if probes["n"] < 3 else "running"
 
-        life = _Booting({"klein": False})
+        life = _Booting({"klein": True})
         line = q.SaladQueue(
             lifecycle=life, sleep=lambda _s: None, now=lambda: 0.0, idle_stop_s=3600
         )
@@ -1592,7 +1671,7 @@ class GeneratorThroughTheQueue(unittest.TestCase):
             calls.append("probe" if url.endswith("/ready") else "prompt")
             return 503, b'{"title": "replica unavailable"}'
 
-        life = _FakeLifecycle({"klein": False})
+        life = _FakeLifecycle({"klein": True})
         line = q.SaladQueue(
             lifecycle=life, sleep=lambda _s: None, now=lambda: 0.0, idle_stop_s=3600
         )
@@ -1623,7 +1702,7 @@ class GeneratorThroughTheQueue(unittest.TestCase):
         self.assertIn("profile 'klein'", message, "the failure must name the profile")
         self.assertIn("https://klein.example/", message, "and its gateway")
         self.assertIn("HTTP 503", message, "and the last status it saw")
-        self.assertEqual(calls, ["probe", "probe", "probe"], "no POST into a down container")
+        self.assertEqual(calls, ["probe", "probe", "probe"], "no POST into a container that never answered")
         # The request is in the queue for the whole of that wait, and it ends
         # there: the row the user watches has to say why no plate came back.
         jobs = line.jobs()
@@ -1633,8 +1712,8 @@ class GeneratorThroughTheQueue(unittest.TestCase):
         self.assertIn("HTTP 503", jobs[0].reason)
         self.assertFalse(jobs[0].accepted, "nothing was sent, so nothing was accepted")
 
-    def test_the_request_is_in_the_queue_while_its_container_is_starting(self) -> None:
-        """A cold start is minutes: the row has to be there for the whole wait.
+    def test_the_request_is_in_the_queue_while_its_container_boots(self) -> None:
+        """A cold boot is minutes: the row has to be there for the whole wait.
 
         The report this pins: pressing Generate with a container that was not up
         left the Queue page empty, because the request only reached the queue
@@ -1651,7 +1730,7 @@ class GeneratorThroughTheQueue(unittest.TestCase):
                 return (503, b"replica unavailable") if probes["n"] < 3 else (200, b"ok")
             return 200, json.dumps({"images": [plate]}).encode()
 
-        life = _FakeLifecycle({"klein": False})
+        life = _FakeLifecycle({"klein": True})
         line = q.SaladQueue(
             lifecycle=life, sleep=lambda _s: None, now=lambda: 0.0, idle_stop_s=3600
         )
@@ -1685,8 +1764,8 @@ class GeneratorThroughTheQueue(unittest.TestCase):
         self.assertEqual(line.jobs()[0].state, q.ACCEPTED)
         self.assertEqual(
             life.actions("start"),
-            [("start", "klein", "https://klein.example/")],
-            "the stopped container was asked for once, for this request",
+            [],
+            "the queue never starts a container for a request",
         )
 
 

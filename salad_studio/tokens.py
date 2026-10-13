@@ -7,6 +7,8 @@ If a slot is empty, copy from default storage:
 - huggingface  ``~/.config/huggingface/token``
 - civitai      ``~/.config/civitai/token``
 - deepseek     ``~/.config/deepseek/key``, else ``DEEPSEEK_API_KEY``
+- vast         no provider convention: the local store is its only home, and the
+  Vast.ai tab reads it from there
 
 A kind listed in ``TOKEN_ENV_VARS`` also reads its key from that environment
 variable when no file has one. The environment value is used as-is and is
@@ -32,6 +34,7 @@ TOKEN_SPECS: tuple[tuple[str, str, str], ...] = (
     ("huggingface", "Hugging Face", "huggingface/token"),
     ("civitai", "Civitai", "civitai/token"),
     ("deepseek", "DeepSeek", "deepseek/key"),
+    ("vast", "Vast.ai", "vast/key"),
 )
 
 # Kinds that also have a conventional environment variable. Only consulted
@@ -52,6 +55,11 @@ PROBE_SPECS: dict[str, tuple[str, str]] = {
     "huggingface": ("https://huggingface.co/api/whoami-v2", "Authorization"),
     "civitai": ("https://civitai.com/api/v1/me", "Authorization"),
     "deepseek": ("https://api.deepseek.com/models", "Authorization"),
+    # The vast.ai control API lists this account's instances, which is the
+    # cheapest call that proves the token is live. The URL is repeated here
+    # rather than imported so this module stays a leaf; test_tokens asserts it
+    # is the one the vast client uses (vast.INSTANCES_URL).
+    "vast": ("https://console.vast.ai/api/v1/instances/", "Authorization"),
 }
 
 VALID = "valid"

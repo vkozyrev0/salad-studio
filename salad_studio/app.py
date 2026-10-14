@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Salad Studio Windows UI: the window, its thirteen tabs and the prompt graph pane.
+"""Salad Studio Windows UI: the window, its eleven tabs and the prompt graph pane.
 
-The tabs are **Config**, **Prompt Settings**, **Tokens**, **Vast.ai**,
-**Images**, **LoRAs**, **Prompt Editor**, **Prompt Assist**, **Prompt Catalog**,
-**Import**, **Prompt History**, **Queue** and **Logs**, plus the always-visible
-history strip. Each
-config carries its own Salad policy (image, GPU classes, country codes and the
-startup/readiness probes), edited on the Config page beside that config's
-checkpoints, and the Vast.ai page chooses between the Salad profiles and the
-vast.ai instances Generate renders on while the Images page describes the
-container images both hosts run. This module is the UI layer: it holds the
-widgets and the wiring and calls the other seven layers (`TAB_ORDER` is the one
-list the notebook, the sidebar and the tab lookup all follow).
+The tabs are **Config**, **Prompt Settings**, **Tokens**, **LoRAs**, **Prompt
+Editor**, **Prompt Assist**, **Prompt Catalog**, **Import**, **Prompt History**,
+**Queue** and **Logs**, plus the always-visible history strip. The **Config**
+page is the deployment page: the profiles and the checkpoints each one serves,
+each config's Salad policy (image, GPU classes, country codes and the
+startup/readiness probes), the two container images with the settings a host
+needs, and the vast.ai instances with the engine choice that decides whether
+Generate renders on a Salad group or on one of them. This module is the UI
+layer: it holds the widgets and the wiring and calls the other seven layers
+(`TAB_ORDER` is the one list the notebook, the sidebar and the tab lookup all
+follow).
 """
 from __future__ import annotations
 
@@ -48,8 +48,6 @@ TAB_ORDER = (
     "Config",
     "Prompt Settings",
     "Tokens",
-    "Vast.ai",
-    "Images",
     "LoRAs",
     "Prompt Editor",
     "Prompt Assist",
@@ -176,9 +174,10 @@ class SaladStudio(tk.Tk):
         self._helper_busy = False
         self._token_probe_busy = False
         self._vast_fetch_busy = False
-        # The user's own images and extra deployment environment. Loaded before
-        # the Config page is built, because its image field offers these tags.
+        # The config page owns the images and the vast.ai hosts, so both stores
+        # are read before it is built: its image picker offers their tags.
         self._image_settings = image_deploy.load_settings()
+        self._vast_doc = vast.load_doc()
         self._token_detail: dict[str, str] = {}
         self._lora_vars: dict[str, tk.BooleanVar] = {}
         self._lora_checks: dict[str, ttk.Checkbutton] = {}
@@ -218,8 +217,6 @@ class SaladStudio(tk.Tk):
         self._build_config_tab()
         self._build_prompt_settings_tab()
         self._build_tokens_tab()
-        self._build_vast_tab()
-        self._build_images_tab()
         self._build_loras_tab()
         self._build_editor_tab()
         self._build_prompt_helper_tab()
@@ -231,8 +228,6 @@ class SaladStudio(tk.Tk):
         self.nb.add(self._config, text="Config")
         self.nb.add(self._settings, text="Prompt Settings")
         self.nb.add(self._tokens, text="Tokens")
-        self.nb.add(self._vast, text="Vast.ai")
-        self.nb.add(self._images, text="Images")
         self.nb.add(self._loras, text="LoRAs")
         self.nb.add(self._editor, text="Prompt Editor")
         self.nb.add(self._helper, text="Prompt Assist")
@@ -406,25 +401,62 @@ class SaladStudio(tk.Tk):
                 pass
 
     def _build_config_tab(self) -> None:
-        """Profiles: add, remove, configure, and the checkpoints each one serves.
+        """The config page: profiles, their policy, the images, and the vast.ai hosts.
 
-        The prompt knobs stay on Prompt Settings; what a profile *is* (its
-        gateway and the checkpoints its container serves) is here, because that
-        is what routing and the queue read.
+        One page owns everything a render needs to be aimed: the profiles and the
+        checkpoints each one serves (what routing and the queue read), each
+        config's Salad policy, the two container images with the settings a host
+        needs, and the vast.ai instances with the engine choice. The page is taller
+        than a window, so its content scrolls: dropping or shrinking a section to
+        fit would hide a control the user came for.
         """
-        self._config = ttk.Frame(self.nb, padding=10)
-        self._config.columnconfigure(1, weight=1)
-        self._config.rowconfigure(3, weight=1)
+        self._config = ttk.Frame(self.nb)
+        self._config.columnconfigure(0, weight=1)
+        self._config.rowconfigure(0, weight=1)
+        holder = ttk.Frame(self._config)
+        holder.grid(row=0, column=0, sticky="nsew")
+        holder.columnconfigure(0, weight=1)
+        holder.rowconfigure(0, weight=1)
+        self._config_holder = holder
+        canvas = tk.Canvas(
+            holder, highlightthickness=0, background=theme.PALETTE["bg"]
+        )
+        vscroll = ttk.Scrollbar(holder, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vscroll.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        vscroll.grid(row=0, column=1, sticky="ns")
+        self._config_canvas = canvas
+        body = ttk.Frame(canvas, padding=10)
+        self._config_body = body
+        window = canvas.create_window((0, 0), window=body, anchor="nw")
+        body.bind(
+            "<Configure>",
+            lambda _e: canvas.configure(scrollregion=canvas.bbox("all")),
+            add="+",
+        )
+        canvas.bind(
+            "<Configure>",
+            lambda e: canvas.itemconfigure(window, width=e.width),
+            add="+",
+        )
+        # The wheel is claimed only while the pointer is over this page, so the
+        # other pages and the history strip keep their own scrolling.
+        canvas.bind("<Enter>", self._on_config_enter, add="+")
+        canvas.bind("<Leave>", self._on_config_leave, add="+")
+
+        self._config_body.columnconfigure(1, weight=1)
         self.var_name = tk.StringVar()
         self.var_gateway = tk.StringVar()
 
-        ttk.Label(self._config, text="Active profile").grid(row=0, column=0, sticky="w")
+        ttk.Label(self._config_body, text="Active profile").grid(
+            row=0, column=0, sticky="w"
+        )
         self.profile_combo = ttk.Combobox(
-            self._config, textvariable=self.var_name, state="normal"
+            self._config_body, textvariable=self.var_name, state="normal"
         )
         self.profile_combo.grid(row=0, column=1, sticky="ew", padx=6)
         self.profile_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_select_profile())
-        btns = ttk.Frame(self._config)
+        btns = ttk.Frame(self._config_body)
         btns.grid(row=1, column=1, sticky="w", pady=4)
         ttk.Button(btns, text="Save profile", command=self._save_profile).pack(
             side="left", padx=(0, 6)
@@ -435,15 +467,18 @@ class SaladStudio(tk.Tk):
         ttk.Button(btns, text="Delete profile", command=self._delete_profile).pack(
             side="left"
         )
-        ttk.Label(self._config, text="Gateway URL").grid(row=2, column=0, sticky="w", pady=3)
-        ttk.Entry(self._config, textvariable=self.var_gateway).grid(
+        ttk.Label(self._config_body, text="Gateway URL").grid(
+            row=2, column=0, sticky="w", pady=3
+        )
+        ttk.Entry(self._config_body, textvariable=self.var_gateway).grid(
             row=2, column=1, sticky="ew", padx=6, pady=3
         )
 
-        box = ttk.LabelFrame(self._config, text="Checkpoints this profile serves", padding=6)
-        box.grid(row=3, column=0, columnspan=2, sticky="nsew", pady=(10, 0))
+        box = ttk.LabelFrame(
+            self._config_body, text="Checkpoints this profile serves", padding=6
+        )
+        box.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         box.columnconfigure(0, weight=1)
-        box.rowconfigure(0, weight=1)
         self.checkpoint_tree = ttk.Treeview(
             box, columns=("checkpoint", "family"), show="headings", height=7
         )
@@ -478,8 +513,10 @@ class SaladStudio(tk.Tk):
             box, textvariable=self.var_config_note, wraplength=760
         ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
         self._build_policy_section()
+        self._build_images_section()
+        self._build_vast_section()
         ttk.Label(
-            self._config,
+            self._config_body,
             text="One container serves one unet family, so a profile's checkpoints must "
             "stay in one family. Routing sends a graph to the profile that lists the "
             "checkpoint it loads; the queue runs one line per profile, so two profiles "
@@ -487,7 +524,22 @@ class SaladStudio(tk.Tk):
             "Replica status and the Salad probe are in the top bar; size, steps, CFG, "
             "seed, graph, scheduler and LoRA selection are on Prompt Settings.",
             wraplength=760,
-        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(12, 0))
+
+    def _on_config_enter(self, _event=None) -> None:
+        """Claim the wheel for the config page's scroll while the pointer is on it."""
+        self.bind_all("<MouseWheel>", self._on_config_wheel, add="+")
+
+    def _on_config_leave(self, _event=None) -> None:
+        self.unbind_all("<MouseWheel>")
+
+    def _on_config_wheel(self, event) -> None:
+        canvas = getattr(self, "_config_canvas", None)
+        if canvas is None:
+            return
+        steps = int(-event.delta / 120) if getattr(event, "delta", 0) else 0
+        if steps:
+            canvas.yview_scroll(steps, "units")
 
     def _config_status(self, text: str) -> None:
         self.var_config_note.set(text)
@@ -869,7 +921,7 @@ class SaladStudio(tk.Tk):
         Nothing here is window-wide: selecting another config swaps these fields.
         """
         section = ttk.LabelFrame(
-            self._config, text="Salad policy for this config", padding=8
+            self._config_body, text="Salad policy for this config", padding=8
         )
         section.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         section.columnconfigure(1, weight=1)
@@ -954,7 +1006,7 @@ class SaladStudio(tk.Tk):
         self.pol_image_box.grid(row=0, column=1, sticky="ew", padx=6)
         ttk.Label(
             extra,
-            text="a tag from the Images tab, or any other tag",
+            text="a tag from Container images below, or any other tag",
             style="Status.TLabel",
         ).grid(row=0, column=2, columnspan=2, sticky="w")
         self._refresh_image_refs()
@@ -1400,18 +1452,19 @@ class SaladStudio(tk.Tk):
         self._render_token_state(kind)
         self._probe_tokens([kind])
 
-    def _build_vast_tab(self) -> None:
-        """Vast.ai picture generation: which engine Generate uses, and the instances.
+    def _build_vast_section(self) -> None:
+        """The vast.ai half of the config page: the engine choice and the instances.
 
         The key is not here: it is the ``vast`` slot on the Tokens tab, stored in
-        the gitignored token file. What this page owns is the instance list and
+        the gitignored token file. What this section owns is the instance list and
         the engine choice, both in ``~/.config/salad/studio-vast.json``, so
         closing and reopening the window keeps them.
         """
-        self._vast = ttk.Frame(self.nb, padding=10)
+        self._vast = ttk.LabelFrame(
+            self._config_body, text="Vast.ai instances", padding=8
+        )
+        self._vast.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         self._vast.columnconfigure(0, weight=1)
-        self._vast.rowconfigure(2, weight=1)
-        self._vast_doc = vast.load_doc()
         ttk.Label(
             self._vast,
             text=(
@@ -1446,9 +1499,8 @@ class SaladStudio(tk.Tk):
         )
 
         box = ttk.LabelFrame(self._vast, text="Instances", padding=8)
-        box.grid(row=2, column=0, sticky="nsew")
+        box.grid(row=2, column=0, sticky="ew")
         box.columnconfigure(0, weight=1)
-        box.rowconfigure(1, weight=1)
         add = ttk.Frame(box)
         add.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
         ttk.Label(add, text="Address").pack(side="left")
@@ -1469,7 +1521,7 @@ class SaladStudio(tk.Tk):
         ).pack(side="left", padx=(6, 0))
 
         cols = ("use", "label", "endpoint", "image", "state", "gpu")
-        self.vast_tree = ttk.Treeview(box, columns=cols, show="headings", height=10)
+        self.vast_tree = ttk.Treeview(box, columns=cols, show="headings", height=7)
         for col, heading, width, stretch in (
             ("use", "Use", 40, False),
             ("label", "Label", 130, False),
@@ -1621,9 +1673,10 @@ class SaladStudio(tk.Tk):
     def _on_vast_set_image(self) -> None:
         """Record which image a listed instance runs, so the row points at one.
 
-        The image is a reference for the reader: it is what the Images tab
-        describes, and what to run on that instance. A render does not depend on
-        it, because the instance's endpoint is what Generate POSTs to.
+        The image is a reference for the reader: it is what the Container images
+        section below describes, and what to run on that instance. A render does
+        not depend on it, because the instance's endpoint is what Generate POSTs
+        to.
         """
         selection = self.vast_tree.selection()
         if not selection:
@@ -1702,18 +1755,20 @@ class SaladStudio(tk.Tk):
             self.var_vast_status.set(note)
             self.log("info", f"vast.ai: {note}")
 
-    def _build_images_tab(self) -> None:
+    def _build_images_section(self) -> None:
         """The container images: where each one lives, and what a host needs.
 
         The facts come from the metadata document, so a new image is a document
         edit; what the user adds — extra environment entries, and images of
         their own — is kept in ``~/.config/salad/studio-images.json``. The tags
-        here are what the Config page's image field and a Vast.ai instance row
+        here are what this page's policy image field and a Vast.ai instance row
         refer to.
         """
-        self._images = ttk.Frame(self.nb, padding=10)
+        self._images = ttk.LabelFrame(
+            self._config_body, text="Container images", padding=8
+        )
+        self._images.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         self._images.columnconfigure(0, weight=1)
-        self._images.rowconfigure(2, weight=1)
         ttk.Label(
             self._images,
             text=(
@@ -1721,7 +1776,7 @@ class SaladStudio(tk.Tk):
                 "tag, the build arg, the ports and the documented environment come "
                 "from the metadata document; extra environment entries and your own "
                 f"images are stored in {image_deploy.SETTINGS_PATH} (not git). The "
-                "Config page's image field and a Vast.ai instance row refer to a tag "
+                "policy image field above and a Vast.ai instance row refer to a tag "
                 "from here."
             ),
             wraplength=820,
@@ -1742,9 +1797,8 @@ class SaladStudio(tk.Tk):
         )
 
         box = ttk.LabelFrame(self._images, text="Environment", padding=8)
-        box.grid(row=2, column=0, sticky="nsew")
+        box.grid(row=2, column=0, sticky="ew")
         box.columnconfigure(0, weight=1)
-        box.rowconfigure(0, weight=1)
         cols = ("name", "value", "source", "note")
         self.image_env_tree = ttk.Treeview(box, columns=cols, show="headings", height=7)
         for col, heading, width, stretch in (
@@ -1783,11 +1837,11 @@ class SaladStudio(tk.Tk):
         ).pack(side="left", padx=(12, 0))
 
         dep = ttk.LabelFrame(self._images, text="Deploy", padding=8)
-        dep.grid(row=3, column=0, sticky="nsew", pady=(8, 0))
+        dep.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         dep.columnconfigure(0, weight=1)
         self.image_script = tk.Text(dep, height=12, wrap="none", state="disabled")
         self.image_script.grid(row=0, column=0, sticky="nsew")
-        dep.rowconfigure(0, weight=1)
+        theme.style_text(self.image_script)
         bar = ttk.Frame(dep)
         bar.grid(row=1, column=0, sticky="ew", pady=(6, 0))
         ttk.Button(bar, text="Copy commands", command=self._on_image_copy).pack(side="left")
@@ -1885,7 +1939,7 @@ class SaladStudio(tk.Tk):
             return
         ports = entry.get("ports") or {}
         self.var_image_facts.set(
-            f"{entry['source']} · {entry.get('gpu') or 'any GPU'} · "
+            f"{entry['tag']} · {entry['source']} · {entry.get('gpu') or 'any GPU'} · "
             f"ports {ports.get(studio_meta.PORT_API) or '-'} (api) / "
             f"{ports.get(studio_meta.PORT_COMFY) or '-'} (comfy)"
         )
@@ -4736,7 +4790,7 @@ class SaladStudio(tk.Tk):
             messagebox.showerror("Salad Studio", str(e))
 
     def _on_generate(self) -> None:
-        """Generate: Salad profiles, or a vast.ai instance, per the Vast.ai tab."""
+        """Generate: Salad profiles, or a vast.ai instance, per the config page."""
         if self.gen_mode() == vast.MODE_VAST:
             self._on_generate_vast()
             return
@@ -4916,8 +4970,8 @@ class SaladStudio(tk.Tk):
             self.log("error", "Generate aborted: no vast.ai instance is selected")
             messagebox.showinfo(
                 "Salad Studio",
-                "No vast.ai instance is selected. Add one on the Vast.ai tab "
-                "and select it, then Generate again.",
+                "No vast.ai instance is selected. Add one under Vast.ai instances "
+                "on the Config page and select it, then Generate again.",
             )
             return
         endpoint = str(row["endpoint"])

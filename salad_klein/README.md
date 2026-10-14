@@ -61,7 +61,8 @@ Both tags are the live ones, one per group, per
 both are described together in
 [`docs/workflow/23-salad-container-group-deployment.md`](../docs/workflow/23-salad-container-group-deployment.md)
 §1.2 (build args, ports, entrypoint, what is inside). Either tag also runs as a
-**vast.ai instance** image: the app's Vast.ai page renders on such an instance
+**vast.ai instance** image: the app's Config page renders on such an instance
+(the Vast.ai instances section there)
 with the same image, and the ComfyUI template's own port is handled there too.
 The older `prefetch3`/`prefetch4` tags below are kept as the record of how the
 rgthree COPY was introduced. Prefetch stays weights-only —

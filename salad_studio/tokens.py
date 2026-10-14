@@ -8,7 +8,7 @@ If a slot is empty, copy from default storage:
 - civitai      ``~/.config/civitai/token``
 - deepseek     ``~/.config/deepseek/key``, else ``DEEPSEEK_API_KEY``
 - vast         no provider convention: the local store is its only home, and the
-  Vast.ai tab reads it from there
+  config page's Vast.ai instances section reads it from there
 
 A kind listed in ``TOKEN_ENV_VARS`` also reads its key from that environment
 variable when no file has one. The environment value is used as-is and is

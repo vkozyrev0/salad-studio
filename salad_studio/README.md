@@ -18,13 +18,17 @@ compact container strip with the Salad probe, right-aligned: a green dot with
 the number of ready containers, an amber dot with the number still starting and
 a red dot with the number not started, separated by `|`; a press made while a
 render is in flight is queued, not dropped), **vertical tabs** on the left
-(**Config**, **Prompt Settings**, **Tokens**, **Vast.ai**, **Images**, **LoRAs**,
+(**Config**, **Prompt Settings**, **Tokens**, **LoRAs**,
 **Prompt Editor**, **Prompt Assist**, **Prompt Catalog**, **Import**,
 **Prompt History**, **Queue**, **Logs**).
 Bottom (always visible) = horizontal history strip with a tall button on
 the left and right.
 
-- **Config**. The profiles this app can render on, and what each one serves.
+- **Config**. The deployment page: the profiles this app can render on and what
+  each one serves, each config's Salad policy, the two container images with the
+  settings a host needs, and the vast.ai instances with the engine choice. It is
+  longer than a window, so the page scrolls (the wheel works while the pointer is
+  over it) instead of hiding a section.
   The **Active profile** box lists every profile the store holds; type a name and
   press **Add profile** to create one (it is seeded from the metadata document's
   family list and starts with the typed **Gateway URL**), **Save profile** writes
@@ -42,14 +46,16 @@ the left and right.
 
   The same page owns each config's **Salad policy**: the group's **image tag**,
   **GPU classes**, **US-only** country codes, the startup and readiness probe
-  fields, and **Reallocate** (confirm). Two images are built from
+  fields, and **Reallocate** (confirm). The **image tag** field offers the tags
+  of the two images below (still editable, so a group running a tag this app has
+  never been told about is fine). Two images are built from
   `salad_klein/` — `eldermark-klein:…-prefetch6-klein` for the Klein family and
   `…-prefetch6-snofs` for the SNOFS one, differing only in the unet set baked at
   first boot — and both are described together, with their build args, ports and
   entrypoint, in
   [`docs/workflow/23-salad-container-group-deployment.md`](../docs/workflow/23-salad-container-group-deployment.md)
-  §1.2. Either one also runs as a vast.ai instance image (see the Vast.ai page
-  below). The policy belongs to the selected
+  §1.2. Either one also runs as a vast.ai instance image (see **Vast.ai
+  instances** below). The policy belongs to the selected
   config — **Load from Salad** reads that config's group, **Apply to Salad**
   PATCHes that config's group (Salad, not a Docker rebuild), and **Save
   profile** stores the fields with that config, so selecting another config
@@ -69,6 +75,61 @@ the left and right.
   names the config it was last on, and that config's policy and checkpoints are
   what the page shows even when the store's active config is a different one.
   There is one policy per config; no window-wide copy is kept.
+
+  Below the policy is **Container images**: the container images this app
+  deploys, and what a host needs for each one — where the tag lives, the build
+  context and build arg, the ports the container answers on (the `comfyui-api`
+  wrapper on **3000**, ComfyUI on **8188**), the GPU class, the disk and the
+  environment the container reads. The facts come from the metadata document's
+  `routing.families.<family>.deployment`, so a new image is a document edit; the
+  **Image** picker selects one (the two built images, plus any you add) and the
+  line beside it shows that image's tag, source, GPU class and ports. The
+  **Environment** tree shows the documented entries — `HF_TOKEN` and
+  `CIVITAI_API_TOKEN` from their Tokens-tab slots, and the literals such as
+  `STARTUP_CHECK_MAX_TRIES=120` — each with where it comes from and what it is
+  for; a secret's value is masked until **show token values** is ticked.
+  **Add env** / **Remove selected** / **Save environment** edit your own extra
+  entries (a row for a documented name overrides its value) and keep them in
+  `~/.config/salad/studio-images.json` beside the profiles and the token store.
+  **Deploy** shows the commands for that image — `docker build` with the build
+  arg, `docker push`, a `docker run` for a host of your own, and the
+  `vastai create instance` line whose `--env` carries the ports and the
+  environment (the image's own ENTRYPOINT does the first-boot download, so no
+  `--onstart-cmd` is needed) — plus the **Salad portal fields** to create a group
+  with. **Copy commands** puts what is shown on the clipboard, and a secret stays
+  a `${NAME}` placeholder unless **show token values** is ticked. **Your own
+  image** adds a tag of your own (name, tag, build arg, context); removing it
+  takes its extra environment with it. This section is the app's half of
+  [`docs/workflow/23-salad-container-group-deployment.md`](../docs/workflow/23-salad-container-group-deployment.md).
+
+  Below that is **Vast.ai instances**: which engine Generate renders on, and the
+  vast.ai instances it may use. **Generate with** chooses **Salad profiles** (the
+  containers the profiles above name) or **Vast.ai instance**; the choice is
+  stored, so a reopened window still uses it. The instance list holds **one or
+  more** addresses: type an address (`http://1.2.3.4:31234`, or several
+  separated by commas), pick the **Image** the instance runs (a tag from
+  **Container images**, so the row points at an image this app describes) and
+  press **Add instance**; **Fetch instances from Vast.ai** lists the account's
+  own machines with the stored key — the Bearer call to
+  `https://console.vast.ai/api/v1/instances/` — and adds the ones that publish a
+  ComfyUI port (the template's 8188, or the one other port the template maps).
+  Selecting a row points Generate at that instance (the row is marked),
+  **Set image for selected** records what a fetched row runs, **Remove selected**
+  drops one, and **Save list** writes them to
+  `~/.config/salad/studio-vast.json` beside the profiles, the queue's record and
+  the tokens, so nothing about a vast account lands in the repo. The key is
+  never sent to an instance: it authenticates the vast.ai control API only,
+  while a render goes straight to the instance's own ComfyUI `/prompt` with the
+  same body the Salad path POSTs and the same accepted-image transform, so the
+  plate lands in the gallery and the prompt history like any other. Both answers
+  an instance can give are handled: a Salad-style wrapper (the `comfyui-api`
+  image this repo's groups run, which serves port **3000**) answers with base64
+  JPEGs in `images[]`, while a plain ComfyUI (the vast.ai ComfyUI template, port
+  **8188**) answers with a `prompt_id`, so the app polls `/history/<id>` and
+  fetches the plate from `/view`. The plate's extension follows its own bytes —
+  a wrapper's JPEG is `studio_<ms>.jpg`, a native ComfyUI PNG is
+  `studio_<ms>.png` — and the gallery, the history strip and **Clean gallery**
+  read both.
 - **Prompt Settings**. **Width**, **Height**, **Steps**, **CFG**, **Seed**,
   **Graph** (Flux.2 Klein / Flux.1 Dev), **Scheduler** (Flux2 / Simple), the
   **Checkpoint** (Base 9B / Distilled 9B) and the **LoRA** checkboxes. These are
@@ -85,54 +146,6 @@ the left and right.
   provider rejected it, **grey** when it could not be confirmed. **Check keys**
   re-probes every slot (the page also probes when you open it, and a freshly
   saved key is probed on the spot).
-- **Vast.ai**. Which engine Generate renders on, and the vast.ai instances it
-  may use. **Generate with** chooses **Salad profiles** (the Config page's
-  containers) or **Vast.ai instance**; the choice is stored, so a reopened
-  window still uses it. The instance list holds **one or more** addresses: type
-  an address (`http://1.2.3.4:31234`, or several separated by commas) and press
-  **Add instance**, and **Fetch instances from Vast.ai** lists the account's own
-  machines with the stored key — the Bearer call to
-  `https://console.vast.ai/api/v1/instances/` — and adds the ones that publish
-  a ComfyUI port (the template's 8188, or the one other port the template maps). Selecting a row points Generate at that instance (the row is
-  marked), **Remove selected** drops one, and **Save list** writes them to
-  `~/.config/salad/studio-vast.json` beside the profiles, the queue's record and
-  the tokens, so nothing about a vast account lands in the repo. The key is
-  never sent to an instance: it authenticates the vast.ai control API only,
-  while a render goes straight to the instance's own ComfyUI `/prompt` with the
-  same body the Salad path POSTs and the same accepted-image transform, so the
-  plate lands in the gallery and the prompt history like any other. Both answers
-  an instance can give are handled: a Salad-style wrapper (the `comfyui-api`
-  image this repo's groups run, which serves port **3000**) answers with base64
-  JPEGs in `images[]`, while a plain ComfyUI (the vast.ai ComfyUI template, port
-  **8188**) answers with a `prompt_id`, so the app polls `/history/<id>` and
-  fetches the plate from `/view`. The plate's extension follows its own bytes —
-  a wrapper's JPEG is `studio_<ms>.jpg`, a native ComfyUI PNG is
-  `studio_<ms>.png` — and the gallery, the history strip and **Clean gallery**
-  read both.
-- **Images**. The container images this app deploys, and what a host needs for
-  each one: where the tag lives, the build context and build arg, the ports the
-  container answers on (the `comfyui-api` wrapper on **3000**, ComfyUI on
-  **8188**), the GPU class, the disk and the environment the container reads. The
-  facts come from the metadata document's `routing.families.<family>.deployment`,
-  so a new image is a document edit; the **Image** picker selects one (the two
-  built images, plus any you add). The **Environment** tree shows the documented
-  entries — `HF_TOKEN` and `CIVITAI_API_TOKEN` from their Tokens-tab slots, and
-  the literals such as `STARTUP_CHECK_MAX_TRIES=120` — each with where it comes
-  from and what it is for; a secret's value is masked until **show token values**
-  is ticked. **Add env** / **Remove selected** / **Save environment** edit your
-  own extra entries (a row for a documented name overrides its value) and keep
-  them in `~/.config/salad/studio-images.json` beside the profiles and the token
-  store. **Deploy** shows the commands for that image — `docker build` with the
-  build arg, `docker push`, a `docker run` for a host of your own, and the
-  `vastai create instance` line whose `--env` carries the ports and the
-  environment (the image's own ENTRYPOINT does the first-boot download, so no
-  `--onstart-cmd` is needed) — plus the **Salad portal fields** to create a group
-  with. **Copy commands** puts what is shown on the clipboard, and a secret stays
-  a `${NAME}` placeholder unless **show token values** is ticked. **Your own
-  image** adds a tag of your own (name, tag, build arg, context) so the Config
-  page and the Vast.ai page can refer to it too; removing it takes its extra
-  environment with it. This page is the app's half of
-  [`docs/workflow/23-salad-container-group-deployment.md`](../docs/workflow/23-salad-container-group-deployment.md).
 - **Logs**. Salad container log-entries for the active gateway, plus
   Studio/HTTP events (secrets redacted).
 - **LoRAs**. Known catalog LoRAs plus extras you add from a Civitai
@@ -478,7 +491,8 @@ and the reason is carried in the document's `error` field.
   `build_arg` (which unet set the tag bakes), the `ports` the container answers
   on (`api` 3000 and `comfy` 8188), the `env` entries the container reads (each
   naming a Tokens-tab `token` slot or a literal `value`, with a `note`), the
-  `gpu`, `disk_gb`, `vcpu` and `memory_gb` — and the **Images** page renders it.
+  `gpu`, `disk_gb`, `vcpu` and `memory_gb` — and the Config page's **Container
+  images** section renders it.
   **Which profile serves
   which checkpoint is not here**: it
   is each profile's own `checkpoints` list, edited on the **Config** page, and
@@ -520,7 +534,7 @@ the real freeze path the moment that gap is closed.
 Two test commands, and the second is not part of the first:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"   # 911 tests, ~6 min
+python -m unittest discover -s tests -p "test_*.py"   # 914 tests, ~6 min
 python test_salad_comfy_live_findings.py              # root structural checks
 ```
 

@@ -2,7 +2,7 @@
 
 Constructing the window hidden is the closest this Windows-only Tk app gets to
 a user launch. Two runs must agree: construction succeeds, the tab set is the
-13 tabs, the log sink receives a real line, and a SNOFS graph routes to the
+11 tabs, the log sink receives a real line, and a SNOFS graph routes to the
 SNOFS group. A pass on one run and an empty result on the other is an app
 defect, not noise to average away. The last check presses Generate twice with
 the first render still in flight: the second press must wait in the app's own
@@ -43,8 +43,6 @@ TABS = (
     "Config",
     "Prompt Settings",
     "Tokens",
-    "Vast.ai",
-    "Images",
     "LoRAs",
     "Prompt Editor",
     "Prompt Assist",

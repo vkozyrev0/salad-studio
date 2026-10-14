@@ -665,8 +665,8 @@ def generate_from_vast(
     base = vast.normalize_endpoint(endpoint)
     if not base:
         raise RuntimeError(
-            "No vast.ai instance is selected. Add one on the Vast.ai tab and "
-            "select it, then Generate again."
+            "No vast.ai instance is selected. Add one under Vast.ai instances on "
+            "the Config page and select it, then Generate again."
         )
     body_obj = prepare_body(payload, on_log=on_log, label="Vast")
     blob = salad_gen.json.dumps(body_obj).encode()

@@ -28,7 +28,7 @@ Tests are `unittest`, and there are two commands. The second is not part of
 the first:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"   # 911 tests, ~6 min
+python -m unittest discover -s tests -p "test_*.py"   # 914 tests, ~6 min
 python test_salad_comfy_live_findings.py                     # root structural checks
 ```
 

@@ -102,15 +102,15 @@ What either image is, inside:
 
 Both tags are interchangeable as a container **image**: the Config page's
 **image tag** (a Salad group policy) takes either one, and so does a **vast.ai
-instance** — see the Vast.ai page in
+instance** — see the Config page's Vast.ai instances section in
 [`salad_studio/README.md`](../../salad_studio/README.md). What a group may render
 is decided by the family its tag bakes, not by the tag's name.
 
-**The app renders all of this**: the **Images** page shows these fields for each
-tag (context, base image, build arg, ports, GPU, disk, environment) and copies
-the build, run and `vastai create` commands, so the deploy parameters live in
-one place instead of in this document alone. The page reads them from
-`routing.families.<family>.deployment` in
+**The app renders all of this**: the Config page's **Container images** section
+shows these fields for each tag (context, base image, build arg, ports, GPU,
+disk, environment) and copies the build, run and `vastai create` commands, so the
+deploy parameters live in one place instead of in this document alone. The page
+reads them from `routing.families.<family>.deployment` in
 [`salad_studio/studio-metadata.json`](../../salad_studio/studio-metadata.json);
 the values below are the same ones.
 

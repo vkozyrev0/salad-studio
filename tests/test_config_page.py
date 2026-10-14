@@ -55,6 +55,16 @@ def _destroy_quietly(app) -> None:
         pass
 
 
+def _ancestors(widget) -> list:
+    """The widget's ancestors, innermost first, ending at the toplevel."""
+    out = []
+    node = getattr(widget, "master", None)
+    while node is not None:
+        out.append(node)
+        node = getattr(node, "master", None)
+    return out
+
+
 @unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
 class ConfigPage(unittest.TestCase):
     def setUp(self) -> None:
@@ -156,7 +166,11 @@ class ConfigPage(unittest.TestCase):
         self.assertEqual(labels, list(self.app_mod.TAB_ORDER))
         self.assertNotIn("Policy", labels, "the Policy page must be gone")
         self.assertNotIn("Policy", self.app_mod.TAB_ORDER)
-        self.assertIs(app._policy_section.master, app._config, "the fields live on Config")
+        self.assertIn(
+            app._config,
+            _ancestors(app._policy_section),
+            "the fields live on Config",
+        )
 
         self._select("klein")
         app.var_pol_image.set("docker.io/example/klein:tag1")
@@ -731,6 +745,74 @@ class ConfigPage(unittest.TestCase):
         self.assertTrue(err.called, "the page must refuse and say why")
         self.assertIn("No profile lists", str(err.call_args))
         self.assertFalse(app._busy)
+
+    # -- the images the app deploys ----------------------------------------
+    def _config_texts(self) -> list[str]:
+        """Every string the Config page shows, from its own widgets."""
+        from tkinter import ttk
+
+        out: list[str] = []
+
+        def walk(widget) -> None:
+            if isinstance(widget, ttk.Combobox):
+                out.extend(str(v) for v in widget.cget("values"))
+            if isinstance(widget, ttk.Treeview):
+                for item in widget.get_children():
+                    out.extend(str(v) for v in widget.item(item, "values"))
+            try:
+                text = widget.cget("text")
+            except tk.TclError:
+                text = ""
+            if text:
+                out.append(str(text))
+            try:
+                variable = widget.cget("textvariable")
+            except tk.TclError:
+                variable = ""
+            if variable:
+                out.append(str(self.app.getvar(variable)))
+            if isinstance(widget, tk.Text):
+                out.append(widget.get("1.0", "end"))
+            for child in widget.winfo_children():
+                walk(child)
+
+        walk(self.app._config)
+        return out
+
+    def test_both_salad_images_are_on_the_config_page_with_their_deployment(self) -> None:
+        """Both tags the document ships, with what a host needs, on one page."""
+        from salad_studio import image_deploy, studio_meta
+
+        entries = {e["key"]: e for e in image_deploy.entries(studio_meta.default(), None)}
+        self.assertEqual(sorted(entries), ["klein", "snofs"])
+        app = self.app
+        self.assertEqual(
+            sorted(str(v) for v in app.image_box["values"]),
+            ["klein", "snofs"],
+            "the page picks one image per unet family",
+        )
+        self.assertEqual(
+            sorted(str(v) for v in app.pol_image_box["values"]),
+            sorted(entry["tag"] for entry in entries.values()),
+            "the policy image field offers the document's tags",
+        )
+
+        for family, entry in sorted(entries.items()):
+            with self.subTest(family=family):
+                app.var_image_key.set(family)
+                app._on_image_pick()
+                app.update_idletasks()
+                shown = "\n".join(self._config_texts())
+                self.assertIn(entry["tag"], shown, "the tag must be shown on the page")
+                self.assertIn(entry["build_arg"], shown, "with its build arg")
+                self.assertIn(entry["context"], shown, "and its build context")
+                for key in (studio_meta.PORT_API, studio_meta.PORT_COMFY):
+                    self.assertIn(
+                        str(entry["ports"][key]), shown, f"port {key} must be shown"
+                    )
+                for name in ("HF_TOKEN", "CIVITAI_API_TOKEN", "STARTUP_CHECK_MAX_TRIES"):
+                    self.assertIn(name, shown, f"{name} must be shown")
+                self.assertIn(entry["gpu"], shown, "and the GPU class")
 
     # -- container lifecycle ----------------------------------------------
     def _prepare_snofs_generate(self, app) -> tuple[str, str]:

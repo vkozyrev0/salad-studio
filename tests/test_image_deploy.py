@@ -311,11 +311,15 @@ class ImagesPage(unittest.TestCase):
         tree = app.image_env_tree
         return [tuple(str(v) for v in tree.item(i, "values")) for i in tree.get_children()]
 
-    def test_the_page_is_in_the_notebook_and_shows_both_images(self) -> None:
+    def test_the_section_is_on_the_config_page_and_shows_both_images(self) -> None:
         app = self._window()
         labels = [app.nb.tab(t, "text") for t in app.nb.tabs()]
-        self.assertIn("Images", labels)
+        self.assertNotIn("Images", labels, "the images page is part of Config now")
         self.assertEqual(labels, list(self.app_mod.TAB_ORDER))
+        node = app.image_env_tree.master
+        while node is not None and node is not app._config:
+            node = node.master
+        self.assertIs(node, app._config, "the images section must live on Config")
         self.assertEqual(tuple(app.image_box["values"]), ("klein", "snofs"))
         self.assertIn("RTX 4090 24 GB", app.var_image_facts.get())
         self.assertIn("3000", app.var_image_facts.get())

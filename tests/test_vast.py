@@ -530,7 +530,8 @@ class VastGeneration(unittest.TestCase):
             generator.generate_from_vast(
                 endpoint="  ", payload=self.PAYLOAD, out_dir=self.out
             )
-        self.assertIn("Vast.ai tab", str(caught.exception))
+        self.assertIn("Vast.ai instances", str(caught.exception))
+        self.assertIn("Config page", str(caught.exception))
 
     def test_an_answer_with_no_image_is_refused(self) -> None:
         send = _Recorder(200, json.dumps({"status": "ok"}).encode())
@@ -600,11 +601,15 @@ class VastTabAndGenerate(unittest.TestCase):
         """
         return mock.patch("salad_studio.app.threading.Thread", _Inline)
 
-    def test_the_page_is_in_the_notebook_and_starts_on_salad(self) -> None:
+    def test_the_section_is_on_the_config_page_and_starts_on_salad(self) -> None:
         app = self._window()
         labels = [app.nb.tab(t, "text") for t in app.nb.tabs()]
-        self.assertIn("Vast.ai", labels)
+        self.assertNotIn("Vast.ai", labels, "the vast page is part of Config now")
         self.assertEqual(labels, list(self.app_mod.TAB_ORDER))
+        node = app.vast_tree.master
+        while node is not None and node is not app._config:
+            node = node.master
+        self.assertIs(node, app._config, "the instance list must live on the Config page")
         self.assertEqual(app.gen_mode(), "salad", "a fresh install renders on Salad")
 
     def test_the_key_lists_the_account_and_the_rows_are_saved(self) -> None:
@@ -730,7 +735,8 @@ class VastTabAndGenerate(unittest.TestCase):
         ):
             app._on_generate()
         self.assertTrue(shown, "the press must say why it cannot render")
-        self.assertIn("Vast.ai tab", shown[0])
+        self.assertIn("Vast.ai instances", shown[0])
+        self.assertIn("Config page", shown[0])
         self.assertFalse(app._busy)
 
 

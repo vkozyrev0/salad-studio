@@ -1130,8 +1130,6 @@ class LiveFieldSync(unittest.TestCase):
                 "Config",
                 "Prompt Settings",
                 "Tokens",
-                "Vast.ai",
-                "Images",
                 "LoRAs",
                 "Prompt Editor",
                 "Prompt Assist",
@@ -1147,6 +1145,53 @@ class LiveFieldSync(unittest.TestCase):
         # No "Prompt" tab: the prompt boxes live on the Prompt Editor tab.
         self.assertNotIn("Prompt", labels)
         self.assertEqual(app.nb.tab(app.nb.select(), "text"), labels[0])
+
+    def test_the_images_and_vast_pages_are_folded_into_config(self) -> None:
+        """One page owns the deployment: no top-level Images or Vast.ai tab."""
+        from salad_studio import app as app_mod
+
+        app = self.app
+        labels = [app.nb.tab(t, "text") for t in app.nb.tabs()]
+        self.assertNotIn("Images", labels)
+        self.assertNotIn("Vast.ai", labels)
+        self.assertNotIn("Images", app_mod.TAB_ORDER)
+        self.assertNotIn("Vast.ai", app_mod.TAB_ORDER)
+        # Every page the notebook shows has a sidebar button, and no button is
+        # left pointing at a page that is gone.
+        self.assertEqual(sorted(app._nav_btns), sorted(app_mod.TAB_ORDER))
+        # The merged sections live on Config, which is where Generate reads them.
+        for widget in (app.vast_tree, app.image_env_tree, app.pol_image_box):
+            with self.subTest(widget=str(widget)):
+                self.assertIn(
+                    app._config,
+                    self._ancestors(widget),
+                    "the merged section must live on the Config page",
+                )
+
+    @staticmethod
+    def _ancestors(widget) -> list:
+        """The widget's ancestors, innermost first, ending at the toplevel."""
+        out = []
+        node = widget.master
+        while node is not None:
+            out.append(node)
+            node = getattr(node, "master", None)
+        return out
+
+    def test_no_shipped_string_sends_the_user_to_a_removed_tab(self) -> None:
+        """A message naming a page that no longer exists is a dead end."""
+        manual = PKG / "README.md"
+        sources = [
+            PKG / name
+            for name in ("app.py", "generator.py", "tokens.py", "vast.py", "image_deploy.py")
+        ]
+        for path in [*sources, manual]:
+            text = path.read_text(encoding="utf-8")
+            for needle in ("Vast.ai tab", "Images tab"):
+                with self.subTest(path=path.name, needle=needle):
+                    self.assertNotIn(
+                        needle, text, f"{path.name} still points the user at {needle}"
+                    )
 
     def test_log_does_not_reread_tokens_once_the_cache_is_warm(self) -> None:
         """M9: log() redaction must not hit the token files per line."""

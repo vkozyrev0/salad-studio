@@ -1193,6 +1193,53 @@ class LiveFieldSync(unittest.TestCase):
                         needle, text, f"{path.name} still points the user at {needle}"
                     )
 
+    def test_the_config_page_holds_all_of_its_content(self) -> None:
+        """The merged page is taller than a window, and the canvas holds all of it."""
+        app = self.app
+        app.update_idletasks()
+        canvas = app._config_canvas
+        bbox = canvas.bbox("all")
+        self.assertIsNotNone(bbox, "the page's content must be in the scrollable canvas")
+        assert bbox is not None
+        self.assertGreaterEqual(
+            int(bbox[3]),
+            app._config_body.winfo_reqheight(),
+            "the scroll region must cover the whole page",
+        )
+        self.assertGreater(
+            int(bbox[3]), 720, "the merged page is taller than a window, so it scrolls"
+        )
+        for name in ("checkpoint_tree", "image_env_tree", "image_script", "vast_tree"):
+            with self.subTest(widget=name):
+                self.assertIn(
+                    app._config,
+                    self._ancestors(getattr(app, name)),
+                    f"{name} must be inside the config page's scrollable area",
+                )
+
+    def test_the_wheel_scrolls_the_config_page(self) -> None:
+        app = self.app
+        canvas = app._config_canvas
+        with mock.patch.object(canvas, "yview_scroll") as scroll:
+            app._on_config_wheel(type("E", (), {"delta": -120})())
+            scroll.assert_called_once_with(1, "units")
+            scroll.reset_mock()
+            app._on_config_wheel(type("E", (), {"delta": 240})())
+            scroll.assert_called_once_with(-2, "units")
+            scroll.reset_mock()
+            app._on_config_wheel(type("E", (), {"delta": 0})())
+            scroll.assert_not_called()
+
+    def test_the_wheel_is_claimed_only_while_the_pointer_is_on_the_page(self) -> None:
+        """The other pages and the history strip keep their own scrolling."""
+        app = self.app
+        app._on_config_enter()
+        self.assertTrue(app.bind_all("<MouseWheel>"), "the page must claim the wheel")
+        app._on_config_leave()
+        self.assertFalse(
+            app.bind_all("<MouseWheel>"), "and hand it back when the pointer leaves"
+        )
+
     def test_log_does_not_reread_tokens_once_the_cache_is_warm(self) -> None:
         """M9: log() redaction must not hit the token files per line."""
         app = self.app

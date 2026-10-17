@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import tkinter as tk
 from tkinter import ttk
-from typing import Mapping
 
 # Prussian watercolor-tin workspace: ink chrome, recessed wells, dusty-rose
 # accent (catalog halo), olive selection. Not cream-paper, not neon-on-black.
@@ -344,6 +343,39 @@ def _configure_styles(style: ttk.Style) -> None:
             ("!selected", list(NOTEBOOK_TAB_EXPAND_UNSELECTED)),
         ],
     )
+    # The Config page's sub-tabs. The same tab look, with the expand map pinned
+    # flat: the raised-selected-tab trick moves the strip by a pixel or two on
+    # every selection, which under the pointer reads as the tab jumping away.
+    style.configure(
+        "Section.TNotebook",
+        background=p["bg"],
+        borderwidth=0,
+        tabmargins=(4, 8, 4, 0),
+    )
+    style.configure(
+        "Section.TNotebook.Tab",
+        background=p["surface"],
+        foreground=p["fg_muted"],
+        padding=(14, 7),
+        bordercolor=p["border"],
+        lightcolor=p["surface"],
+        darkcolor=p["bg"],
+        font=_UI_FONT_TAB,
+    )
+    style.map(
+        "Section.TNotebook.Tab",
+        background=[
+            ("selected", p["bg"]),
+            ("active", p["surface_hi"]),
+        ],
+        foreground=[
+            ("selected", p["fg"]),
+            ("active", p["fg"]),
+        ],
+        lightcolor=[("selected", p["surface_hi"])],
+        darkcolor=[("selected", p["bg"])],
+        expand=[("selected", [0, 0, 0, 0]), ("!selected", [0, 0, 0, 0])],
+    )
     style.configure(
         "Treeview",
         background=p["well"],
@@ -436,8 +468,3 @@ def _configure_root(root: tk.Misc) -> None:
     root.option_add("*TCombobox*Listbox.selectBackground", p["select_bg"])
     root.option_add("*TCombobox*Listbox.selectForeground", p["select_fg"])
     root.option_add("*Font", _UI_FONT)
-
-
-def palette_snapshot() -> Mapping[str, str]:
-    """Copy of PALETTE for callers that should not mutate the module dict."""
-    return dict(PALETTE)

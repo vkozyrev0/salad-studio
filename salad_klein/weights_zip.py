@@ -57,19 +57,6 @@ def unzip_safetensors(archive: str | Path, dest: str | Path) -> Path:
     tmp.replace(dest_p)
     return dest_p
 
-
-def zip_safetensors(src: str | Path, archive: str | Path | None = None) -> Path:
-    """Store ``src`` as a zip named ``<src>.zip`` (Zip64 for >4 GB)."""
-    src_p = Path(src)
-    out = Path(archive) if archive is not None else Path(str(src_p) + ".zip")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out.with_suffix(out.suffix + ".part")
-    with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
-        zf.write(src_p, arcname=src_p.name)
-    tmp.replace(out)
-    return out
-
-
 def ensure_safetensors(dest: str | Path) -> str:
     """Make ``dest`` a real safetensors file Comfy can load.
 

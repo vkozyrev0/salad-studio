@@ -36,6 +36,16 @@ from studio_log import (  # noqa: E402
 # module is not an Attempt to the other.
 import salad_queue  # noqa: E402
 
+class ContainerDown(RuntimeError):
+    """The request's container is not running, so nothing was POSTed.
+
+    Raised instead of a plain ``RuntimeError`` so the press can report a refusal
+    rather than a failed render: no transport attempt was made, and the message
+    is the one the press itself gives (``salad_queue.container_down_refusal``).
+    A container that answered and then failed still raises ``RuntimeError``.
+    """
+
+
 _RETRY_CODES = (502, 503, 504, 521, 522, 523, 524)
 # The GET /ready probe retries on every one of those, 504 and 524 included: a
 # probe submits no work, so asking again cannot duplicate a render. The POST is
@@ -74,17 +84,6 @@ _LORA_GONE_CODES = (401, 403, 404, 410)
 # called every live LoRA "unconfirmed". (2026-09-22)
 _LORA_OK_CODES = (200, 206)
 
-
-def read_key(key_path: str) -> str:
-    return Path(key_path).read_text(encoding="utf-8").strip()
-
-
-def _body_snippet(body: bytes | str, n: int = 200) -> str:
-    if isinstance(body, (bytes, bytearray)):
-        return body[:n].decode("utf-8", "replace")
-    return str(body)[:n]
-
-
 def ready_sleep_s(attempt: int) -> int:
     """How long to wait before the next readiness probe.
 
@@ -104,9 +103,10 @@ def ready_budget_s() -> int:
     """How long the whole readiness wait covers, in seconds.
 
     Summed from the interval table rather than written down twice, so the budget
-    a failure message names is the one the loop actually spends.
+    a failure message names is the one the loop actually spends: the loop sleeps
+    before every probe but the last, so the table's last interval is never spent.
     """
-    return sum(ready_sleep_s(attempt) for attempt in range(_READY_TRIES))
+    return sum(ready_sleep_s(attempt) for attempt in range(_READY_TRIES - 1))
 
 
 def wait_gateway_ready(
@@ -167,8 +167,10 @@ def wait_gateway_ready(
                 )
                 salad_gen.time.sleep(ready_sleep_s(attempt))
                 continue
+            # Last attempt, replica still booting: fall out so the tail names
+            # the probe count and the budget it spent.
             _log("error", msg)
-            raise RuntimeError(msg + f"  (pre-probe /ready failed for {who})")
+            break
         if last_code in _RETRY_CODES and attempt + 1 < _READY_TRIES:
             _log("warn", msg + f"  retry in {ready_sleep_s(attempt)}s")
             salad_gen.time.sleep(ready_sleep_s(attempt))
@@ -176,8 +178,9 @@ def wait_gateway_ready(
         if last_code not in _RETRY_CODES:
             _log("warn", msg + "  will POST /prompt anyway")
             return
+        # Last attempt on a retry code: fall out for the tail below.
         _log("error", msg)
-        raise RuntimeError(msg + f"  (pre-probe /ready failed for {who})")
+        break
     msg = explain_http(int(last_code), last_body, url, method="GET")
     _log("error", msg)
     raise RuntimeError(
@@ -254,7 +257,12 @@ def poll_history_image(
             return found
         if isinstance(blob, dict):
             st = blob.get("status") if isinstance(blob.get("status"), dict) else {}
-            if st.get("status_str") == "error" or st.get("completed") is False and st.get("status_str"):
+            # Only "error" is terminal. An entry that is present but not
+            # completed is the render still running, which is the whole reason
+            # this polls; `and` binds tighter than `or`, so testing
+            # `completed is False` beside a status string ended the wait on the
+            # first in-flight entry it saw.
+            if st.get("status_str") == "error":
                 _log("error", f"history status {st}")
                 return None
         salad_gen.time.sleep(sleep_s)
@@ -382,8 +390,14 @@ def _probe_url(url: str, opener: Any | None = None) -> tuple[int, str]:
             if method == "HEAD" and code in (400, 403, 405, 501):
                 continue
             return code, method
-        except Exception as exc:  # noqa: BLE001, any transport failure is inconclusive
-            return 0, type(exc).__name__
+        except Exception:  # noqa: BLE001, any transport failure is inconclusive
+            # A HEAD transport failure is inconclusive on its own, so the ranged
+            # GET below still runs. The GET is the last method: with neither
+            # answering, fall out for the summary rather than this pass's own
+            # reason, which names only one of the two.
+            if method == "GET":
+                break
+            continue
     return 0, "no probe worked"
 
 
@@ -546,7 +560,20 @@ def generate_from_payload(
         is therefore reported as an accepted failure, never as a retry.
         """
         _log("http", f"POST {url}  timeout={_PROMPT_TIMEOUT_S}s")
-        code, body = salad_gen._req(url, key, data=blob, timeout=_PROMPT_TIMEOUT_S)
+        try:
+            code, body = salad_gen._req(url, key, data=blob, timeout=_PROMPT_TIMEOUT_S)
+        except OSError as e:
+            # A POST that times out may already be a render. The queue reads
+            # status 0 as busy and retries it, which would submit the plate a
+            # second time, so an unanswered POST is terminal like 504/524.
+            return salad_queue.Attempt(
+                status=524,
+                error=(
+                    f"POST {url} did not answer within {_PROMPT_TIMEOUT_S}s "
+                    f"({type(e).__name__}); the container may still be rendering "
+                    "it, so it is not re-sent"
+                ),
+            )
         code = int(code)
         if code != 200:
             return salad_queue.Attempt(status=code, body=body)
@@ -594,9 +621,9 @@ def generate_from_payload(
         This runs *inside* the job, after the queue has taken the request, so the
         row is in the Queue page for the whole of a cold start: the wait is
         minutes, and a request that is not in the queue looks like one that never
-        happened. The queue owns the start decision (it re-reads the group's
-        state every time, so a container stopped since the last render is started
-        for this one), and the wait covers the boot that follows.
+        happened. The queue reads the group's state every time, so a container
+        that went down since the press is refused here rather than started; a
+        container that is still coming up is waited for.
 
         A container that never answers ends the job here. 504 is terminal to the
         queue, so it does not retry a wait that already ran its whole budget, and
@@ -604,7 +631,9 @@ def generate_from_payload(
         """
         refusal = line_queue.ensure_container(line, gateway) if line else ""
         if refusal:
-            _log("error", refusal)
+            # No log here: the queue logs this refusal on its own line, and the
+            # press reports it once. Two lines with the same sentence is what
+            # made one press look like four failures.
             return salad_queue.Attempt(status=504, error=refusal)
         try:
             wait_gateway_ready(
@@ -629,6 +658,10 @@ def generate_from_payload(
     attempt = job.result if isinstance(job.result, salad_queue.Attempt) else salad_queue.Attempt()
     if job.state != salad_queue.ACCEPTED:
         msg = _attempt_error(attempt, url, job)
+        if line and msg == salad_queue.container_down_refusal(line, gateway):
+            # The press refuses a group the badge says is stopped, so this is the
+            # race: the group went down between the badge read and the dispatch.
+            raise ContainerDown(msg)
         _log("error", msg)
         raise RuntimeError(msg)
     out = write_plate(attempt.result, out_dir)
@@ -644,14 +677,20 @@ def generate_from_vast(
     on_log: Any | None = None,
     sender: Any | None = None,
     timeout: int = _PROMPT_TIMEOUT_S,
+    queue: salad_queue.SaladQueue | None = None,
+    line: str = "",
+    checksum: str = "",
 ) -> Path:
     """POST the Prompt Editor JSON to a vast.ai instance's ComfyUI and write a JPEG.
 
     The vast half of Generate: the same body preparation and the same
     accepted-image transform the Salad path uses, with the instance's own
     ``/prompt`` as the target instead of a Salad gateway. There is no readiness
-    wait and no queue line, because the instance is the user's own machine: it
-    is either up and answering or the POST says why not.
+    wait and no container to start: the instance is the user's own machine. The
+    POST still goes through ``queue`` on the line named by ``line``, so the
+    request appears on the Queue page, waits its turn, and a busy instance is
+    retried there. ``accepted`` turns True the moment the instance answers 200,
+    which is what stops a retry from duplicating a render it already took.
 
     ``sender(request, timeout)`` replaces the transport, so a test drives a real
     POST through a recorded request. No token is sent to the instance — the
@@ -672,45 +711,101 @@ def generate_from_vast(
     blob = salad_gen.json.dumps(body_obj).encode()
     url = vast.prompt_url(base)
     _log("http", f"POST {url}  {len(blob)} bytes  {summarize_payload(body_obj)}")
-    code, body = vast.post_prompt(base, blob, sender=sender, timeout=timeout)
-    code = int(code)
-    if code != 200:
-        msg = explain_http(code, body, url)
+    line_queue = queue if queue is not None else salad_queue.shared()
+
+    def render_once() -> salad_queue.Attempt:
+        """One submission: POST /prompt, then resolve the image it accepted.
+
+        ``accepted`` turns True the moment the instance answers 200, which is
+        what stops the queue from POSTing the job a second time: a re-POST of an
+        accepted prompt renders a duplicate plate. Everything after that answer
+        is therefore reported as an accepted failure, never as a retry.
+        """
+        _log("http", f"POST {url}  timeout={timeout}s")
+        code, body = vast.post_prompt(base, blob, sender=sender, timeout=timeout)
+        code = int(code)
+        if code == 0:
+            # The instance did not answer the POST. The request may still have
+            # reached it, so a retry could render the plate twice; terminal.
+            return salad_queue.Attempt(
+                status=524,
+                error=(
+                    f"POST {url} got no answer within {timeout}s; the instance "
+                    "may still be rendering it, so it is not re-sent"
+                ),
+            )
+        if code != 200:
+            return salad_queue.Attempt(status=code, body=body)
+        _log("ok", f"HTTP 200 from {url}")
+        try:
+            data = salad_gen.json.loads(body.decode("utf-8", "replace"))
+        except json.JSONDecodeError:
+            return salad_queue.Attempt(
+                status=code,
+                body=body,
+                accepted=True,
+                error=f"POST {url} answered 200 with a body that is not JSON",
+            )
+        raw: Any = first_image_b64(data) or native_image_file(data)
+        if not raw and isinstance(data, dict) and data.get("prompt_id"):
+            pid = str(data.get("prompt_id"))
+            errs = data.get("node_errors") or {}
+            if errs:
+                return salad_queue.Attempt(
+                    status=code,
+                    body=body,
+                    accepted=True,
+                    error=f"Comfy node_errors for {pid}: {json.dumps(errs)[:800]}",
+                )
+            _log(
+                "info",
+                f"Comfy queued prompt_id={pid}; polling /history "
+                "(wrapper returned no images[])",
+            )
+            raw = poll_history_image(
+                lambda u: vast.get_url(u, sender=sender),
+                f"{base}/history/{pid}",
+                pid,
+                on_log=_log,
+                # A native ComfyUI keeps the plate in the container and names it in
+                # /history, so accept that record as well as a wrapper's base64.
+                pick=lambda hist: first_image_b64(hist) or native_image_file(hist),
+            )
+        if isinstance(raw, dict):
+            try:
+                raw = fetch_view_image(base, raw, sender=sender, on_log=_log)
+            except RuntimeError as e:
+                return salad_queue.Attempt(
+                    status=code, body=body, accepted=True, error=str(e)
+                )
+        if not raw:
+            keys = list(data)[:16] if isinstance(data, dict) else type(data)
+            return salad_queue.Attempt(
+                status=code,
+                body=body,
+                accepted=True,
+                error=f"no images in the response from {url}; keys={keys}",
+            )
+        return salad_queue.Attempt(status=code, body=body, accepted=True, result=raw)
+
+    def dispatch_once(_job: salad_queue.Job) -> salad_queue.Attempt:
+        return render_once()
+
+    job = line_queue.deliver(
+        {"endpoint": base, "profile": line},
+        dispatch_once,
+        line=line,
+        ensure=False,
+        checksum=checksum,
+    )
+    attempt = (
+        job.result if isinstance(job.result, salad_queue.Attempt) else salad_queue.Attempt()
+    )
+    if job.state != salad_queue.ACCEPTED:
+        msg = attempt.error if attempt.error else _attempt_error(attempt, url, job)
         _log("error", msg)
         raise RuntimeError(msg)
-    _log("ok", f"HTTP 200 from {url}")
-    try:
-        data = salad_gen.json.loads(body.decode("utf-8", "replace"))
-    except json.JSONDecodeError:
-        raise RuntimeError(f"POST {url} answered 200 with a body that is not JSON") from None
-    raw: Any = first_image_b64(data) or native_image_file(data)
-    if not raw and isinstance(data, dict) and data.get("prompt_id"):
-        pid = str(data.get("prompt_id"))
-        errs = data.get("node_errors") or {}
-        if errs:
-            raise RuntimeError(
-                f"Comfy node_errors for {pid}: {json.dumps(errs)[:800]}"
-            )
-        _log(
-            "info",
-            f"Comfy queued prompt_id={pid}; polling /history "
-            "(wrapper returned no images[])",
-        )
-        raw = poll_history_image(
-            lambda u: vast.get_url(u, sender=sender),
-            f"{base}/history/{pid}",
-            pid,
-            on_log=_log,
-            # A native ComfyUI keeps the plate in the container and names it in
-            # /history, so accept that record as well as a wrapper's base64.
-            pick=lambda blob: first_image_b64(blob) or native_image_file(blob),
-        )
-    if isinstance(raw, dict):
-        raw = fetch_view_image(base, raw, sender=sender, on_log=_log)
-    if not raw:
-        keys = list(data)[:16] if isinstance(data, dict) else type(data)
-        raise RuntimeError(f"no images in the response from {url}; keys={keys}")
-    out = write_plate(raw, out_dir)
+    out = write_plate(attempt.result, out_dir)
     _log("ok", f"wrote {out}  {out.stat().st_size} bytes")
     return out
 
@@ -764,15 +859,3 @@ def list_history(out_dir: Path) -> list[Path]:
         return []
     files = [path for pattern in PLATE_GLOBS for path in out_dir.glob(pattern)]
     return sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)
-
-
-def clear_history(out_dir: Path) -> int:
-    """Delete every plate in ``out_dir``. Returns how many files went."""
-    n = 0
-    for path in list_history(out_dir):
-        try:
-            path.unlink()
-            n += 1
-        except OSError:
-            continue
-    return n

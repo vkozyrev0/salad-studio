@@ -79,10 +79,6 @@ def tokenize_json(text: str) -> list[Span]:
     return spans
 
 
-def token_kinds(text: str) -> set[str]:
-    return {kind for kind, _s, _e in tokenize_json(text)}
-
-
 def verify_request_json(text: str) -> tuple[bool, str]:
     """Same parse Generate uses. ``(ok, readable reason)``."""
     try:

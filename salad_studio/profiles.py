@@ -17,6 +17,7 @@ from typing import Any, Callable
 
 # Top-level, the way this package's leaf modules are imported (studio_log,
 # request_json): one module object per process, shared with the app and tests.
+import hostings  # noqa: E402
 import studio_meta  # noqa: E402
 
 PROFILES_PATH = Path.home() / ".config" / "salad" / "studio-profiles.json"
@@ -39,20 +40,24 @@ DEFAULT_KLEIN_LORA_IDS = (
 )
 
 
-def _default_selected_loras() -> list[str]:
-    return list(DEFAULT_KLEIN_LORA_IDS)
+# The form's untouched CFG. Shipped Klein recipes are 1, and at CFG 1 the
+# negative is inert. A number the user types may differ; this one must not.
+FORM_CFG = 1
 
 
 @dataclass
 class SaladProfile:
     name: str
+    # The profile's render URL for any hosting: a Salad gateway, a vast.ai
+    # instance, or whatever a later row in ``hostings.ADAPTERS`` names.
     gateway: str = ""
+    mode: str = hostings.DEFAULT
     key_path: str = field(default_factory=_default_key_path)
     graph: str = "klein"
     width: int = 1024
     height: int = 1024
     steps: int = 20
-    cfg: float = 5
+    cfg: float = FORM_CFG
     seed: int = 1
     scheduler: str = "flux2"
     # Every checkpoint this container serves. One container holds one unet
@@ -68,6 +73,7 @@ class SaladProfile:
     policy: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        self.mode = _coerce_mode(self.mode)
         self.checkpoints = [c for c in (str(c).strip() for c in self.checkpoints) if c]
         if self.selected_loras:
             self.use_loras = True
@@ -103,10 +109,6 @@ class SaladProfile:
 # list, so growing that list is a Config-page edit and no code change. The
 # metadata document keeps what a family *is* (its markers) and the seed list a
 # new built-in profile starts from.
-SNOFS_MARKER = "snofs"
-# Mirrors request_json.UNET_SNOFS, duplicated on purpose: this module is
-# stdlib-only and request_json imports salad_gen + lora_store.
-SNOFS_UNET = "snofsSexNudesAndOther_distilledV12KleinFp8.safetensors"
 
 
 def unet_family(unet_name: str, meta: dict[str, Any] | None = None) -> str:
@@ -158,17 +160,18 @@ def mixed_family_reason(
 ) -> str:
     """Why this profile's list spans more than one family, or ``""``.
 
-    One container holds one unet family in VRAM, so a list that mixes families
-    cannot be served by one group: the second unet forces Comfy to stream
-    weights from host memory and a seconds-long render becomes minutes.
+    This is a warning, not a refusal. Some images carry two or more checkpoints,
+    so a mixed list can be served by one group when its image carries every
+    family. When the image carries only one, the second unet forces Comfy to
+    stream weights from host memory and a seconds-long render becomes minutes.
     """
     families = sorted(f for f in profile_families(profile, meta) if f)
     if len(families) <= 1:
         return ""
     return (
         f"Profile {profile.name!r} lists checkpoints from {len(families)} unet "
-        f"families ({', '.join(families)}). One container holds one unet family in "
-        "VRAM, so split the list across one profile per family."
+        f"families ({', '.join(families)}). This works only when the image carries "
+        "every family; otherwise split the list across one profile per family."
     )
 
 
@@ -218,20 +221,18 @@ def seeded_policy(
 def add_checkpoint(
     profile: SaladProfile, unet: str, meta: dict[str, Any] | None = None
 ) -> str:
-    """Append ``unet`` to the profile's list. Returns ``""`` or a refusal reason."""
+    """Append ``unet`` to the profile's list. Returns ``""`` or a refusal reason.
+
+    A checkpoint from another family is allowed: some container images carry
+    more than one checkpoint. The list is no longer a statement that one image
+    serves one family; callers warn with :func:`mixed_family_reason` instead of
+    refusing, and the Config page shows that warning after the add.
+    """
     name = (unet or "").strip()
     if not name:
         return "Type a checkpoint filename or pick a label first."
     if name in profile.checkpoints:
         return f"{name} is already in {profile.name!r}."
-    mine = checkpoint_family(name, meta)
-    listed = sorted(f for f in profile_families(profile, meta) if f)
-    if listed and mine not in listed:
-        return (
-            f"{name} is a {mine} checkpoint and {profile.name!r} serves "
-            f"{listed[0]}. One container holds one unet family in VRAM, so add it "
-            "to a profile for that family instead."
-        )
     profile.checkpoints.append(name)
     return ""
 
@@ -253,30 +254,6 @@ def profiles_for_checkpoint(
     if not name:
         return []
     return sorted(p.name for p in all_profiles.values() if name in p.checkpoints)
-
-
-def route_payload(
-    payload: dict[str, Any] | None,
-    all_profiles: dict[str, SaladProfile],
-    meta: dict[str, Any] | None = None,
-) -> tuple[str, SaladProfile] | None:
-    """Which profile should render this graph, by the checkpoint it loads.
-
-    The profile's own list decides, so adding a checkpoint to a profile on the
-    Config page makes a graph loading it routable with no code edit. None means
-    "no profile serves it": nothing lists the checkpoint, two profiles do and
-    the choice would be a coin toss, or the one that lists it mixes families.
-    """
-    unets = payload_unets(payload)
-    if not unets:
-        return None
-    names = profiles_for_checkpoint(unets[0], all_profiles)
-    if len(names) != 1:
-        return None
-    profile = all_profiles[names[0]]
-    if mixed_family_reason(profile, meta):
-        return None
-    return names[0], profile
 
 
 @dataclass(frozen=True)
@@ -330,9 +307,6 @@ def plan_route(
             "which container should render it is ambiguous. Leave it on one profile."
         )
     target = all_profiles[names[0]]
-    mixed = mixed_family_reason(target, doc)
-    if mixed:
-        return None, mixed
     if target.name == here.name:
         return None, ""
     family = checkpoint_family(checkpoint, doc)
@@ -388,12 +362,26 @@ def _read_optional_text(path: Path) -> str:
 
 
 def _load_doc(path: Path) -> dict:
+    """The stored document, or an empty one.
+
+    A half-written file is the case this must survive: ``_save_doc`` writes in
+    place, so a crash mid-write leaves truncated JSON, and a loader that raised
+    there would abort ``load_all`` and with it app startup. Every sibling store
+    (``studio_meta``, ``vast``, ``salad_queue``, ``tokens``, ``prompt_history``,
+    ``prompt_catalog``, ``image_deploy``) degrades the same way.
+    """
     if not path.is_file():
         return {"profiles": {}, "active": None}
-    raw = path.read_text(encoding="utf-8")
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return {"profiles": {}, "active": None}
     if not raw.strip():
         return {"profiles": {}, "active": None}
-    data = json.loads(raw)
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return {"profiles": {}, "active": None}
     if not isinstance(data, dict):
         return {"profiles": {}, "active": None}
     profiles = data.get("profiles")
@@ -444,6 +432,16 @@ def _coerce_checkpoints(data: dict[str, Any]) -> list[str]:
     return [legacy] if legacy else []
 
 
+def _coerce_mode(value: Any) -> str:
+    """A hosting key this table knows, or ``hostings.DEFAULT``.
+
+    A store written before ``mode`` existed, or a hand-edited unknown value,
+    loads as Salad so an existing profile keeps working.
+    """
+    mode = str(value or "").strip().lower()
+    return mode if mode in hostings.BY_KEY else hostings.DEFAULT
+
+
 def _coerce_policy(value: Any) -> dict[str, Any]:
     """The stored policy as this profile's own dict; ``{}`` when unusable.
 
@@ -465,17 +463,16 @@ def _profile_from_dict(name: str, data: object) -> SaladProfile:
     use_loras = bool(selected) if "selected_loras" in data else bool(
         data.get("use_loras", True)
     )
-    if "selected_loras" not in data and use_loras and not selected:
-        selected = list(DEFAULT_KLEIN_LORA_IDS)
     profile = SaladProfile(
         name=str(data.get("name") or name),
         gateway=str(data.get("gateway", "")),
+        mode=_coerce_mode(data.get("mode")),
         key_path=str(data.get("key_path") or DEFAULT_KEY_PATH),
         graph=str(data.get("graph") or "klein"),
         width=_coerce(data.get("width", 1024), int, 1024),
         height=_coerce(data.get("height", 1024), int, 1024),
         steps=_coerce(data.get("steps", 20), int, 20),
-        cfg=_coerce(data.get("cfg", 5) or 5, float, 5),
+        cfg=_coerce(data.get("cfg", FORM_CFG) or FORM_CFG, float, FORM_CFG),
         seed=_coerce(data.get("seed", 1) or 1, int, 1),
         scheduler=str(data.get("scheduler") or "flux2"),
         checkpoints=_coerce_checkpoints(data),

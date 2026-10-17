@@ -34,8 +34,8 @@ import tokens  # noqa: E402
 from studio_log import prompt_url  # noqa: E402
 
 MAX_ATTEMPTS = 5
+# The conversion source a mechanical --edit-import fix may rewrite.
 IMPORT_SOURCE_NAMES = ("comfy_import.py", "request_json.py")
-SAMPLE_URL = "https://civitai.com/images/123566519"
 DEFAULT_FIXTURE_META = (
     "civitai verify fixture prompt, a standing figure in warm evening light\n"
     "Negative prompt: bad, blurry\n"
@@ -764,16 +764,6 @@ def audit_clip(body: dict[str, Any] | None, metadata_text: str = "") -> dict[str
     }
 
 
-_WRONG_LORA_FAMILIES = {
-    "SDXL",
-    "Pony",
-    "Illustrious",
-    "Krea 2",
-    "Flux.1 Dev",
-    "Flux.1 D",
-}
-
-
 def loras_in_prompt(body: dict[str, Any] | None) -> list[dict[str, Any]]:
     prompt = body.get("prompt") if isinstance(body, dict) else None
     prompt = prompt if isinstance(prompt, dict) else {}
@@ -822,7 +812,7 @@ def audit_loras(
                 f"LoraLoader #{loader['nid']} local filename not in Studio extras: {name}"
             )
             row["issue"] = "not in extras"
-        elif family in _WRONG_LORA_FAMILIES:
+        elif family in ci.INCOMPATIBLE_FAMILIES:
             issues.append(
                 f"LoraLoader #{loader['nid']} family {family} is not Flux.2 Klein"
             )
@@ -958,18 +948,6 @@ def journal_prompt_backtrack(
         import_conversion=gap["import_conversion"],
     )
     return gap
-
-
-def visual_gap_actionable(gap: dict[str, list[str]] | None) -> bool:
-    """True when JSON findings point at convert (empty CLIP, local LoRA, omitted LoadImage)."""
-    blob = " ".join((gap or {}).get("json_request") or []).lower()
-    if "no obvious" in blob:
-        return False
-    return any(
-        key in blob
-        for key in ("clip", "lora", "loadimage", "load image")
-    )
-
 
 def compare_generated_to_site(
     journal: Journal,

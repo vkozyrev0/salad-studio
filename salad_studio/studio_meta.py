@@ -18,7 +18,8 @@ One JSON document carries the two things that used to be code literals:
 - ``routing.families.<family>.deployment`` — what it takes to run that family's
   image on a host: the build context, the base image, the build arg, the ports
   the container answers on, and the environment entries it reads (with the
-  token slot or literal that supplies each one). The Images page renders this;
+  token slot or literal that supplies each one). The Config page's Container images
+section renders this;
   :mod:`image_deploy` builds the deploy commands from it.
 - ``queue.idle_stop_s`` — how long a container may sit idle before the queue
   stops it, in seconds (one hour by default).
@@ -68,17 +69,6 @@ GPU = "gpu"
 DISK_GB = "disk_gb"
 VCPU = "vcpu"
 MEMORY_GB = "memory_gb"
-DEPLOYMENT_KEYS = (
-    CONTEXT,
-    BASE_IMAGE,
-    BUILD_ARG,
-    PORTS,
-    ENV,
-    GPU,
-    DISK_GB,
-    VCPU,
-    MEMORY_GB,
-)
 
 # Per-family probe settings: the document's names for the two probes, the
 # policy's names for what it carries (``startup`` / ``readiness``), and the six

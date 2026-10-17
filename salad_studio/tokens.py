@@ -86,14 +86,6 @@ def default_label(kind: str) -> str:
     name = env_var(kind)
     return f"{label}   (or {name} in the environment)" if name else label
 
-
-def token_path(kind: str) -> Path:
-    """Local JSON is the store for every kind."""
-    if kind not in {k for k, _l, _r in TOKEN_SPECS}:
-        raise KeyError(f"unknown token {kind}")
-    return LOCAL_PATH
-
-
 def token_label(kind: str) -> str:
     for kid, label, _rel in TOKEN_SPECS:
         if kid == kind:
@@ -262,14 +254,6 @@ def probe_token(
     if status == 0:
         return {"kind": kind, "state": UNKNOWN, "detail": "no response"}
     return {"kind": kind, "state": UNKNOWN, "detail": f"HTTP {status}"}
-
-
-def probe_all(*, send=None, timeout: int = PROBE_TIMEOUT_S) -> dict[str, dict[str, str]]:
-    """Check every kind that has a probe spec."""
-    return {
-        kind: probe_token(kind, send=send, timeout=timeout) for kind in PROBE_SPECS
-    }
-
 
 def state_color(state: str) -> str:
     """Palette key for an indicator dot. Kept here so the widget only renders."""

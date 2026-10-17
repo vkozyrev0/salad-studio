@@ -83,6 +83,9 @@ def prompt_text_of(body: dict[str, Any] | None) -> str:
 
 def _redact_request(body: dict[str, Any]) -> dict[str, Any]:
     out = copy.deepcopy(body)
+    # The documented Salad request shape carries a ``credentials`` block with a
+    # Bearer token. It is a secret, and nothing in the history needs it.
+    out.pop("credentials", None)
     prompt = out.get("prompt")
     if not isinstance(prompt, dict):
         return out
@@ -96,9 +99,9 @@ def _redact_request(body: dict[str, Any]) -> dict[str, Any]:
         inputs = node.get("inputs")
         if not isinstance(inputs, dict):
             continue
-        name = inputs.get("lora_name")
-        if isinstance(name, str) and strip_civitai_token is not None:
-            inputs["lora_name"] = strip_civitai_token(name)
+        for key, value in list(inputs.items()):
+            if isinstance(value, str) and strip_civitai_token is not None:
+                inputs[key] = strip_civitai_token(value)
     return out
 
 
@@ -302,16 +305,24 @@ def write_thumb(src: Path, *, ts: int) -> Path | None:
 
 
 def attach_image(src: Path, *, ts: int | None = None) -> Path | None:
-    """Attach a generated plate to the newest matching history row."""
+    """Attach a generated plate to the history row ``ts`` names.
+
+    Without ``ts`` the newest row is the one, which is what a fresh render
+    wants. With a ``ts`` that matches no row there is nothing to attach to, so
+    this returns None: falling back to the newest row would hand this plate to a
+    different render and delete that row's thumbnail.
+    """
     rows = _load()
     if not rows:
         return None
     idx = 0
-    if ts:
-        for i, row in enumerate(rows):
-            if int(row.get("ts") or 0) == int(ts):
-                idx = i
-                break
+    if ts is not None:
+        match = [
+            i for i, row in enumerate(rows) if int(row.get("ts") or 0) == int(ts)
+        ]
+        if not match:
+            return None
+        idx = match[0]
     stamp = int(rows[idx].get("ts") or time.time())
     thumb = write_thumb(Path(src), ts=stamp)
     if thumb is None:

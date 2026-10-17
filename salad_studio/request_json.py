@@ -18,6 +18,7 @@ import salad_gen  # noqa: E402
 from salad_probe_klein import klein_payload  # noqa: E402
 
 import lora_store as ls  # noqa: E402
+import profiles  # noqa: E402
 
 UNET_BASE = "flux-2-klein-base-9b-fp8.safetensors"
 UNET_DISTILLED = "flux-2-klein-9b-fp8.safetensors"
@@ -611,7 +612,9 @@ def build_request(
             graph_nodes["63"]["inputs"]["positive"] = ["74", 0]
             graph_nodes["63"]["inputs"]["negative"] = ["67", 0]
         wire_clip_encodes(graph_nodes)
-        if cfg is not None:
+        # The graph already has the recipe's CFG. The form default is not a
+        # choice about this graph, so stamping it would replace the recipe.
+        if cfg is not None and float(cfg) != float(profiles.FORM_CFG):
             for node in graph_nodes.values():
                 if isinstance(node, dict) and node.get("class_type") == "CFGGuider":
                     inputs = node.setdefault("inputs", {})
@@ -681,9 +684,27 @@ def apply_scheduler(body: dict[str, Any], kind: str) -> dict[str, Any]:
     return body
 
 
+def is_civitai_url(url: str) -> bool:
+    """True only for an https URL whose host is Civitai or a Civitai subdomain.
+
+    A substring test matches ``https://attacker.example/civitai.com/...`` and
+    ``https://notcivitai.com/...``, so a graph pasted from anywhere could send
+    the Civitai token to a host of its choosing.
+    """
+    try:
+        parsed = urlparse(url)
+        port = parsed.port
+    except ValueError:
+        return False
+    if parsed.scheme != "https" or port not in (None, 443):
+        return False
+    host = (parsed.hostname or "").lower()
+    return host == "civitai.com" or host.endswith(".civitai.com")
+
+
 def with_civitai_token(url: str, token: str) -> str:
     """Add ``?token=`` so Salad's LoraLoader can download gated Civitai files."""
-    if not token or "civitai.com" not in url.lower():
+    if not token or not is_civitai_url(url):
         return url
     parts = urlparse(url)
     q = dict(parse_qsl(parts.query, keep_blank_values=True))
@@ -716,7 +737,7 @@ def lora_name_inputs(prompt: dict[str, Any] | None) -> list[tuple[dict[str, Any]
 
 def payload_has_civitai_download(body: dict[str, Any]) -> bool:
     for _node, name in lora_name_inputs(body.get("prompt")):
-        if "civitai.com" in name.lower() and "/download/" in name.lower():
+        if is_civitai_url(name) and "/download/" in name.lower():
             q = dict(parse_qsl(urlparse(name).query))
             if not q.get("token"):
                 return True
@@ -732,7 +753,7 @@ def civitai_lora_urls(prompt: dict[str, Any]) -> list[str]:
     """
     urls: list[str] = []
     for _node, name in lora_name_inputs(prompt):
-        if name.startswith("http") and "civitai.com" in name.lower() and name not in urls:
+        if is_civitai_url(name) and name not in urls:
             urls.append(name)
     return urls
 

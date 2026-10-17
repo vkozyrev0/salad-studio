@@ -206,12 +206,16 @@ def _fetch(job: dict[str, str]) -> str:
     name = _label(job)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     zst = ensure_safetensors(dest)
-    if zst != "missing":
+    if zst != "missing" and _have(dest):
         print(f"prefetch {name} {zst}", flush=True)
         return f"{zst} {dest}"
-    if _have(dest):
-        print(f"prefetch {name} have", flush=True)
-        return f"have {dest}"
+    if zst != "missing":
+        # A file that is there but far too small is a truncated download, not a
+        # weight: re-fetch it rather than booting Comfy against it.
+        print(
+            f"prefetch {name} truncated ({os.path.getsize(dest)} bytes); re-fetching",
+            flush=True,
+        )
     tok = hf_token()
     print(
         f"prefetch {name} start repo={job['repo']} token={'set' if tok else 'MISSING'}",

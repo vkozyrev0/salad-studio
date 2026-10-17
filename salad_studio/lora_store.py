@@ -82,12 +82,24 @@ def _resolve_extras(path: Path | None) -> Path:
 
 
 def _load_extras(path: Path) -> list[dict[str, Any]]:
+    """The user's extra LoRAs, or none.
+
+    A hand-broken file reads as "no extras" rather than raising: this loader is
+    on the path of every LoRA render, so raising here would take LoRA listing and
+    Convert down with it, and every sibling store degrades instead.
+    """
     if not path.is_file():
         return []
-    raw = path.read_text(encoding="utf-8")
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
     if not raw.strip():
         return []
-    data = json.loads(raw)
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return []
     if isinstance(data, dict):
         items = data.get("items") or []
     elif isinstance(data, list):
@@ -824,13 +836,7 @@ def strengths_for(item: dict[str, Any]) -> tuple[float, float]:
             float(src.get("strength_model", 1)),
             float(src.get("strength_clip", src.get("strength_model", 1))),
         )
-    pair = _STRENGTH.get(str(item.get("id")))
-    if pair:
-        return pair
-    blob = str(src.get("download") or item.get("id") or "")
-    if "2795018" in blob or "1449678" in blob:
-        return (0.5, 0.5)
-    return (1.0, 1.0)
+    return _STRENGTH.get(str(item.get("id"))) or (1.0, 1.0)
 
 
 def comfy_lora_name(item: dict[str, Any]) -> str:
@@ -1324,20 +1330,35 @@ def lora_hints_from_generation(gen: dict[str, Any] | None) -> dict[str, dict[str
 
 
 def verify_http_url(url: str, timeout: int = 15) -> bool:
-    """True when the URL exists (200/3xx) or is gated (401/403)."""
+    """True when the URL exists (200/3xx) or is gated (401/403).
+
+    Some CDNs refuse HEAD, so a HEAD refusal that a CDN commonly uses
+    (400/403/405/501) is checked again with a one-byte ranged GET before the
+    row is marked unverified.
+    """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         return False
-    req = urllib.request.Request(
-        url, method="HEAD", headers={"User-Agent": mc.UA, "accept": "*/*"}
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return int(getattr(resp, "status", 200) or 200) < 400
-    except urllib.error.HTTPError as e:
-        return int(e.code) in (401, 403)
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
-        return False
+    for method, extra in (("HEAD", {}), ("GET", {"Range": "bytes=0-1"})):
+        req = urllib.request.Request(
+            url,
+            method=method,
+            headers={"User-Agent": mc.UA, "accept": "*/*", **extra},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return int(getattr(resp, "status", 200) or 200) < 400
+        except urllib.error.HTTPError as e:
+            code = int(e.code)
+            e.close()
+            if method == "HEAD" and code in (400, 403, 405, 501):
+                continue
+            return code in (401, 403)
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+            if method == "GET":
+                return False
+            continue
+    return False
 
 
 def _pick_version_file(

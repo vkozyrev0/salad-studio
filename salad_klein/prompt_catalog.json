@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "note": "Successful Flux.2 Klein two-body prompts. An entry is 'verified' only when a human judged a plate from it; the verdict words are the user's own. The prompt text is copied out of the recipe file each entry names, so it cannot drift from what was actually run — salad_studio/test_prompt_catalog.py enforces that. Candidates are recorded for continuation and are explicitly NOT successes.",
+  "note": "Successful Flux.2 Klein two-body prompts. An entry is 'verified' only when a human judged a plate from it; the verdict words are the user's own. The prompt text is copied out of the recipe file each entry names, so it cannot drift from what was actually run — tests/test_prompt_catalog.py enforces that. Candidates are recorded for continuation and are explicitly NOT successes.",
   "operating_point": {
     "unet": "snofsSexNudesAndOther_distilledV12KleinFp8.safetensors",
     "clip": "qwen_3_8b_fp8mixed.safetensors",
@@ -26,7 +26,6 @@
       "graph": {
         "unet": "snofsSexNudesAndOther_distilledV12KleinFp8.safetensors",
         "clip": "qwen_3_8b_fp8mixed.safetensors",
-        "clip_type": "flux2",
         "vae": "flux2-vae.safetensors",
         "sampler": "euler",
         "steps": 4,
@@ -130,7 +129,7 @@
           "text": "A close-up photograph of a topless adult woman pausing during a blowjob. She kneels on a bed, mouth open, looking forward. Thick strands of saliva stretch from her extended tongue to the glans of the man's erect penis in the foreground. Only one penis and two of her hands are visible; her hands rest on his thighs. Soft bedroom light, sharp focus on mouth and penis."
         }
       ],
-      "full_writeup": "docs/workflow/20-comfy-klein-snofs-recipe-cards.md (copied verbatim from the user's Desktop)"
+      "full_writeup": "(copied verbatim from the user's Desktop)"
     }
   ]
 }

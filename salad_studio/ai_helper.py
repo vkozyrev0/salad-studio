@@ -31,7 +31,9 @@ that parse as JSON, this system prompt's own schema, a first draft:
 2. **A reply cut off at the token limit is continued, not accepted.**
    ``finish_reason == "length"`` makes :func:`_collect` ask the model for the
    remainder (up to :data:`CONTINUE_ATTEMPTS` times) and stitch it on; only
-   then is the text parsed. An exhausted budget raises :class:`AiError`.
+   then is the text parsed. A budget spent with the reply still cut returns the
+   stitched text rather than raising, so the parser can still score a complete
+   object inside it.
 3. **The last complete object wins.** :func:`parse_reply_full` scores every
    complete ``{...}`` in the reply and prefers one that carries the prompts
    explicitly over a quoted draft, and treats the schema's ``"..."``
@@ -659,12 +661,6 @@ def reply_info(body: bytes | str) -> dict[str, Any]:
     streamed = _sse_reply(text)
     return streamed if streamed is not None else out
 
-
-def content_of(body: bytes | str) -> str:
-    """``choices[0].message.content`` from a chat-completions body."""
-    return str(reply_info(body)["content"] or "").strip()
-
-
 def _error_detail(body: bytes | str) -> str:
     if isinstance(body, (bytes, bytearray)):
         body = body.decode("utf-8", "replace")
@@ -717,7 +713,8 @@ def _collect(
     limit, so what came back is the *front* of an answer. Continuing it is what
     "wait for the whole reply" means here: the pieces are stitched and only the
     stitched text is parsed. Returns ``(text, continuations, last_reply_info)``;
-    an exhausted budget raises rather than handing a fragment to the parser.
+    a budget spent with the reply still cut returns the stitched text, which the
+    parser then scores for a complete object.
     """
     text = ""
     info: dict[str, Any] = {}
@@ -738,14 +735,11 @@ def _collect(
         text += str(info["content"] or "")
         if not info["truncated"]:
             return text, round_no, info
-        if round_no == attempts:
-            raise AiError(
-                f"{who} kept hitting the output-token limit after "
-                f"{round_no} continuation(s), so the reply never finished. "
-                "Shorten the context (the request JSON and the prompts) or raise "
-                "max_tokens, then press Help again."
-            )
-        payload = _continuation_payload(payload, text)
+        if round_no < attempts:
+            payload = _continuation_payload(payload, text)
+    # The budget is spent with the reply still cut: fall out and return what was
+    # stitched. The parser scores every complete object in it, so a reply the
+    # model restarted after the cut is still recovered rather than discarded.
     return text, attempts, info
 
 
@@ -1016,17 +1010,6 @@ def local_models(
         {"id": mid, "type": "", "loaded": None, "vision": None}
         for mid in model_ids(body)
     ]
-
-
-def fetch_local_models(
-    base: str,
-    *,
-    send: Callable[[urllib.request.Request, int], tuple[int, bytes]] | None = None,
-    timeout: int = LOCAL_MODEL_URL_TIMEOUT_S,
-) -> list[str]:
-    """Just the ids the local server offers."""
-    return [str(row.get("id") or "") for row in local_models(base, send=send, timeout=timeout)]
-
 
 def _ask_local_full(
     payload: dict[str, Any],

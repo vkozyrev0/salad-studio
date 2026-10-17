@@ -2,8 +2,8 @@
 
 Two images run the two unet families, and two hosts run them: a Salad container
 group (the Config page's policy points at a tag) and a vast.ai instance (the
-Vast.ai page renders on one). Both hosts need the same handful of things — the
-tag, the ports the container answers on, and the environment the container reads
+Config page's Vast.ai instances section renders on one). Both hosts need the same
+handful of things - the tag, the ports the container answers on, and the
 (the gated-unet token, the Civitai token, the boot budget).
 
 What an image *is* comes from the metadata document
@@ -47,6 +47,54 @@ def _int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _ports(value: Any) -> dict[str, int]:
+    """The published ports a stored row names, keyed by role.
+
+    A row that names no port, or a non-numeric one, keeps no key: the entry then
+    reports 0 and its commands publish nothing, which is what "no port" means.
+    Reading a stored row stays this lenient - a hand-edited file must not stop
+    the page - so a port a user *typed* into the form is checked before it is
+    stored instead (see ``port_refusal``).
+    """
+    raw = value if isinstance(value, dict) else {}
+    out: dict[str, int] = {}
+    for key in (studio_meta.PORT_API, studio_meta.PORT_COMFY):
+        port = _int(raw.get(key))
+        if port:
+            out[key] = port
+    return out
+
+
+# The port knobs a user types into, each with the name the Config page labels it.
+PORT_FIELDS: tuple[tuple[str, str], ...] = (
+    (studio_meta.PORT_API, "API port"),
+    (studio_meta.PORT_COMFY, "ComfyUI port"),
+)
+
+
+def port_refusal(ports: dict[str, Any] | None) -> str:
+    """The sentence for the first typed port that names no port, or "".
+
+    A port that is not a positive whole number is not a port: nothing of it
+    would be stored, so the entry would report 0 and its commands would publish
+    nothing while the page reported the image as added. An empty knob means "no
+    port" and is left alone; only a non-empty one that cannot be read is
+    refused, and the sentence names the field the page shows.
+    """
+    raw = ports if isinstance(ports, dict) else {}
+    for key, label in PORT_FIELDS:
+        text = _text(raw.get(key))
+        if not text:
+            continue
+        try:
+            port = int(text)
+        except ValueError:
+            return f"{label} must be a whole number (got {text!r})."
+        if port <= 0:
+            return f"{label} must be a positive whole number (got {text!r})."
+    return ""
+
+
 def mask(value: str) -> str:
     """A secret shown the way the Tokens page shows one: never in full."""
     raw = _text(value)
@@ -78,8 +126,7 @@ def entries(doc: dict[str, Any] | None, settings: dict[str, Any] | None = None) 
         tag = _text(entry.get(studio_meta.IMAGE))
         if not tag:
             continue
-        deploy = entry.get(studio_meta.DEPLOYMENT)
-        deploy = deploy if isinstance(deploy, dict) else {}
+        deploy = studio_meta.deployment_for_family(family, doc)
         out.append(
             {
                 "key": family,
@@ -377,7 +424,7 @@ def deploy_script(
     *,
     include_values: bool = False,
 ) -> str:
-    """The whole deploy story for one entry, as the Images page shows it."""
+    """The whole deploy story for one entry, as the Config page's images section shows it."""
     lines = [
         "# build and push",
         build_command(entry),
@@ -433,6 +480,7 @@ def load_settings(path: Path | None = None) -> dict[str, Any]:
                 "tag": tag,
                 "context": _text(row.get("context")),
                 "build_arg": _text(row.get("build_arg")),
+                "ports": _ports(row.get("ports")),
             }
         )
     env: dict[str, list[dict[str, str]]] = {}
@@ -462,6 +510,7 @@ def save_settings(settings: dict[str, Any], path: Path | None = None) -> Path:
                 "tag": _text(row.get("tag")),
                 "context": _text(row.get("context")),
                 "build_arg": _text(row.get("build_arg")),
+                "ports": _ports(row.get("ports")),
             }
             for row in (settings or {}).get("images") or []
             if isinstance(row, dict) and _text(row.get("name")) and _text(row.get("tag"))
@@ -485,15 +534,32 @@ def save_settings(settings: dict[str, Any], path: Path | None = None) -> Path:
 
 
 def add_image(
-    settings: dict[str, Any], name: str, tag: str, *, context: str = "", build_arg: str = ""
+    settings: dict[str, Any],
+    name: str,
+    tag: str,
+    *,
+    context: str = "",
+    build_arg: str = "",
+    ports: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str]:
-    """Add the user's own image. Returns ``(settings, refusal)``."""
+    """Add the user's own image. Returns ``(settings, refusal)``.
+
+    ``ports`` are the ports the image publishes, keyed by role
+    (``studio_meta.PORT_API`` / ``PORT_COMFY``). They are stored with the row and
+    survive the round trip, so an image of your own can carry the same deploy
+    facts a documented family does; with none, its commands publish no port. A
+    typed port that cannot be read is refused by name rather than stored as
+    "no port".
+    """
     key = _text(name)
     image = _text(tag)
     if not key:
         return settings, "Type a name for the image."
     if not image:
         return settings, "Type the image tag, for example user/eldermark-klein:tag."
+    bad_port = port_refusal(ports)
+    if bad_port:
+        return settings, bad_port
     out = dict(settings)
     rows = [row for row in (settings or {}).get("images") or [] if isinstance(row, dict)]
     if any(_text(row.get("name")).lower() == key.lower() for row in rows):
@@ -504,6 +570,7 @@ def add_image(
             "tag": image,
             "context": _text(context),
             "build_arg": _text(build_arg),
+            "ports": _ports(ports),
         }
     )
     out["images"] = rows

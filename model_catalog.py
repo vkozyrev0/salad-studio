@@ -59,7 +59,7 @@ UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 )
-# Auto-fetch LoRAs under this size. UltraRealPhoto v2 is ~2 GB, metadata only.
+# Auto-fetch Civitai checkpoints under this size. UltraRealPhoto v2 is ~2 GB, metadata only.
 AUTO_MAX_BYTES = 64 * 1024 * 1024
 CIVITAI_REF = re.compile(
     r"(?:civitai:)?(?P<model>\d+)(?:@(?P<version>\d+))?",
@@ -103,7 +103,9 @@ KNOWN: list[dict[str, Any]] = [
             "download": "https://huggingface.co/black-forest-labs/FLUX.2-klein-base-9b-fp8/resolve/main/flux-2-klein-base-9b-fp8.safetensors",
             "filename": "flux-2-klein-base-9b-fp8.safetensors",
             "comfy_dir": "diffusion_models",
-            "size_bytes": 8910000000,
+            # Measured: the HF tree API (9 567 278 472) and the boot log's
+            # "done 9.57 GB" agree.
+            "size_bytes": 9567278472,
             "note": "Gated BFL. Prefetch at Klein replica start; HF_TOKEN needed to fetch.",
         },
     },
@@ -121,7 +123,8 @@ KNOWN: list[dict[str, Any]] = [
             "download": "https://huggingface.co/black-forest-labs/FLUX.2-klein-9b-fp8/resolve/main/flux-2-klein-9b-fp8.safetensors",
             "filename": "flux-2-klein-9b-fp8.safetensors",
             "comfy_dir": "diffusion_models",
-            "size_bytes": 8910000000,
+            # Measured: HF 9 433 061 528, the boot log's "done 9.43 GB".
+            "size_bytes": 9433061528,
             "note": "Gated BFL distilled Klein. Prefetch at replica start with base-9b.",
         },
     },
@@ -139,7 +142,8 @@ KNOWN: list[dict[str, Any]] = [
             "download": "https://huggingface.co/Comfy-Org/flux2-klein-9B/resolve/main/split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors",
             "filename": "qwen_3_8b_fp8mixed.safetensors",
             "comfy_dir": "text_encoders",
-            "size_bytes": 8070000000,
+            # Measured: HF 8 664 848 742, the boot log's "done 8.66 GB".
+            "size_bytes": 8664848742,
             "note": "Bake into salad_klein image.",
         },
     },
@@ -157,7 +161,8 @@ KNOWN: list[dict[str, Any]] = [
             "download": "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors",
             "filename": "flux2-vae.safetensors",
             "comfy_dir": "vae",
-            "size_bytes": 320000000,
+            # Measured: HF 336 211 292.
+            "size_bytes": 336211292,
             "note": "Bake into salad_klein image.",
         },
     },
@@ -782,13 +787,17 @@ def index_path() -> Path:
 
 
 def civitai_token() -> str:
-    p = Path.home() / ".config" / "civitai" / "token"
-    return p.read_text(encoding="utf-8").strip() if p.is_file() else ""
+    """The Tokens tab's Civitai key. Local studio-tokens.json wins."""
+    from salad_studio import tokens
+
+    return tokens.read_token("civitai")
 
 
 def hf_token() -> str:
-    p = Path.home() / ".config" / "huggingface" / "token"
-    return p.read_text(encoding="utf-8").strip() if p.is_file() else ""
+    """The Tokens tab's Hugging Face key. Local studio-tokens.json wins."""
+    from salad_studio import tokens
+
+    return tokens.read_token("huggingface")
 
 
 def empty_index() -> dict[str, Any]:
@@ -873,10 +882,14 @@ def civitai_version(model_id: int, version_id: int | None, token: str) -> dict[s
         if code != 200:
             raise SystemExit(f"Civitai version {version_id} HTTP {code}: {body[:200]!r}")
         data = json.loads(body.decode("utf-8"))
-        if int(data.get("modelId") or 0) not in (0, model_id) and data.get("modelId") != model_id:
-            # Some payloads omit modelId; still accept if id matches.
-            if data.get("id") != version_id:
-                raise SystemExit(f"version {version_id} belongs to model {data.get('modelId')}, not {model_id}")
+        # The payload names the model this version belongs to. Some payloads
+        # omit modelId; one that names a different model is the mistake this
+        # guard exists for, so it compares that field directly.
+        owner = data.get("modelId")
+        if owner is not None and int(owner or 0) not in (0, model_id):
+            raise SystemExit(
+                f"version {version_id} belongs to model {owner}, not {model_id}"
+            )
         return data
     url = f"https://civitai.com/api/v1/models/{model_id}"
     code, body, _ = _http_get(url, token)
@@ -1068,23 +1081,6 @@ def fetch_item(data: dict[str, Any], item: dict[str, Any], token: str, force: bo
     save_index(data)
     return f"ok {item['id']} {n} bytes"
 
-
-def salad_loader_name(item: dict[str, Any], token: str = "") -> str:
-    """Name Salad LoraLoader / CheckpointLoaderSimple should use.
-
-    Salad cannot see art/model-cache/. Keep the Civitai URL; the local
-    file is for this machine and for baking a custom image later.
-    """
-    src = item.get("source") or {}
-    if src.get("host") == "salad-recipe":
-        return src.get("filename") or "flux1-dev-fp8.safetensors"
-    url = src.get("download") or ""
-    if token and url.startswith("https://civitai.com/") and "token=" not in url:
-        sep = "&" if "?" in url else "?"
-        url = f"{url}{sep}token={token}"
-    return url
-
-
 def cmd_seed(_: argparse.Namespace) -> int:
     data = load_index()
     n = seed(data)
@@ -1157,8 +1153,11 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             ),
         )
         save_index(data)
-    print(fetch_item(data, existing, token, args.force))
-    return 0
+    line = fetch_item(data, existing, token, args.force)
+    print(line)
+    # A file whose sha256 does not match is not a success: this command is what a
+    # build chains with, and its two siblings already report the same way.
+    return 2 if line.startswith("hash-fail") else 0
 
 
 def token_for_item(item: dict[str, Any]) -> str:
@@ -1217,7 +1216,7 @@ def stage_klein_weights(data: dict[str, Any] | None = None) -> list[str]:
 
 
 def cmd_fetch_klein(args: argparse.Namespace) -> int:
-    """Download the three Klein HF weights in parallel, optionally stage for Docker."""
+    """Download the four Klein HF weights in parallel, optionally stage for Docker."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     data = load_index()

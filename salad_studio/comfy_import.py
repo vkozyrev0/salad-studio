@@ -20,7 +20,6 @@ import request_json as rj  # noqa: E402
 
 # Live SaveImage graph is kept. Muted/bypassed subgraph copies, notes, and
 # nodes that nothing on that path depends on are dropped (image 123566519).
-SKIP_TYPES: set[str] = set()
 MUTED_MODES = {2, 4}  # Comfy NEVER / BYPASS
 _OUTPUT_TYPES = {"SaveImage", "PreviewImage", "SaveImageWebsocket"}
 POWER_LORA = "Power Lora Loader (rgthree)"
@@ -224,7 +223,7 @@ def replica_unet_name(name: str) -> str:
 
 
 REPLICA_FAMILY = "Flux.2 Klein"
-_INCOMPATIBLE_FAMILIES = {
+INCOMPATIBLE_FAMILIES = {
     "Krea 2",
     "SDXL",
     "Pony",
@@ -242,7 +241,7 @@ def weight_family(name: str) -> str:
     fam = ls.normalize_family(raw)
     if fam in ls.FAMILY_LABELS:
         return ls.FAMILY_LABELS[fam]
-    if fam in _INCOMPATIBLE_FAMILIES or fam == "Krea 2":
+    if fam in INCOMPATIBLE_FAMILIES or fam == "Krea 2":
         return fam
     low = salad_filename(raw).lower().replace("_", " ").replace("-", " ")
     if "krea" in low:
@@ -738,14 +737,12 @@ def resolve_local_lora_nodes(
     """Replace local ``lora_name`` filenames with Civitai download URLs.
 
     Unresolved LoRAs stay in the editor; Generate looks them up again.
+
+    Every node's name goes into one ``resolve_prompt_loras`` call so its pool
+    searches Civitai concurrently. A call per node built a one-worker pool each
+    time, so an N-LoRA graph paid N serial searches before the request queued.
     """
-    pending = [
-        Path(salad_filename(name)).stem
-        for _node, name in rj.lora_name_inputs(prompt)
-        if name and not name.lower().startswith(("http://", "https://"))
-    ]
-    sole = len(set(pending)) == 1
-    missing: list[str] = []
+    nodes: list[tuple[dict[str, Any], str, str, float]] = []
     for node, name in rj.lora_name_inputs(prompt):
         if not name or name.lower().startswith(("http://", "https://")):
             continue
@@ -756,24 +753,51 @@ def resolve_local_lora_nodes(
             strength = float(inputs.get("strength_model") or 1)
         except (TypeError, ValueError):
             strength = 1.0
-        bound = dict(hints or {})
+        nodes.append((node, fname, stem, strength))
+    sole = len({stem for _n, _f, stem, _s in nodes}) == 1
+    bound = dict(hints or {})
+    for _node, _fname, stem, _strength in nodes:
         hit = _hint_for_lora_name(stem, hints, allow_single=sole)
         if hit and stem not in bound:
             bound[stem] = hit
-        specs, miss = resolve_prompt_loras(
-            [{"name": stem, "strength": strength}],
-            extras_path=extras_path,
-            search=True,
-            hints=bound,
-        )
-        url = str((specs[0] if specs else {}).get("lora_name") or "")
+    specs, miss = resolve_prompt_loras(
+        [{"name": stem, "strength": strength} for _n, _f, stem, strength in nodes],
+        extras_path=extras_path,
+        search=True,
+        hints=bound,
+    )
+    # resolve_prompt_loras echoes each tag name back in spec["tag"], so results
+    # map to nodes by name; a spec that does not echo a name (a test stub) is
+    # handed to the remaining nodes in order.
+    by_stem: dict[str, list[int]] = {}
+    for idx, (_node, _fname, stem, _strength) in enumerate(nodes):
+        by_stem.setdefault(stem, []).append(idx)
+    spec_for: dict[int, dict[str, Any]] = {}
+    spare: list[dict[str, Any]] = []
+    for spec in specs:
+        bucket = by_stem.get(str(spec.get("tag") or ""))
+        if bucket:
+            spec_for[bucket.pop(0)] = spec
+        else:
+            spare.append(spec)
+    spare_iter = iter(spare)
+    missing_names = set(miss)
+    missing: list[str] = []
+    for idx, (node, fname, stem, _strength) in enumerate(nodes):
+        if not stem:
+            missing.append(fname)
+            continue
+        spec = spec_for.get(idx)
+        if spec is None and stem not in missing_names:
+            spec = next(spare_iter, None)
+        url = str((spec or {}).get("lora_name") or "")
         if url.startswith("http://") or url.startswith("https://"):
-            inputs["lora_name"] = url
-            meta = rj.weight_meta(specs[0])
+            node.setdefault("inputs", {})["lora_name"] = url
+            meta = rj.weight_meta(spec)
             if meta:
                 node["_meta"] = {**(node.get("_meta") or {}), **meta}
             continue
-        missing.extend(miss or [fname])
+        missing.append(stem or fname)
     return missing
 
 
@@ -1123,14 +1147,6 @@ def _links_by_id(workflow: dict[str, Any]) -> dict[int, list[Any]]:
             t, ts = _link_dst(row)
             out[lid_i] = [lid_i, o, os_, t, ts, row.get("type")]
     return out
-
-
-def _primitive_value(node: dict[str, Any]) -> Any:
-    widgets = node.get("widgets_values") or []
-    if widgets:
-        return widgets[0]
-    return None
-
 
 def _lora_name_for_file(filename: str) -> str:
     item = ls.find_by_loader_name(filename)
@@ -2715,7 +2731,7 @@ def replica_issues(
                     f"{REPLICA_VAE[name]}."
                 )
             fam = weight_family(name)
-            if fam in _INCOMPATIBLE_FAMILIES:
+            if fam in INCOMPATIBLE_FAMILIES:
                 issues.append(
                     f"VAE #{nid} {name} family {fam} is incompatible with "
                     f"this {REPLICA_FAMILY} replica."
@@ -2731,7 +2747,7 @@ def replica_issues(
                     f"UNET {name} is not on the replica. This group has "
                     f"{mapped}."
                 )
-            if fam in _INCOMPATIBLE_FAMILIES:
+            if fam in INCOMPATIBLE_FAMILIES:
                 issues.append(
                     f"UNET #{nid} family {fam} ({name}) is incompatible "
                     f"with this {REPLICA_FAMILY} replica."
@@ -2760,7 +2776,7 @@ def replica_issues(
             )
             item = ls.find_by_loader_name(name, extras_path) if name else None
             fam = ls.family_label(item) if item else weight_family(name)
-            if fam in _INCOMPATIBLE_FAMILIES:
+            if fam in INCOMPATIBLE_FAMILIES:
                 issues.append(
                     f"LoRA #{nid} family {fam} is incompatible with this "
                     f"{REPLICA_FAMILY} replica ({salad_filename(name) or name})."
@@ -2820,7 +2836,7 @@ def replica_issues(
         rtype = str(r.get("type") or "").lower()
         rname = str(r.get("name") or "")
         rfam = str(r.get("family") or "") or weight_family(rname)
-        if rfam not in _INCOMPATIBLE_FAMILIES:
+        if rfam not in INCOMPATIBLE_FAMILIES:
             continue
         if rtype == "checkpoint":
             if graph_unet == REPLICA_FAMILY:
@@ -2885,13 +2901,6 @@ def inspect_pastes(
         meta = parse_civitai_metadata(meta_text)
         notes.extend(str(n) for n in (meta.get("notes") or []))
     return blocking, notes
-
-
-def issues_from_pastes(metadata_text: str = "", workflow_text: str = "") -> list[str]:
-    """Parse Import pastes and list replica blockers plus notes."""
-    blocking, notes = inspect_pastes(metadata_text, workflow_text)
-    return blocking + notes
-
 
 def apply_salad_compat(body: dict[str, Any]) -> list[str]:
     """Path-only cleanup: strip Windows folders on UNET/CLIP/VAE names.
@@ -3085,7 +3094,13 @@ def _drop_missing_image_chain(prompt: dict[str, Any]) -> None:
 
 
 def _rewire_missing_links(prompt: dict[str, Any]) -> None:
-    """Replace leftover [deleted-id, slot] edges after omitting replica-missing nodes."""
+    """Replace leftover [deleted-id, slot] edges after omitting replica-missing nodes.
+
+    Only ``text`` and ``clip`` are handled: a dangling width/height/batch_size/
+    steps edge is already filled by :func:`_fill_dangling_size_links`, which the
+    shipped order runs first, so a second copy of that rule here could only drift
+    from it.
+    """
     ids = {str(k) for k, n in prompt.items() if isinstance(n, dict)}
     clip = None
     try:
@@ -3102,9 +3117,7 @@ def _rewire_missing_links(prompt: dict[str, Any]) -> None:
             edge = _edge(val)
             if not edge or edge[0] in ids:
                 continue
-            if key in {"width", "height", "batch_size", "steps"}:
-                inputs[key] = 1024
-            elif key == "text":
+            if key == "text":
                 inputs[key] = ""
             elif key == "clip" and clip:
                 inputs[key] = list(clip)

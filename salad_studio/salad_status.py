@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from salad_gen import UA, _req
+import salad_queue
 from studio_log import explain_http, ready_url
 
 ORG = "life-sim"
@@ -213,32 +214,6 @@ def resolve_policy_image(
         if image:
             return image
     return document_image.strip() if isinstance(document_image, str) else ""
-
-
-def shown_policy(
-    stored: dict[str, Any] | None, document_image: str = ""
-) -> dict[str, Any]:
-    """The policy fields to show for a config that has no live read to show.
-
-    The stored policy is the base, since it is what the user wrote, but its
-    ``image`` goes through :func:`resolve_policy_image`, so an empty or
-    imageless policy still shows the document's image rather than blanking the
-    field. The result is a copy the window may edit: the dict is new, and its
-    nested dicts and lists are new too, so an edit to a shown ``startup`` or
-    ``readiness`` cannot reach back into the profile record.
-    """
-    base = stored if isinstance(stored, dict) else {}
-    shown: dict[str, Any] = {}
-    for key, value in base.items():
-        if isinstance(value, dict):
-            shown[key] = dict(value)
-        elif isinstance(value, list):
-            shown[key] = list(value)
-        else:
-            shown[key] = value
-    shown["image"] = resolve_policy_image(stored, None, document_image)
-    return shown
-
 
 # The probe fields a policy carries, per probe kind. The Config page shows all of
 # them, so "which source answers this field" is asked per field, not per policy.
@@ -553,12 +528,6 @@ def pull_pct(progress: Any) -> int | None:
         p *= 100.0
     return max(0, min(100, int(round(p))))
 
-
-def color_for_status(word: str) -> str:
-    key = (word or "Unknown").split()[0]
-    return WORD_COLORS.get(key, WORD_COLORS["Unknown"])
-
-
 # The compact status strip's three segments, in order: ready, starting,
 # non-started. The colors are the ones the status words already carry (the Ready
 # green, the amber for a replica that is coming up, the failed/down red), so a
@@ -678,45 +647,6 @@ def short_status(info: dict[str, Any]) -> str:
     if _origin_down(info):
         return "Down"
     return "Unknown"
-
-
-def format_status(info: dict[str, Any]) -> str:
-    if info.get("error") and not info.get("group"):
-        return str(info["error"])
-    parts: list[str] = []
-    g = info.get("group") or {}
-    if g:
-        parts.append(
-            f"{g.get('display_name') or g.get('name')}  "
-            f"{g.get('status') or '?'}  v{g.get('version')}"
-        )
-        if g.get("description"):
-            parts.append(str(g["description"]))
-        if g.get("counts"):
-            parts.append(str(g["counts"]))
-        if g.get("image"):
-            img = str(g["image"])
-            parts.append(img.rsplit("/", 1)[-1] if "/" in img else img)
-    inst = info.get("instances") or []
-    if inst:
-        bits = []
-        for it in inst:
-            pull = it.get("pulling_progress")
-            pull_s = f" pull={int(float(pull or 0) * 100)}%" if pull is not None else ""
-            bits.append(
-                f"{it.get('state')} ready={it.get('ready')} started={it.get('started')}{pull_s}"
-            )
-        parts.append("instance: " + "; ".join(bits))
-    else:
-        parts.append("no instances")
-    if info.get("ready_ok"):
-        parts.append("/ready 200")
-    elif info.get("ready_explain"):
-        parts.append(str(info["ready_explain"]))
-    if info.get("error"):
-        parts.append(str(info["error"]))
-    return ", ".join(p for p in parts if p)
-
 
 def list_gpu_classes(key: str) -> list[dict[str, Any]]:
     code, data = _api_get(f"{API}/organizations/{ORG}/gpu-classes", key)
@@ -840,22 +770,43 @@ def generate_block_reason(info: dict[str, Any]) -> str | None:
 # the app can ask for fixes either: Salad does not start a failed group, and a
 # down origin is a container that is running but not answering.
 _GONE_WORDS = ("Failed", "Down")
+# Badge words that mean the group is not running at all. The press refuses these
+# before it queues anything, because the queue refuses them too: this app never
+# starts a container, so a request aimed at one would only be queued and failed.
+_NOT_RUNNING_WORDS = ("Stopped",)
 
 
 def generate_dispatch_reason(
-    info: dict[str, Any] | None, *, word: str = ""
+    info: dict[str, Any] | None,
+    *,
+    word: str = "",
+    profile: str = "",
+    gateway: str = "",
 ) -> str | None:
     """Why Generate must not dispatch at all. None means dispatch it.
 
-    A **stopped** group is dispatchable: the queue starts the container the
-    request routes to and the generator waits for its ``/ready`` before it
-    POSTs. So is one that is still coming up (Creating, Allocating,
-    Downloading, Starting) — the start is a no-op there and the same wait covers
-    it. Only a replica that is gone is refused, with the badge's own reason.
+    A group the badge says is **stopped** is refused here, at the press, with the
+    same sentence ``salad_queue.ensure_container`` would give: this app does not
+    start containers, so a request aimed at one would only be queued and failed
+    a moment later. ``profile`` and ``gateway`` name the container in that
+    sentence; without them a generic one is returned, so a caller that has only
+    the badge still refuses rather than dispatching.
+
+    A group that is still coming up (Creating, Allocating, Downloading,
+    Starting) **is** dispatched: the queue re-reads the group's state and the
+    generator waits for its ``/ready`` before it POSTs. A replica that is gone
+    is refused with the badge's own reason.
     """
     label = short_status(info) if info else str(word or "").strip()
     if label == "Ready" or label.split()[:1] == ["Ready"]:
         return None
+    if label.startswith(_NOT_RUNNING_WORDS):
+        if profile or gateway:
+            return salad_queue.container_down_refusal(profile, gateway)
+        return (
+            "the container's group is not running, and this app does not start "
+            "containers. Start it in the Salad console, then Generate again."
+        )
     if not label.startswith(_GONE_WORDS):
         return None
     # A "Down" that came from a probe which never answered says nothing about the
@@ -921,20 +872,6 @@ def _group_action(
     return send("POST", url, key, None)
 
 
-def start_container_group(
-    gateway: str, key: str, *, sender: Any | None = None, group: str = ""
-) -> tuple[int, Any]:
-    """Start the group behind ``gateway``, so it can take a request."""
-    return _group_action("start", gateway, key, sender=sender, group=group)
-
-
-def stop_container_group(
-    gateway: str, key: str, *, sender: Any | None = None, group: str = ""
-) -> tuple[int, Any]:
-    """Stop the group behind ``gateway``. Its configuration and DNS stay."""
-    return _group_action("stop", gateway, key, sender=sender, group=group)
-
-
 def group_state(
     gateway: str, key: str, *, sender: Any | None = None, group: str = ""
 ) -> str:
@@ -958,8 +895,8 @@ def group_is_running(
 
     ``True`` running, ``False`` stopped, ``None`` when the answer is unknown (no
     group, no key, an API error, or a state in between such as pending or
-    failed). The caller starts a container only on a definite ``False``, so an
-    unknown answer leaves it alone rather than starting or stopping it twice.
+    failed). The caller refuses a request on a definite ``False`` (this app never
+    starts a container) and leaves an unknown answer alone rather than guessing.
     """
     found = find_group_by_gateway(gateway, key, sender=sender, group=group)
     if found is None:
@@ -973,7 +910,7 @@ def group_is_running(
 
 
 class ContainerLifecycle:
-    """The queue's handle on the containers it may start and stop.
+    """The queue's handle on the containers it may stop.
 
     ``key_provider`` is called for every action, so the token the app stores is
     read when the action happens rather than captured at startup. ``sender``
@@ -1002,9 +939,6 @@ class ContainerLifecycle:
         if not key or not gateway:
             return ""
         return group_state(gateway, key, sender=self._sender)
-
-    def start(self, profile: str, gateway: str) -> tuple[int, str]:
-        return self._act("start", profile, gateway)
 
     def stop(self, profile: str, gateway: str) -> tuple[int, str]:
         return self._act("stop", profile, gateway)

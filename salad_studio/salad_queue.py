@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -86,10 +88,13 @@ GONE_CODES = (404,)
 # submits no duplicate.
 BUSY_CODES = (502, 503, 520, 521, 522, 523)
 # 504 and 524 are NOT busy. Cloudflare returns them after giving up on a job the
-# container may still be running, so the next attempt would render it twice.
-TERMINAL_CODES = (504, 524)
+# container may still be running, so the next attempt would render it twice;
+# classify() reads them as failed, which is what makes them terminal.
 MAX_ATTEMPTS = 6
 RETRY_SLEEP_S = 8
+# One ledger write at a time, process-wide: Windows refuses a replace while a
+# concurrent reader or another replace holds the target.
+_SAVE_LOCK = threading.Lock()
 
 
 def load_ledger(path: Path | None) -> dict[str, dict[str, Any]]:
@@ -193,12 +198,22 @@ def save_ledger(
         "finished": list(finished or []),
     }
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_name(target.name + ".tmp")
-        tmp.write_text(
-            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
-        tmp.replace(target)
+        with _SAVE_LOCK:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            # A fixed ``<name>.tmp`` lets two writers truncate each other's file
+            # and then publish the mixture, or fail the second replace outright.
+            fd, tmp_name = tempfile.mkstemp(
+                prefix=target.name + ".", suffix=".tmp", dir=str(target.parent)
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+                    handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+                os.replace(tmp_name, target)
+            finally:
+                try:
+                    os.unlink(tmp_name)
+                except FileNotFoundError:
+                    pass
     except OSError as e:
         return str(e)
     return ""
@@ -250,6 +265,21 @@ def request_gateway(request: Any) -> str:
     if isinstance(request, dict):
         return str(request.get("gateway") or "").strip()
     return ""
+
+
+def container_down_refusal(profile: str, gateway: str) -> str:
+    """The refusal for a group that is not running, shared by the press and the queue.
+
+    The press asks this before it queues anything, and ``ensure_container`` asks
+    it again when a request is about to be submitted (the group may have stopped
+    since the badge was read). One sentence in both places, so what the user sees
+    when they press and what the queue logs are the same words.
+    """
+    return (
+        f"the container for profile {profile!r} ({gateway}) is down: its group is "
+        "not running, and this app does not start containers. Start it in the "
+        "Salad console, then Generate again."
+    )
 
 
 def request_checksum(request: Any) -> str:
@@ -337,6 +367,7 @@ class Job:
     work: Callable[[Job], Attempt] | None = None
     line: str = ""
     checksum: str = ""
+    order: int = 0
 
     @property
     def terminal(self) -> bool:
@@ -400,9 +431,13 @@ class SaladQueue:
         # None means "keep the record in memory only".
         self.ledger_path = Path(ledger_path) if ledger_path is not None else None
         self._cond = threading.Condition()
+        # Serializes snapshot + write, so a slower older snapshot cannot replace
+        # a newer one and drop a record another thread just added.
+        self._save_lock = threading.Lock()
         self._lines: dict[str, list[Job]] = {}
         self._jobs: list[Job] = []
         self._next_id = 1
+        self._next_order = 0
         # Per profile: the container we own (persisted), its gateway, when its
         # last request finished, and whether this app asked Salad to start it.
         # The idle check reads these and nothing else. They are seeded from the
@@ -479,12 +514,14 @@ class SaladQueue:
         empty one is computed here.
         """
         with self._cond:
+            self._next_order += 1
             job = Job(
                 id=self._next_id,
                 request=request,
                 work=work,
                 line=str(line),
                 checksum=str(checksum) or request_checksum(request),
+                order=self._next_order,
             )
             self._next_id += 1
             waiting = self._line_of(job.line)
@@ -495,12 +532,14 @@ class SaladQueue:
                 self._gateways[job.line] = gateway
             self._cond.notify_all()
             ahead = len(waiting) - 1
-            self._log(
-                "info",
-                f"queue: request {job.id} queued on {job.line or 'the default line'}"
-                + (f" ({ahead} ahead of it)" if ahead else ""),
-            )
-            return job
+        # Outside the lock: the log callback marshals onto Tk, and the main
+        # thread may be waiting on this same lock inside a queue refresh.
+        self._log(
+            "info",
+            f"queue: request {job.id} queued on {job.line or 'the default line'}"
+            + (f" ({ahead} ahead of it)" if ahead else ""),
+        )
+        return job
 
     def _wait_turn(self, job: Job) -> None:
         started = self._now()
@@ -558,12 +597,15 @@ class SaladQueue:
                     f"queue: request {job.id} was cancelled before it was submitted",
                 )
                 return job
-            if job.line:
+            gateway = request_gateway(job.request)
+            if job.line and gateway:
                 # Running a request through the queue is what makes this app
                 # responsible for stopping that container later, whatever the
                 # state read says: an inconclusive read (pending, failed, an API
-                # error) must not exempt it for the rest of the session.
-                self.adopt(job.line, request_gateway(job.request))
+                # error) must not exempt it for the rest of the session. A vast
+                # request carries no gateway; adopting it would make the idle
+                # stop try to stop a Salad container that does not exist.
+                self.adopt(job.line, gateway)
             refusal = (
                 self.ensure_container(job.line, request_gateway(job.request))
                 if ensure
@@ -597,10 +639,11 @@ class SaladQueue:
     def _save_ledger(self) -> None:
         if self.ledger_path is None:
             return
-        with self._cond:
-            records = self.records()
-            finished = [dict(row) for row in self._finished]
-        reason = save_ledger(self.ledger_path, records, finished)
+        with self._save_lock:
+            with self._cond:
+                records = self.records()
+                finished = [dict(row) for row in self._finished]
+            reason = save_ledger(self.ledger_path, records, finished)
         if reason:
             self._log("warn", f"queue: could not write {self.ledger_path}: {reason}")
 
@@ -696,11 +739,7 @@ class SaladQueue:
                 f"queue: {name} container state unknown; not starting it",
             )
             return ""
-        refusal = (
-            f"the container for profile {name!r} ({gateway}) is down: its group is "
-            "not running, and this app does not start containers. Start it in the "
-            "Salad console, then Generate again."
-        )
+        refusal = container_down_refusal(name, gateway)
         self._log("warn", f"queue: {name} is down; not starting it ({gateway})")
         return refusal
 
@@ -872,6 +911,12 @@ class SaladQueue:
                 self._finish(job)
                 return
             if action == FAIL:
+                if job.outcome == BUSY:
+                    # The attempts are spent with the container still busy, so
+                    # there is no retry left: fall out for the tail below, which
+                    # records why the job gave up. A definitive failure keeps
+                    # its own reason and returns here.
+                    break
                 job.state = FAILED
                 job.reason = reason_of(result)
                 self._log(
@@ -943,9 +988,11 @@ class SaladQueue:
             job.result = None
             job.accepted = False
             job.waited_s = 0.0
+            self._next_order += 1
+            job.order = self._next_order
             self._line_of(job.line).append(job)
             self._cond.notify_all()
-            self._log("info", f"queue: request {job.id} retrying")
+        self._log("info", f"queue: request {job.id} retrying")
         try:
             self._wait_turn(job)
             if job.terminal:
@@ -965,15 +1012,23 @@ class SaladQueue:
         """
         with self._cond:
             keep = [job for job in self._jobs if not job.terminal]
-            removed = len(self._jobs) - len(keep)
+            gone = [job for job in self._jobs if job.terminal]
+            removed = len(gone)
+            known = {job.id for job in gone}
+            # A row restored from an earlier session lives only in _finished,
+            # so the count the page reports must include it too.
+            extra = sum(
+                1 for row in self._finished if int(row.get("id", -1)) not in known
+            )
             self._jobs = keep
             had_finished = bool(self._finished)
             self._finished = []
-        if removed:
-            self._log("info", f"queue: cleared {removed} finished request(s)")
+        total = removed + extra
+        if total:
+            self._log("info", f"queue: cleared {total} finished request(s)")
         if had_finished:
             self._save_ledger()
-        return removed
+        return total
 
     def job_by_id(self, job_id: int) -> Job | None:
         with self._cond:
@@ -993,12 +1048,12 @@ class SaladQueue:
         """
         name = str(line)
         with self._cond:
-            for job in self._jobs:
-                if job.state == CANCELLED:
-                    continue
-                if not name or job.line == name:
-                    return job
-        return None
+            candidates = [
+                job
+                for job in self._jobs
+                if job.state != CANCELLED and (not name or job.line == name)
+            ]
+            return min(candidates, key=lambda job: job.order, default=None)
 
     def duplicate_of_head(
         self, request: Any = None, *, line: str = "", checksum: str = ""

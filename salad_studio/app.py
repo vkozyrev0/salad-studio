@@ -4,14 +4,14 @@
 The tabs are **Config**, **Prompt Settings**, **Tokens**, **LoRAs**, **Prompt
 Editor**, **Prompt Assist**, **Prompt Catalog**, **Import**, **Prompt History**,
 **Queue** and **Logs**, plus the always-visible history strip. The **Config**
-page is the deployment page: the profiles and the checkpoints each one serves,
-each config's Salad policy (image, GPU classes, country codes and the
-startup/readiness probes), the two container images with the settings a host
-needs, and the vast.ai instances with the engine choice that decides whether
-Generate renders on a Salad group or on one of them. This module is the UI
-layer: it holds the widgets and the wiring and calls the other seven layers
-(`TAB_ORDER` is the one list the notebook, the sidebar and the tab lookup all
-follow).
+page is the deployment page, in four sub-tabs in the order a deployment runs
+them: the profiles and the checkpoints each one serves, the two container
+images with the settings a host needs, each config's Salad policy (image, GPU
+classes, country codes and the startup/readiness probes), and the vast.ai
+instances with the engine choice that decides whether Generate renders on a
+Salad group or on one of them. This module is the UI layer: it holds the
+widgets and the wiring and calls the other seven layers (`TAB_ORDER` is the
+one list the notebook, the sidebar and the tab lookup all follow).
 """
 from __future__ import annotations
 
@@ -23,6 +23,8 @@ import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
+from typing import Any
+from urllib.parse import urlparse
 
 _HERE = Path(__file__).resolve().parent
 _TOOLS = _HERE.parent
@@ -35,6 +37,7 @@ from salad_studio import ai_helper, comfy_import, generator, graph_view, image_d
 # Top-level, like studio_log: the generator and this module must hold the same
 # salad_queue object, or a job this app submits is not a job the generator's
 # type checks accept.
+import hostings  # noqa: E402
 import salad_queue  # noqa: E402
 from salad_studio.history_strip import HistoryStrip  # noqa: E402
 from salad_studio.profiles import SaladProfile  # noqa: E402
@@ -57,7 +60,64 @@ TAB_ORDER = (
     "Queue",
     "Logs",
 )
+# The Config page's sections, in the order a deployment runs them: the profile
+# and the checkpoints routing reads, the image a host runs, the Salad group's
+# policy for that image, and the vast.ai hosts as the other target. A section is
+# a row, so reordering the page is reordering this tuple.
+CONFIG_SECTIONS: tuple[tuple[str, str, str], ...] = (
+    ("profile", "Profile", "_build_profile_section"),
+    ("images", "Images", "_build_images_section"),
+    ("policy", "Salad group", "_build_policy_section"),
+    ("vast", "Vast.ai", "_build_vast_section"),
+)
+PAGE_OPENING_WIDTH = 1180
+PAGE_OPENING_HEIGHT = 720
 LORA_CHECK_COLUMNS = 3
+# The Windows call that answers "where may a window be put": the desktop minus
+# the taskbar (see _screen_work_area).
+_SPI_GETWORKAREA = 0x0030
+# The narrowest wrap the status line takes, so a window dragged almost shut does
+# not fold a sentence into a column one word wide (see _wrap_status).
+_STATUS_MIN_WRAP = 240
+# The four grids whose page scrolls, as (column, heading, width, takes the
+# room a wider page leaves). None of them is handed to the Treeview as
+# stretching: the page that holds them scrolls, so it is narrower than the
+# whole grid, and a stretching Treeview re-fits every column into it - which
+# would take the widths the page declares away and leave the tree's own bar
+# with nothing to reach (see _page_keeps_its_own_size). The columns a table
+# marks as taking the room are the ones a wider page grows, by hand, in
+# _keep_grid_filling: the same rule, minus the shrinking half.
+CATALOG_GRID_COLUMNS: tuple[tuple[str, str, int, bool], ...] = (
+    ("when", "Added", 130, False),
+    ("name", "Short name", 180, False),
+    ("description", "Description", 260, True),
+    ("preview", "Prompt", 380, True),
+    ("stats", "Graph", 300, True),
+)
+HISTORY_GRID_COLUMNS: tuple[tuple[str, str, int, bool], ...] = (
+    ("when", "When", 140, False),
+    ("profile", "Profile", 100, False),
+    ("preview", "Prompt", 480, True),
+    ("stats", "Graph", 380, True),
+)
+QUEUE_GRID_COLUMNS: tuple[tuple[str, str, int, bool], ...] = (
+    ("id", "#", 40, False),
+    ("profile", "Profile", 110, False),
+    ("state", "State", 90, False),
+    ("attempts", "Attempts", 70, False),
+    ("status", "Last status", 90, False),
+    ("reason", "Reason", 260, True),
+    ("request", "Request", 200, True),
+    ("finished", "Finished", 70, False),
+)
+VAST_GRID_COLUMNS: tuple[tuple[str, str, int, bool], ...] = (
+    ("use", "Use", 40, False),
+    ("label", "Label", 130, False),
+    ("endpoint", "Address", 220, True),
+    ("image", "Image", 300, True),
+    ("state", "State", 90, False),
+    ("gpu", "GPU", 130, True),
+)
 # The LoRA grid's columns, in the order they are shown: the verified dot first,
 # because that is the state a row is looked up for.
 LORA_COLUMNS: tuple[str, ...] = (
@@ -125,6 +185,10 @@ def lora_rows_sorted(
 
     return sorted(rows, key=key, reverse=bool(reverse))
 QUEUE_EMPTY_TEXT = "The queue is empty. Press Generate to submit a render."
+HISTORY_EMPTY_TEXT = "No prompts yet. Every Generate stores its request here."
+CATALOG_EMPTY_TEXT = (
+    "The catalog is empty. Copy the Prompt Editor's request in, or load one back."
+)
 QUEUE_CANCEL_NOTE = (
     "Cancel drops a request that has not been submitted yet. A request the "
     "container has already accepted keeps rendering."
@@ -141,6 +205,20 @@ def queue_request_label(request: Any) -> str:
         if bits:
             return "  ".join(bits)
     return str(request or "")[:120]
+
+
+def vast_refusal_note(refused: list[tuple[str, str]]) -> str:
+    """What the Vast.ai page did not add, grouped by the store's reason.
+
+    ``refused`` holds one ``(typed text, reason)`` per address the store turned
+    down. Grouping by the reason keeps a phrase the user meant as one address
+    from repeating the same sentence once per word, while still naming every
+    word that was not added.
+    """
+    groups: dict[str, list[str]] = {}
+    for text, reason in refused:
+        groups.setdefault(reason, []).append(text)
+    return " ".join(f"{', '.join(texts)}: {reason}" for reason, texts in groups.items())
 
 
 class SaladStudio(tk.Tk):
@@ -162,9 +240,9 @@ class SaladStudio(tk.Tk):
         self._gen_jobs = 0
         # One line for every render, shared with the generator: a press while a
         # render is in flight waits its turn here instead of being dropped. The
-        # lifecycle handle lets the queue start the container a request needs and
-        # stop it once it has sat idle past the metadata document's timeout, and
-        # the ledger is what lets a reopened app still know what to stop.
+        # lifecycle handle lets the queue read the container's state and stop it
+        # once it has sat idle past the metadata document's timeout, and the
+        # ledger is what lets a reopened app still know what to stop.
         self.gen_queue = salad_queue.SaladQueue(
             on_log=self._on_queue_log,
             lifecycle=salad_status.ContainerLifecycle(self._salad_api_key),
@@ -182,17 +260,41 @@ class SaladStudio(tk.Tk):
         self._lora_vars: dict[str, tk.BooleanVar] = {}
         self._lora_checks: dict[str, ttk.Checkbutton] = {}
         self._pending_selected: list[str] = list(lora_store.DEFAULT_KLEIN_LORA_IDS)
+        # Every callback this window schedules for itself, so Destroy can cancel
+        # what is left (see _later), and the ones Tk would not take.
+        self._pending_afters: set[str] = set()
+        self._dropped_afters: list[str] = []
+        # True from the start of destroy(), before any child <Destroy> runs.
+        self._closing = False
         self._syncing_editor = False
         self._syncing_loras = False
         self._applying_profile = False
         self._json_after: str | None = None
         self._salad_poll_after: str | None = None
         self._salad_check_busy = False
+        # The last key error the status check reported, so the 15 s poll logs it
+        # once rather than every tick (cleared when a probe runs again).
+        self._salad_key_error = ""
         self._log_secrets_cache: list[str] | None = None
+        self._log_secrets_stamp: tuple[int, int] | None = None
         self._gen_poll_after: str | None = None
         self._gen_t0 = 0.0
         self._gen_last_note = ""
         self._nav_btns: dict[str, tk.Button] = {}
+        # The nav button the keyboard is on, so its own state can be painted
+        # beside the page it names (see _on_nav_focus).
+        self._nav_focused: tk.Button | None = None
+        # Every page that scrolls, the frame its content lives in, and the page
+        # the pointer is over. One wheel handler and one focus handler serve
+        # them all (see _scrollable_page): the pointer claims a page's wheel on
+        # <Enter> and gives it back on <Leave>, so no page can take another
+        # page's scrolling, and a control that takes focus is scrolled into view
+        # so the keyboard follows the mouse.
+        self._scroll_canvases: dict[tk.Frame, tk.Canvas] = {}
+        self._scroll_bodies: dict[tk.Frame, ttk.Frame] = {}
+        self._scroll_wheel_page: tk.Frame | None = None
+        self.bind_all("<MouseWheel>", self._on_page_wheel, add="+")
+        self.bind_all("<FocusIn>", self._on_page_focus, add="+")
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=0)
@@ -211,8 +313,7 @@ class SaladStudio(tk.Tk):
         nav.grid(row=0, column=0, sticky="nsw")
         self._nav = nav
 
-        self.nb = ttk.Notebook(body, style="Hidden.TNotebook")
-        self.nb.grid(row=0, column=1, sticky="nsew")
+        self._build_notebook(body)
 
         self._build_config_tab()
         self._build_prompt_settings_tab()
@@ -231,19 +332,25 @@ class SaladStudio(tk.Tk):
         self.nb.add(self._loras, text="LoRAs")
         self.nb.add(self._editor, text="Prompt Editor")
         self.nb.add(self._helper, text="Prompt Assist")
-        self.nb.add(self._catalog, text="Prompt Catalog")
+        self.nb.add(self._catalog_page, text="Prompt Catalog")
         self.nb.add(self._import, text="Import")
-        self.nb.add(self._prompt_hist, text="Prompt History")
-        self.nb.add(self._queue, text="Queue")
+        self.nb.add(self._prompt_hist_page, text="Prompt History")
+        self.nb.add(self._queue_page, text="Queue")
         self.nb.add(self._logs, text="Logs")
         self._build_nav_buttons()
 
         self.strip = HistoryStrip(self, on_open=self._open_path, thumb_size=(140, 140))
         self.strip.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
         self.status = tk.StringVar(value="Ready")
-        ttk.Label(
+        # A refusal is a whole sentence, and the window can be 1024 px wide: the
+        # line wraps to the room the window gives it instead of running off the
+        # right edge, where the action its tail names would be hidden.
+        self._status_wrap = 0
+        self.status_lbl = ttk.Label(
             self, textvariable=self.status, anchor="w", style="Status.TLabel"
-        ).grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 6))
+        )
+        self.status_lbl.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 6))
+        self.bind("<Configure>", self._wrap_status, add="+")
 
         self._load_profiles_into_ui()
         self._refresh_lora_lists()
@@ -253,7 +360,7 @@ class SaladStudio(tk.Tk):
             self._sync_editor()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._hold_opened_size()
-        self.after_idle(self._place_editor_sash)
+        self._later_idle(self._place_editor_sash)
         self._refresh_history()
         if self._show_on_open:
             self.deiconify()
@@ -265,11 +372,27 @@ class SaladStudio(tk.Tk):
             f"graph {lora_store.graph_id(self.var_graph.get())}  "
             f"{self.var_width.get()}x{self.var_height.get()}  steps {self.var_steps.get()}",
         )
-        self.after(500, lambda: self._check_salad_status(silent=True))
+        self._later(500, lambda: self._check_salad_status(silent=True))
         self._schedule_salad_poll()
         self.bind("<Destroy>", self._on_destroy_cancel_poll, add="+")
         self.nb.bind("<<NotebookTabChanged>>", self._on_notebook_tab, add="+")
         self._refresh_nav()
+
+    def _wrap_status(self, _event=None) -> None:
+        """Wrap the status line to the window, so a long sentence stays readable.
+
+        The width is read from the window, not from the event: a child's
+        ``<Configure>`` reaches this binding too (Tk's default bindtags carry it
+        up to the toplevel), and a child's width is not the room the line has.
+        The wrap is only written when it changes, so a relayout does not loop.
+        """
+        width = int(self.winfo_width())
+        if width <= 1:
+            return
+        want = max(_STATUS_MIN_WRAP, width - 16)
+        if want != self._status_wrap:
+            self._status_wrap = want
+            self.status_lbl.configure(wraplength=want)
 
     def _build_action_bar(self) -> None:
         bar = ttk.Frame(self, padding=(8, 8, 8, 6))
@@ -293,9 +416,10 @@ class SaladStudio(tk.Tk):
         holder = ttk.Frame(bar)
         holder.pack(side="right")
         self._replica_holder = holder
-        ttk.Button(
+        self.check_salad_btn = ttk.Button(
             holder, text="Check Salad status", command=self._check_salad_status
-        ).pack(side="left")
+        )
+        self.check_salad_btn.pack(side="left")
         self.var_salad_status = tk.StringVar(value="…")
         self._refresh_replica_strip()
 
@@ -344,10 +468,17 @@ class SaladStudio(tk.Tk):
         for var, n in zip(getattr(self, "_strip_vars", []), counts):
             var.set(str(n))
 
+    def _build_notebook(self, body: ttk.Frame) -> None:
+        # 0 skips the hidden notebook. The string "n" is a Tcl script, and
+        # tk_focusNext then dies with `invalid command name "n"`.
+        self.nb = ttk.Notebook(body, style="Hidden.TNotebook", takefocus=0)
+        self.nb.grid(row=0, column=1, sticky="nsew")
+
     def _build_nav_buttons(self) -> None:
         for child in self._nav.winfo_children():
             child.destroy()
         self._nav_btns = {}
+        self._nav_focused = None
         p = theme.PALETTE
         for name in TAB_ORDER:
             btn = tk.Button(
@@ -358,7 +489,12 @@ class SaladStudio(tk.Tk):
                 width=16,
                 font=("Segoe UI", 10),
                 bd=0,
-                highlightthickness=0,
+                # The ring is drawn in accent_hi while the button holds focus and
+                # in the button's own colour otherwise, so the keyboard can see
+                # where it is without the column shifting as focus moves.
+                highlightthickness=1,
+                highlightbackground=p["surface"],
+                highlightcolor=p["accent_hi"],
                 padx=12,
                 pady=6,
                 cursor="hand2",
@@ -369,8 +505,25 @@ class SaladStudio(tk.Tk):
                 disabledforeground=p["fg_muted"],
                 relief="flat",
             )
+            # theme hides the notebook's own tabs, so these buttons are the only
+            # page switcher there is: the keys a button answers everywhere else
+            # in the app have to work here too, or the switcher is mouse-only.
+            btn.bind("<Return>", lambda _e, n=name: self._goto_tab(n))
+            btn.bind("<space>", lambda _e, n=name: self._goto_tab(n))
+            btn.bind("<FocusIn>", lambda _e, b=btn: self._on_nav_focus(b, True))
+            btn.bind("<FocusOut>", lambda _e, b=btn: self._on_nav_focus(b, False))
             btn.pack(fill="x", pady=(0, 2))
             self._nav_btns[name] = btn
+
+    def _on_nav_focus(self, btn: tk.Button, focused: bool) -> None:
+        """Remember which nav button the keyboard is on, and repaint the column.
+
+        The ring Tk draws from ``highlightcolor`` says focus is on a button; the
+        repaint also lightens its face, so which one is readable at a glance and
+        not only by looking for a one-pixel edge.
+        """
+        self._nav_focused = btn if focused else None
+        self._refresh_nav()
 
     def _goto_tab(self, name: str) -> None:
         for i, label in enumerate(TAB_ORDER):
@@ -383,6 +536,7 @@ class SaladStudio(tk.Tk):
         self._refresh_nav()
 
     def _refresh_nav(self) -> None:
+        """Repaint the sidebar: the page each button names, and where focus is."""
         current = ""
         try:
             current = str(self.nb.tab(self.nb.select(), "text") or "")
@@ -391,43 +545,69 @@ class SaladStudio(tk.Tk):
         p = theme.PALETTE
         for name, btn in self._nav_btns.items():
             on = name == current
+            focused = self._nav_focused is btn
+            if on:
+                background = p["accent"]
+            elif focused:
+                # Focus is the only thing to see when the button is not the page
+                # shown, so it lightens the face rather than hiding behind the
+                # ring Tk draws from highlightcolor.
+                background = p["surface_hi"]
+            else:
+                background = p["surface"]
             try:
                 btn.configure(
-                    background=p["accent"] if on else p["surface"],
+                    background=background,
                     foreground=p["accent_fg"] if on else p["fg"],
                     font=("Segoe UI Semibold", 10) if on else ("Segoe UI", 10),
+                    highlightbackground=p["accent_hi"] if focused else p["surface"],
                 )
             except tk.TclError:
                 pass
 
-    def _build_config_tab(self) -> None:
-        """The config page: profiles, their policy, the images, and the vast.ai hosts.
+    # -- scrollable pages -------------------------------------------------
+    def _scrollable_page(self, page: ttk.Frame) -> ttk.Frame:
+        """Give ``page`` scrollbars, and return the frame its content belongs in.
 
-        One page owns everything a render needs to be aimed: the profiles and the
-        checkpoints each one serves (what routing and the queue read), each
-        config's Salad policy, the two container images with the settings a host
-        needs, and the vast.ai instances with the engine choice. The page is taller
-        than a window, so its content scrolls: dropping or shrinking a section to
-        fit would hide a control the user came for.
+        The Config page's pattern, shared by every page whose content can be
+        taller or wider than a window: a canvas holds the page, a scrollbar on
+        each axis drives it, and the wheel is claimed only while the pointer is
+        over that page, so no page takes another's scrolling. The content frame
+        is stretched to the canvas when it is smaller, so a grid with a weight
+        still fills the window, and the canvas scrolls when the content is larger
+        on either axis. Both axes matter: a page wider than its canvas puts its
+        right-hand controls past the edge, and a vertical-only canvas has no way
+        to bring them back. A control that takes focus is scrolled into view, so
+        the keyboard reaches everything the mouse can.
+
+        The notebook page and the frame its content lives in are two frames with
+        the canvas between them, so a widget's own page relationship is
+        unchanged: ``_config`` is the Config page, and the three pages whose
+        content kept the attribute name it always had are
+        ``_catalog``/``_catalog_page``, ``_prompt_hist``/``_prompt_hist_page``
+        and ``_queue``/``_queue_page``.
         """
-        self._config = ttk.Frame(self.nb)
-        self._config.columnconfigure(0, weight=1)
-        self._config.rowconfigure(0, weight=1)
-        holder = ttk.Frame(self._config)
+        page.columnconfigure(0, weight=1)
+        page.rowconfigure(0, weight=1)
+        holder = ttk.Frame(page)
         holder.grid(row=0, column=0, sticky="nsew")
         holder.columnconfigure(0, weight=1)
         holder.rowconfigure(0, weight=1)
-        self._config_holder = holder
+        # Tk's canvas default is what sizes the window, and it is smaller than any page.
         canvas = tk.Canvas(
-            holder, highlightthickness=0, background=theme.PALETTE["bg"]
+            holder,
+            highlightthickness=0,
+            background=theme.PALETTE["bg"],
+            width=PAGE_OPENING_WIDTH,
+            height=PAGE_OPENING_HEIGHT,
         )
         vscroll = ttk.Scrollbar(holder, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=vscroll.set)
+        hscroll = ttk.Scrollbar(holder, orient="horizontal", command=canvas.xview)
+        canvas.configure(yscrollcommand=vscroll.set, xscrollcommand=hscroll.set)
         canvas.grid(row=0, column=0, sticky="nsew")
         vscroll.grid(row=0, column=1, sticky="ns")
-        self._config_canvas = canvas
+        hscroll.grid(row=1, column=0, sticky="ew")
         body = ttk.Frame(canvas, padding=10)
-        self._config_body = body
         window = canvas.create_window((0, 0), window=body, anchor="nw")
         body.bind(
             "<Configure>",
@@ -436,27 +616,230 @@ class SaladStudio(tk.Tk):
         )
         canvas.bind(
             "<Configure>",
-            lambda e: canvas.itemconfigure(window, width=e.width),
+            lambda e: canvas.itemconfigure(
+                window,
+                width=max(body.winfo_reqwidth(), e.width),
+                height=max(body.winfo_reqheight(), e.height),
+            ),
             add="+",
         )
-        # The wheel is claimed only while the pointer is over this page, so the
-        # other pages and the history strip keep their own scrolling.
-        canvas.bind("<Enter>", self._on_config_enter, add="+")
-        canvas.bind("<Leave>", self._on_config_leave, add="+")
+        canvas.bind("<Enter>", lambda _e: self._claim_wheel(page), add="+")
+        canvas.bind("<Leave>", lambda _e: self._release_wheel(page), add="+")
+        self._scroll_canvases[page] = canvas
+        self._scroll_bodies[page] = body
+        return body
 
-        self._config_body.columnconfigure(1, weight=1)
+    def _claim_wheel(self, page) -> None:
+        """The pointer is on ``page``: that page owns the wheel while it is there."""
+        self._scroll_wheel_page = page
+
+    def _release_wheel(self, page) -> None:
+        """The pointer left ``page``: it hands the wheel back, and only its own."""
+        if self._scroll_wheel_page is page:
+            self._scroll_wheel_page = None
+
+    def _keep_grid_filling(self, page, tree, columns) -> None:
+        """Grow a grid's room-taking columns to fill a page wider than the grid.
+
+        The three grids are handed ``stretch=False`` columns so that a page
+        *narrower* than the grid keeps the widths its table declares and the
+        tree's own horizontal bar reaches the rest (see ``_scrollable_page``).
+        That rule also stopped the columns growing on a page *wider* than the
+        grid, which is what they did before, and left dead room to the right of
+        the last column. This is the grow-only half of it: only the columns the
+        table marks as taking the room grow, and the widths are recomputed from
+        the table on every pass, so a window narrowed again gets the declared
+        widths back and the bar takes over.
+        """
+        canvas = self._scroll_canvases.get(page)
+        if canvas is None:
+            return
+        # The widths the table declares, read once: a re-fit recomputes from
+        # these, never from the widths it just wrote, or each pass would grow
+        # what the last one grew. ``#0`` is the tree column the History grid
+        # shows; where it is shown it is part of the span and never takes the
+        # extra room.
+        declared = {col: int(tree.column(col, "width")) for col in tree["columns"]}
+        if "tree" in str(tree.cget("show")):
+            declared["#0"] = int(tree.column("#0", "width"))
+        span = sum(declared.values())
+        fills = [col for col, _head, _width, fill in columns if fill]
+        if not fills:
+            return
+        # The width the last pass was fitted to. Growing the columns does not
+        # move the tree (its width comes from the page, not from its columns),
+        # so a repeat of the same width has nothing left to do - and re-fitting
+        # it would undo the growth, because the grown columns leave no room.
+        fitted = {"width": 0}
+
+        def refit(_event=None) -> None:
+            width = int(tree.winfo_width())
+            if width <= 1 or width == fitted["width"]:
+                # Not laid out yet, or the same width the last pass fitted.
+                return
+            fitted["width"] = width
+            viewport = int(canvas.winfo_width())
+            if viewport > 1:
+                # The room a wider page leaves can never be more than the page
+                # itself: a tree that somehow reports more is not grown past it.
+                width = min(width, viewport)
+            room = width - span
+            if room <= 0:
+                for col, base in declared.items():
+                    tree.column(col, width=base)
+                return
+            share, rest = divmod(room, len(fills))
+            for index, col in enumerate(fills):
+                tree.column(col, width=declared[col] + share + (1 if index < rest else 0))
+
+        tree.bind("<Configure>", refit, add="+")
+
+    def _scroll_page(self, page, event) -> None:
+        """Scroll ``page``'s canvas, one unit per wheel notch."""
+        canvas = self._scroll_canvases.get(page)
+        if canvas is None:
+            return
+        steps = int(-event.delta / 120) if getattr(event, "delta", 0) else 0
+        if steps:
+            canvas.yview_scroll(steps, "units")
+
+    def _on_page_wheel(self, event) -> None:
+        """Scroll whichever scrollable page the pointer is over, and no other."""
+        page = self._scroll_wheel_page
+        if page is not None:
+            self._scroll_page(page, event)
+
+    def _on_page_focus(self, event=None) -> None:
+        """Scroll the page that owns the control taking focus, into view."""
+        widget = getattr(event, "widget", None)
+        if widget is None:
+            return
+        for page, canvas in self._scroll_canvases.items():
+            if self._on_page(widget, page):
+                self._reveal(canvas, page, widget)
+                return
+
+    @staticmethod
+    def _on_page(widget, page) -> bool:
+        """Whether ``widget`` is ``page`` or lives inside it."""
+        node = widget
+        while node is not None:
+            if node is page:
+                return True
+            node = getattr(node, "master", None)
+        return False
+
+    def _reveal(self, canvas, page, widget) -> None:
+        """Scroll ``canvas`` the least amount that brings ``widget`` into view.
+
+        A control off an edge that takes focus (by Tab, or by the page's own
+        code) must not stay off-screen: the keyboard reaches what the wheel can,
+        on either axis, so a page wider than its canvas is still navigable.
+        """
+        if page not in self._scroll_bodies:
+            return
+        try:
+            bbox = canvas.bbox("all")
+            height = int(canvas.winfo_height())
+            if bbox is None or height <= 1:
+                return
+            total = int(bbox[3])
+            top = int(canvas.yview()[0] * total)
+            y = int(widget.winfo_rooty()) - int(canvas.winfo_rooty()) + top
+            bottom = y + int(widget.winfo_height())
+            width = int(canvas.winfo_width())
+            total_w = int(bbox[2])
+            left = int(canvas.xview()[0] * total_w)
+            x = int(widget.winfo_rootx()) - int(canvas.winfo_rootx()) + left
+            right = x + int(widget.winfo_width())
+        except tk.TclError:
+            return
+        if bottom > top + height:
+            target = bottom - height
+        elif y < top:
+            target = y
+        else:
+            target = None
+        if target is not None:
+            target = max(0, min(target, max(0, total - height)))
+            canvas.yview_moveto(target / total if total else 0.0)
+        if right > left + width:
+            target_w = right - width
+        elif x < left:
+            target_w = x
+        else:
+            target_w = None
+        if target_w is not None:
+            target_w = max(0, min(target_w, max(0, total_w - width)))
+            canvas.xview_moveto(target_w / total_w if total_w else 0.0)
+
+    def _build_config_tab(self) -> None:
+        """The config page: profiles, images, Salad policy, and the vast.ai hosts.
+
+        One page owns everything a render needs to be aimed. Four sub-tabs hold
+        the sections in the order a deployment runs them: the profiles and the
+        checkpoints each one serves, the two container images with the settings
+        a host needs, each config's Salad policy, and the vast.ai instances with
+        the engine choice.
+        """
+        self._config = ttk.Frame(self.nb)
+        self._config.columnconfigure(0, weight=1)
+        self._config.rowconfigure(0, weight=1)
+        self._config_tabs = ttk.Notebook(self._config, style="Section.TNotebook")
+        self._config_tabs.grid(row=0, column=0, sticky="nsew")
+        self._config_section_pages: dict[str, ttk.Frame] = {}
+        self._config_section_bodies: dict[str, ttk.Frame] = {}
+        self.var_config_note = tk.StringVar(value="")
+        for key, label, builder in CONFIG_SECTIONS:
+            page = ttk.Frame(self._config_tabs)
+            body = self._scrollable_page(page)
+            # The label column keeps its natural width and the field column takes
+            # the rest, as the one-page layout did.
+            body.columnconfigure(1, weight=1)
+            self._config_tabs.add(page, text=label)
+            self._config_section_pages[key] = page
+            self._config_section_bodies[key] = body
+            getattr(self, builder)(body)
+        ttk.Label(
+            self._config, textvariable=self.var_config_note, wraplength=760
+        ).grid(row=1, column=0, sticky="ew", padx=10, pady=(4, 6))
+        self._config_tabs.bind(
+            "<<NotebookTabChanged>>", self._on_config_section_tab, add="+"
+        )
+
+    def _on_config_section_tab(self, _e=None) -> None:
+        """Refresh the Config section that just became visible (local reads only)."""
+        try:
+            selected = self._config_tabs.select()
+            page = self._config_tabs.nametowidget(selected)
+        except tk.TclError:
+            return
+        key = next(
+            (k for k, candidate in self._config_section_pages.items() if candidate is page),
+            "",
+        )
+        if key == "profile":
+            self._refresh_checkpoint_list()
+        elif key == "images":
+            self._refresh_images_page()
+        elif key == "vast":
+            self._refresh_vast_page()
+
+    def _build_profile_section(self, body) -> None:
+        """The active profile, its target, its URL, and the checkpoints routing reads."""
         self.var_name = tk.StringVar()
         self.var_gateway = tk.StringVar()
+        self.var_profile_mode = tk.StringVar(value=hostings.DEFAULT)
 
-        ttk.Label(self._config_body, text="Active profile").grid(
+        ttk.Label(body, text="Active profile").grid(
             row=0, column=0, sticky="w"
         )
         self.profile_combo = ttk.Combobox(
-            self._config_body, textvariable=self.var_name, state="normal"
+            body, textvariable=self.var_name, state="normal"
         )
         self.profile_combo.grid(row=0, column=1, sticky="ew", padx=6)
         self.profile_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_select_profile())
-        btns = ttk.Frame(self._config_body)
+        btns = ttk.Frame(body)
         btns.grid(row=1, column=1, sticky="w", pady=4)
         ttk.Button(btns, text="Save profile", command=self._save_profile).pack(
             side="left", padx=(0, 6)
@@ -467,17 +850,37 @@ class SaladStudio(tk.Tk):
         ttk.Button(btns, text="Delete profile", command=self._delete_profile).pack(
             side="left"
         )
-        ttk.Label(self._config_body, text="Gateway URL").grid(
-            row=2, column=0, sticky="w", pady=3
+        ttk.Label(body, text="Target").grid(row=2, column=0, sticky="w", pady=3)
+        target = ttk.Frame(body)
+        target.grid(row=2, column=1, sticky="w", pady=3)
+        for adapter in hostings.ADAPTERS:
+            ttk.Radiobutton(
+                target,
+                text=adapter.label,
+                value=adapter.key,
+                variable=self.var_profile_mode,
+                command=self._on_profile_mode,
+            ).pack(side="left", padx=(0, 16))
+        self.lbl_gateway = ttk.Label(
+            body, text=hostings.BY_KEY[hostings.DEFAULT].url_label
         )
-        ttk.Entry(self._config_body, textvariable=self.var_gateway).grid(
-            row=2, column=1, sticky="ew", padx=6, pady=3
+        self.lbl_gateway.grid(row=3, column=0, sticky="w", pady=3)
+        gw_row = ttk.Frame(body)
+        gw_row.grid(row=3, column=1, sticky="ew", padx=6, pady=3)
+        gw_row.columnconfigure(0, weight=1)
+        ttk.Entry(gw_row, textvariable=self.var_gateway).grid(row=0, column=0, sticky="ew")
+        self.btn_use_selected = ttk.Button(
+            gw_row,
+            text="Use the selected instance",
+            command=self._on_use_selected_instance,
+            state="disabled",
         )
+        self.btn_use_selected.grid(row=0, column=1, padx=(6, 0))
 
         box = ttk.LabelFrame(
-            self._config_body, text="Checkpoints this profile serves", padding=6
+            body, text="Checkpoints this profile serves", padding=6
         )
-        box.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        box.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         box.columnconfigure(0, weight=1)
         self.checkpoint_tree = ttk.Treeview(
             box, columns=("checkpoint", "family"), show="headings", height=7
@@ -508,38 +911,92 @@ class SaladStudio(tk.Tk):
         ttk.Button(add, text="Remove selected", command=self._on_remove_checkpoint).grid(
             row=0, column=3, padx=(6, 0)
         )
-        self.var_config_note = tk.StringVar(value="")
         ttk.Label(
-            box, textvariable=self.var_config_note, wraplength=760
-        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        self._build_policy_section()
-        self._build_images_section()
-        self._build_vast_section()
-        ttk.Label(
-            self._config_body,
-            text="One container serves one unet family, so a profile's checkpoints must "
-            "stay in one family. Routing sends a graph to the profile that lists the "
+            body,
+            text="Some images carry more than one unet, so a profile's checkpoints may "
+            "span families; the page warns that the image must carry every family it "
+            "lists. Routing sends a graph to the profile that lists the "
             "checkpoint it loads; the queue runs one line per profile, so two profiles "
-            "render at the same time. Each profile owns its Salad policy above. "
+            "render at the same time. Each profile owns its Salad policy on the Salad group sub-tab. "
             "Replica status and the Salad probe are in the top bar; size, steps, CFG, "
             "seed, graph, scheduler and LoRA selection are on Prompt Settings.",
             wraplength=760,
-        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
-    def _on_config_enter(self, _event=None) -> None:
-        """Claim the wheel for the config page's scroll while the pointer is on it."""
-        self.bind_all("<MouseWheel>", self._on_config_wheel, add="+")
+    def _profile_mode(self) -> str:
+        """The hosting the Target radio names, or Salad when it names none."""
+        mode = str(self.var_profile_mode.get() or "").strip().lower()
+        return mode if mode in hostings.BY_KEY else hostings.DEFAULT
 
-    def _on_config_leave(self, _event=None) -> None:
-        self.unbind_all("<MouseWheel>")
+    def _sync_hosting_controls(self, mode: str = "") -> None:
+        """Point the URL label and the pick button at the selected hosting."""
+        hosting = hostings.BY_KEY.get(mode or self._profile_mode()) or hostings.BY_KEY[
+            hostings.DEFAULT
+        ]
+        lbl = getattr(self, "lbl_gateway", None)
+        if lbl is not None:
+            lbl.configure(text=hosting.url_label)
+        btn = getattr(self, "btn_use_selected", None)
+        if btn is not None:
+            btn.configure(state="normal" if hosting.can_pick else "disabled")
 
-    def _on_config_wheel(self, event) -> None:
-        canvas = getattr(self, "_config_canvas", None)
-        if canvas is None:
+    def _on_profile_mode(self) -> None:
+        """The Target radio: the URL label and the pick button follow."""
+        mode = self._profile_mode()
+        self._sync_hosting_controls(mode)
+        self._repair_hosting_url(mode)
+
+    @staticmethod
+    def _is_salad_gateway(url: str) -> bool:
+        """True when the URL names a Salad gateway host, not a vast instance."""
+        host = (urlparse(url or "").hostname or "").lower()
+        return (
+            host == "salad.com"
+            or host.endswith(".salad.cloud")
+            or host.endswith(".salad.com")
+        )
+
+    def _vast_endpoints(self) -> set[str]:
+        doc = getattr(self, "_vast_doc", None) or {}
+        return {
+            str(row.get("endpoint") or "").strip()
+            for row in doc.get("instances") or []
+            if str(row.get("endpoint") or "").strip()
+        }
+
+    def _repair_hosting_url(self, mode: str) -> None:
+        """Never leave a URL that names the other hosting in the target box.
+
+        A vast mode holding a Salad gateway POSTs to the gateway with no key;
+        a Salad mode holding an instance URL sends the Salad key to it.
+        """
+        url = (self.var_gateway.get() or "").strip()
+        if not url:
+            if mode == "vast":
+                row = self._vast_active()
+                if row is not None:
+                    self.var_gateway.set(str(row["endpoint"]))
             return
-        steps = int(-event.delta / 120) if getattr(event, "delta", 0) else 0
-        if steps:
-            canvas.yview_scroll(steps, "units")
+        if mode == "vast" and self._is_salad_gateway(url):
+            row = self._vast_active()
+            self.var_gateway.set(str(row["endpoint"]) if row is not None else "")
+        elif mode != "vast" and url in self._vast_endpoints():
+            self.var_gateway.set("")
+
+    def _on_use_selected_instance(self) -> None:
+        """Fill the URL from the hosting's own store, or say there is none."""
+        adapter = hostings.BY_KEY.get(self._profile_mode()) or hostings.BY_KEY[
+            hostings.DEFAULT
+        ]
+        if not adapter.can_pick:
+            return
+        url, reason = adapter(self).pick_url()
+        if not url:
+            self._config_status(reason)
+            self.log("warn", reason)
+            return
+        self.var_gateway.set(url)
+        self._config_status(f"Using {url}")
 
     def _config_status(self, text: str) -> None:
         self.var_config_note.set(text)
@@ -590,6 +1047,7 @@ class SaladStudio(tk.Tk):
             name = f"{base}{n}"
             n += 1
         p = profiles.default_profile(name)
+        p.mode = self._profile_mode()
         typed_gateway = self.var_gateway.get().strip()
         if typed_gateway:
             p.gateway = typed_gateway
@@ -625,7 +1083,15 @@ class SaladStudio(tk.Tk):
         profiles.upsert(p)
         self.var_checkpoint.set("")
         self._refresh_checkpoint_list(p)
-        self.status.set(f"{p.name} lists {len(p.checkpoints)} checkpoint(s)")
+        warning = profiles.mixed_family_reason(p)
+        if warning:
+            # Allowed, not refused: an image that carries both families can serve
+            # the list. The warning is what keeps a one-family image honest.
+            self.status.set(f"{p.name} lists {len(p.checkpoints)} checkpoint(s)")
+            self.log("warn", warning)
+            messagebox.showwarning("Salad Studio", warning)
+        else:
+            self.status.set(f"{p.name} lists {len(p.checkpoints)} checkpoint(s)")
         self.log("ok", f"profile {p.name} checkpoint added: {unet}")
 
     def _on_remove_checkpoint(self) -> None:
@@ -648,9 +1114,10 @@ class SaladStudio(tk.Tk):
 
     def _build_prompt_settings_tab(self) -> None:
         """The prompt-shaping knobs split off Config, under the same attribute names."""
-        self._settings = ttk.Frame(self.nb, padding=10)
-        self._settings.columnconfigure(1, weight=1)
-        self._settings.rowconfigure(20, weight=1)
+        self._settings = ttk.Frame(self.nb)
+        body = self._scrollable_page(self._settings)
+        body.columnconfigure(1, weight=1)
+        body.rowconfigure(20, weight=1)
         self.var_graph = tk.StringVar(value=lora_store.graph_label("klein"))
         self.var_width = tk.StringVar(value="1024")
         self.var_height = tk.StringVar(value="1024")
@@ -665,24 +1132,24 @@ class SaladStudio(tk.Tk):
             ("CFG", self.var_cfg),
             ("Seed", self.var_seed),
         ):
-            ttk.Label(self._settings, text=label).grid(row=r, column=0, sticky="w", pady=3)
-            ttk.Entry(self._settings, textvariable=var).grid(
+            ttk.Label(body, text=label).grid(row=r, column=0, sticky="w", pady=3)
+            ttk.Entry(body, textvariable=var).grid(
                 row=r, column=1, sticky="ew", padx=6, pady=3
             )
             r += 1
-        ttk.Label(self._settings, text="Graph").grid(row=r, column=0, sticky="w")
+        ttk.Label(body, text="Graph").grid(row=r, column=0, sticky="w")
         self.graph_combo = ttk.Combobox(
-            self._settings,
+            body,
             textvariable=self.var_graph,
             values=lora_store.GRAPH_CHOICES,
             state="readonly",
         )
         self.graph_combo.grid(row=r, column=1, sticky="w", padx=6)
         r += 1
-        ttk.Label(self._settings, text="Scheduler").grid(row=r, column=0, sticky="w")
+        ttk.Label(body, text="Scheduler").grid(row=r, column=0, sticky="w")
         self.var_scheduler = tk.StringVar(value="Flux2 (Klein)")
         self.sched_combo = ttk.Combobox(
-            self._settings,
+            body,
             textvariable=self.var_scheduler,
             values=("Flux2 (Klein)", "Simple (Civitai)"),
             state="readonly",
@@ -690,10 +1157,10 @@ class SaladStudio(tk.Tk):
         )
         self.sched_combo.grid(row=r, column=1, sticky="w", padx=6)
         r += 1
-        ttk.Label(self._settings, text="Checkpoint").grid(row=r, column=0, sticky="w")
+        ttk.Label(body, text="Checkpoint").grid(row=r, column=0, sticky="w")
         self.var_unet = tk.StringVar(value="Base 9B")
         self.unet_combo = ttk.Combobox(
-            self._settings,
+            body,
             textvariable=self.var_unet,
             values=request_json.UNET_LABELS,
             state="readonly",
@@ -701,8 +1168,8 @@ class SaladStudio(tk.Tk):
         )
         self.unet_combo.grid(row=r, column=1, sticky="w", padx=6)
         r += 1
-        ttk.Label(self._settings, text="LoRAs").grid(row=r, column=0, sticky="nw", pady=(8, 0))
-        self._lora_inner = ttk.Frame(self._settings)
+        ttk.Label(body, text="LoRAs").grid(row=r, column=0, sticky="nw", pady=(8, 0))
+        self._lora_inner = ttk.Frame(body)
         self._lora_inner.grid(row=r, column=1, sticky="nsew", padx=6, pady=(8, 0))
         for c in range(LORA_CHECK_COLUMNS):
             self._lora_inner.columnconfigure(c, weight=1)
@@ -724,7 +1191,7 @@ class SaladStudio(tk.Tk):
                 self.after_cancel(self._salad_poll_after)
             except Exception:
                 pass
-        self._salad_poll_after = self.after(15_000, self._poll_salad_status)
+        self._salad_poll_after = self._later(15_000, self._poll_salad_status)
 
     def _poll_salad_status(self) -> None:
         self._salad_poll_after = None
@@ -760,6 +1227,13 @@ class SaladStudio(tk.Tk):
 
         threading.Thread(target=work, daemon=True).start()
 
+    def destroy(self) -> None:
+        # Before any child <Destroy> binding. A binding that calls after()
+        # while children are going registers a command Tk then deletes, and
+        # the queued script prints "invalid command name".
+        self._closing = True
+        super().destroy()
+
     def _on_destroy_cancel_poll(self, e=None) -> None:
         # Child Destroy events bubble to the Tk root via bindtags. Ignore
         # them or LoRA/tab rebuilds cancel the 15s Salad poll forever.
@@ -767,6 +1241,7 @@ class SaladStudio(tk.Tk):
             w = getattr(e, "widget", None)
             if w is not None and w is not self and str(w) != str(self):
                 return
+        self._closing = True
         if self._salad_poll_after is not None:
             try:
                 self.after_cancel(self._salad_poll_after)
@@ -774,6 +1249,101 @@ class SaladStudio(tk.Tk):
                 pass
             self._salad_poll_after = None
         self._cancel_gen_tick()
+        # Everything else this window scheduled for itself, so nothing fires
+        # against a window Tk has already torn down.
+        for handle in list(self._pending_afters):
+            try:
+                self.after_cancel(handle)
+            except Exception:
+                pass
+        self._pending_afters.clear()
+
+    def after(self, ms: int, func=None, *args):
+        """Tk's own scheduler, tracked so a Destroy cancels what it left pending.
+
+        ``tkwry`` (the WebView2 embed) schedules its poll tick and its initial
+        page load with ``after`` on the toplevel rather than through ``_later``,
+        and the pane attaches even in a withdrawn window. A callback still
+        pending when the window goes makes Tk print ``invalid command name`` for
+        each one — two per window, 361 lines in one suite run — which buries a
+        real teardown error. Recording the ids here lets
+        ``_on_destroy_cancel_poll`` cancel them with everything else.
+        """
+        if func is None:
+            # ``after(ms)`` with no callback is a sleep: there is nothing to cancel.
+            return tk.Misc.after(self, ms)
+        if self._closing:
+            # Destroy has started, so the cancel pass has already run or is
+            # about to delete every Tcl command. Registering one now leaves
+            # its script queued and Tk prints "invalid command name".
+            self._dropped_afters.append(f"after({ms}): window is closing")
+            return None
+        box: list[str] = []
+
+        def run() -> None:
+            if box:
+                self._pending_afters.discard(box[0])
+            func(*args)
+
+        handle = tk.Misc.after(self, ms, run)
+        box.append(handle)
+        self._pending_afters.add(handle)
+        return handle
+
+    def _later(self, ms: int, func) -> str | None:
+        """Schedule ``func`` for this window, and remember the id.
+
+        Every callback this window schedules for itself goes through here. A
+        pending ``after`` that fires after the window is gone makes Tk print
+        ``invalid command name`` for each one — thousands of lines in a test run,
+        which buries a real teardown error — and a worker that schedules one after
+        the main loop has ended raises instead. ``_on_destroy_cancel_poll``
+        cancels what is left, and a schedule that cannot be made is recorded in
+        ``_dropped_afters`` rather than vanishing: a worker's handoff that never
+        runs is a state reset that never happens.
+        """
+        box: list[str] = []
+
+        def run() -> None:
+            # A zero-delay callback can run on the main thread before the thread
+            # that scheduled it gets the id back, so the id is read out of a box
+            # that exists before the schedule is made.
+            if box:
+                self._pending_afters.discard(box[0])
+            func()
+
+        try:
+            handle = self.after(ms, run)
+        except RuntimeError as e:
+            # The main thread is not in the Tk loop: a worker finishing during
+            # teardown, or a test that pumps update() instead of running one.
+            self._dropped_afters.append(f"after({ms}): {e}")
+            return None
+        if handle is None:
+            return None
+        box.append(handle)
+        self._pending_afters.add(handle)
+        return handle
+
+    def _later_idle(self, func) -> str | None:
+        """``_later`` with ``after_idle``: run once the window is otherwise idle."""
+        box: list[str] = []
+
+        def run() -> None:
+            if box:
+                self._pending_afters.discard(box[0])
+            func()
+
+        try:
+            handle = self.after_idle(run)
+        except RuntimeError as e:
+            self._dropped_afters.append(f"after_idle: {e}")
+            return None
+        if handle is None:
+            return None
+        box.append(handle)
+        self._pending_afters.add(handle)
+        return handle
 
     def _cancel_gen_tick(self) -> None:
         if self._gen_poll_after is not None:
@@ -785,7 +1355,7 @@ class SaladStudio(tk.Tk):
 
     def _schedule_gen_tick(self) -> None:
         self._cancel_gen_tick()
-        self._gen_poll_after = self.after(2000, self._tick_gen)
+        self._gen_poll_after = self._later(2000, self._tick_gen)
 
     def _tick_gen(self) -> None:
         self._gen_poll_after = None
@@ -815,8 +1385,8 @@ class SaladStudio(tk.Tk):
         Generate's button state does not follow it: the press is the gate. A
         queued or in-flight request and a booting replica both leave the button
         live, and a press that cannot be dispatched — a replica that is gone, or
-        a group that is not running — is refused with a reason when it is made
-        (``_on_generate``).
+        a group the badge says is stopped, because this app never starts a
+        container — is refused with a reason when it is made (``_on_generate``).
         """
         self.var_salad_status.set(word)
 
@@ -847,22 +1417,42 @@ class SaladStudio(tk.Tk):
             # profile gateway (see _status_targets).
             self._set_salad_word("Down")
         if self._salad_check_busy:
+            if not silent:
+                self.status.set("Check Salad status: a check is already running")
+            return
+        # The key is read here, on the main thread, so a missing one can be
+        # reported at once: a worker's handoff through ``_later`` is dropped when
+        # there is no main loop to take it (see ``_later``), and a missing key is
+        # the one status failure the user can fix from inside the app.
+        try:
+            key = self._salad_api_key()
+        except (OSError, FileNotFoundError) as e:
+            # No key is not a container that is down. The sentence names the cause
+            # and the fix, so it goes where the user already looks instead of being
+            # swallowed by the probe's own error handling.
+            self._report_salad_key_error(str(e))
             return
         self._salad_check_busy = True
+        self._set_check_salad_enabled(False)
+        # The Refresh Salad logs button reads the same probe this check owns, so
+        # it goes down with it and comes back when the check is done.
+        self._set_salad_logs_enabled(False)
         targets = self._status_targets()
         active_gw = gw
 
         def work() -> None:
             snaps: dict[str, dict] = {}
-            try:
-                key = self._salad_api_key()
-                for pid, gwx in targets:
+            for pid, gwx in targets:
+                try:
                     snaps[pid] = salad_status.snapshot_gateway(gwx, key)
-            except Exception:
-                snaps = {}
+                except Exception:
+                    continue
 
             def done() -> None:
                 self._salad_check_busy = False
+                self._set_check_salad_enabled(True)
+                self._set_salad_logs_enabled(True)
+                self._salad_key_error = ""
                 active_word = "Unknown"
                 first_pid = targets[0][0] if targets else ""
                 self._last_snaps = dict(snaps)
@@ -892,9 +1482,28 @@ class SaladStudio(tk.Tk):
                 if not silent and snaps:
                     self.log("debug", f"Salad {active_word}")
 
-            self.after(0, done)
+            self._later(0, done)
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _report_salad_key_error(self, message: str) -> None:
+        """The status check could not run at all: there is no Salad key to probe with.
+
+        The badge reads a word of its own instead of the checking placeholder or a
+        container state, and the sentence the key reader builds — the one that
+        names the Tokens tab and the file — goes to the Logs. The status line is
+        left alone: it carries events ("retrying", a refusal), and a standing
+        condition that rewrote it would erase the last thing the user did. The log
+        line is written once per distinct message, because the poll runs every 15 s.
+        """
+        self._salad_check_busy = False
+        self._set_check_salad_enabled(True)
+        self._last_snaps = {}
+        self._fill_strip({})
+        self._set_salad_word("No key")
+        if getattr(self, "_salad_key_error", "") != message:
+            self._salad_key_error = message
+            self.log("error", f"Salad status unavailable: {message}")
 
     def _on_notebook_tab(self, _e=None) -> None:
         try:
@@ -902,6 +1511,10 @@ class SaladStudio(tk.Tk):
         except tk.TclError:
             return
         self._refresh_nav()
+        if tab == "Config":
+            self._refresh_checkpoint_list()
+            self._refresh_images_page()
+            self._refresh_vast_page()
         if tab == "Tokens":
             self._probe_tokens()
         if tab == "Prompt Assist":
@@ -911,9 +1524,11 @@ class SaladStudio(tk.Tk):
         if tab == "Queue":
             self._refresh_queue_page()
         if tab == "Logs":
-            self._refresh_salad_logs()
+            # Opening the page re-reads the pane. The busy guard is silent here:
+            # a tab switch is not a press, and the button says why when it is.
+            self._check_salad_status(silent=True)
 
-    def _build_policy_section(self) -> None:
+    def _build_policy_section(self, body) -> None:
         """The selected config's Salad policy: its group's image, placement, probes.
 
         The policy belongs to the config (it is stored on the profile), so Load
@@ -921,9 +1536,9 @@ class SaladStudio(tk.Tk):
         Nothing here is window-wide: selecting another config swaps these fields.
         """
         section = ttk.LabelFrame(
-            self._config_body, text="Salad policy for this config", padding=8
+            body, text="Salad policy for this config", padding=8
         )
-        section.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        section.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         section.columnconfigure(1, weight=1)
         self._policy_section = section
         ttk.Label(
@@ -1006,7 +1621,7 @@ class SaladStudio(tk.Tk):
         self.pol_image_box.grid(row=0, column=1, sticky="ew", padx=6)
         ttk.Label(
             extra,
-            text="a tag from Container images below, or any other tag",
+            text="a tag from the Images sub-tab, or any other tag",
             style="Status.TLabel",
         ).grid(row=0, column=2, columnspan=2, sticky="w")
         self._refresh_image_refs()
@@ -1103,7 +1718,7 @@ class SaladStudio(tk.Tk):
         selection has settled and never inside the widget work that selected it.
         """
         try:
-            self.after(0, lambda: self._load_salad_policy(prof, quiet=True))
+            self._later(0, lambda: self._load_salad_policy(prof, quiet=True))
         except tk.TclError:
             return
 
@@ -1208,13 +1823,14 @@ class SaladStudio(tk.Tk):
                     f"fail={shown['startup'].get('failure_threshold')}",
                 )
 
-            self.after(0, done)
+            self._later(0, done)
 
         threading.Thread(target=work, daemon=True).start()
 
     def _apply_salad_policy(self) -> None:
         gw = self.var_gateway.get().strip()
         if not gw:
+            self.status.set("Gateway URL is empty.")
             messagebox.showerror("Salad Studio", "Gateway URL is empty.")
             return
         policy = self._policy_from_form()
@@ -1249,7 +1865,7 @@ class SaladStudio(tk.Tk):
                 self._store_policy(policy)
                 self._load_salad_policy()
 
-            self.after(0, done)
+            self._later(0, done)
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -1271,6 +1887,7 @@ class SaladStudio(tk.Tk):
     def _reallocate_instance(self) -> None:
         gw = self.var_gateway.get().strip()
         if not gw:
+            self.status.set("Gateway URL is empty.")
             messagebox.showerror("Salad Studio", "Gateway URL is empty.")
             return
         if not messagebox.askyesno(
@@ -1298,6 +1915,7 @@ class SaladStudio(tk.Tk):
 
             def done() -> None:
                 if err:
+                    self.status.set(err)
                     self.log("error", f"Reallocate: {err}")
                     messagebox.showerror("Salad Studio", err)
                     return
@@ -1305,15 +1923,16 @@ class SaladStudio(tk.Tk):
                 self.status.set("Reallocate requested")
                 self._check_salad_status(silent=True)
 
-            self.after(0, done)
+            self._later(0, done)
 
         threading.Thread(target=work, daemon=True).start()
 
     def _build_tokens_tab(self) -> None:
-        self._tokens = ttk.Frame(self.nb, padding=10)
-        self._tokens.columnconfigure(1, weight=1)
+        self._tokens = ttk.Frame(self.nb)
+        body = self._scrollable_page(self._tokens)
+        body.columnconfigure(1, weight=1)
         ttk.Label(
-            self._tokens,
+            body,
             text="Secrets live in studio-tokens.json next to Salad Studio (not git). Empty slots are copied from ~/.config, or read from the provider's environment variable where one is configured. Generate sends the Salad key as Salad-Api-Key.",
             wraplength=760,
         ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 10))
@@ -1325,7 +1944,7 @@ class SaladStudio(tk.Tk):
         self._token_state: dict[str, str] = {}
         r = 1
         for kind, label, _rel in tokens.TOKEN_SPECS:
-            box = ttk.LabelFrame(self._tokens, text=label, padding=8)
+            box = ttk.LabelFrame(body, text=label, padding=8)
             box.grid(row=r, column=0, columnspan=5, sticky="ew", pady=4)
             box.columnconfigure(1, weight=1)
             ttk.Label(box, text="Local file").grid(row=0, column=0, sticky="w")
@@ -1368,9 +1987,14 @@ class SaladStudio(tk.Tk):
             self._token_valid_dot[kind] = dot
             ttk.Label(box, textvariable=word).grid(row=2, column=5, sticky="w", padx=(4, 0))
             r += 1
-        bar = ttk.Frame(self._tokens)
+        bar = ttk.Frame(body)
         bar.grid(row=r, column=0, columnspan=5, sticky="ew", pady=(8, 0))
-        ttk.Button(bar, text="Check keys", command=self._probe_tokens).pack(side="left")
+        # Kept so a running check can take the button down: a press while the
+        # probes are in flight changes nothing, so it must not look live.
+        self.token_check_btn = ttk.Button(
+            bar, text="Check keys", command=self._probe_tokens
+        )
+        self.token_check_btn.pack(side="left")
         ttk.Label(
             bar,
             text="green = the provider accepted the key; red = rejected; grey = not confirmed",
@@ -1390,12 +2014,31 @@ class SaladStudio(tk.Tk):
             except (tk.TclError, KeyError):
                 pass
 
+    def _set_token_check_enabled(self, enabled: bool) -> None:
+        """Take the Check keys button down while a check runs, and put it back.
+
+        The Tokens tab starts a check as it opens, so the busy window is reached
+        without pressing anything; a live-looking button that does nothing is the
+        surface lying.
+        """
+        btn = getattr(self, "token_check_btn", None)
+        if btn is None:
+            return
+        try:
+            btn.configure(state="normal" if enabled else "disabled")
+        except tk.TclError:
+            pass
+
     def _probe_tokens(self, kinds: list[str] | None = None) -> None:
         """Check keys against their providers in the background."""
         if self._token_probe_busy:
+            # The press cannot start a second check, so say why on the one
+            # surface that outlives it rather than returning silently.
+            self.status.set("Check keys: a key check is already running")
             return
         wanted = list(kinds or tokens.PROBE_SPECS.keys())
         self._token_probe_busy = True
+        self._set_token_check_enabled(False)
         for kind in wanted:
             self._token_state[kind] = "checking"
             self._render_token_state(kind)
@@ -1405,6 +2048,7 @@ class SaladStudio(tk.Tk):
 
             def done() -> None:
                 self._token_probe_busy = False
+                self._set_token_check_enabled(True)
                 for kind, result in results.items():
                     self._token_state[kind] = str(result.get("state") or "unknown")
                     self._token_detail[kind] = str(result.get("detail") or "")
@@ -1417,7 +2061,7 @@ class SaladStudio(tk.Tk):
                     ),
                 )
 
-            self.after(0, done)
+            self._later(0, done)
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -1442,7 +2086,11 @@ class SaladStudio(tk.Tk):
         except OSError as e:
             messagebox.showerror("Salad Studio", str(e))
             return
+        # The store changed, so the redaction list is re-read on the next line
+        # that needs it; the fingerprint would catch it anyway, and this makes a
+        # save through the page take effect without waiting for a stat to differ.
         self._log_secrets_cache = None
+        self._log_secrets_stamp = None
         self._token_entry[kind].set(raw)
         self.status.set(f"Saved {tokens.token_label(kind)} to {path}")
         self.log("ok", f"saved token {kind} ({len(raw)} chars) -> {path}")
@@ -1452,7 +2100,7 @@ class SaladStudio(tk.Tk):
         self._render_token_state(kind)
         self._probe_tokens([kind])
 
-    def _build_vast_section(self) -> None:
+    def _build_vast_section(self, body) -> None:
         """The vast.ai half of the config page: the engine choice and the instances.
 
         The key is not here: it is the ``vast`` slot on the Tokens tab, stored in
@@ -1461,9 +2109,9 @@ class SaladStudio(tk.Tk):
         closing and reopening the window keeps them.
         """
         self._vast = ttk.LabelFrame(
-            self._config_body, text="Vast.ai instances", padding=8
+            body, text="Vast.ai instances", padding=8
         )
-        self._vast.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        self._vast.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         self._vast.columnconfigure(0, weight=1)
         ttk.Label(
             self._vast,
@@ -1476,27 +2124,10 @@ class SaladStudio(tk.Tk):
             wraplength=760,
         ).grid(row=0, column=0, sticky="w", pady=(0, 8))
 
-        mode = ttk.LabelFrame(self._vast, text="Generate with", padding=8)
-        mode.grid(row=1, column=0, sticky="ew", pady=(0, 8))
-        self.var_gen_mode = tk.StringVar(value=self._vast_doc.get("mode") or vast.MODE_SALAD)
-        ttk.Radiobutton(
-            mode,
-            text="Salad profiles",
-            value=vast.MODE_SALAD,
-            variable=self.var_gen_mode,
-            command=self._on_gen_mode,
-        ).pack(side="left")
-        ttk.Radiobutton(
-            mode,
-            text="Vast.ai instance",
-            value=vast.MODE_VAST,
-            variable=self.var_gen_mode,
-            command=self._on_gen_mode,
-        ).pack(side="left", padx=(16, 0))
         self.var_vast_mode_note = tk.StringVar(value="")
-        ttk.Label(mode, textvariable=self.var_vast_mode_note, style="Status.TLabel").pack(
-            side="left", padx=(16, 0)
-        )
+        ttk.Label(
+            self._vast, textvariable=self.var_vast_mode_note, style="Status.TLabel"
+        ).grid(row=1, column=0, sticky="w", pady=(0, 8))
 
         box = ttk.LabelFrame(self._vast, text="Instances", padding=8)
         box.grid(row=2, column=0, sticky="ew")
@@ -1517,30 +2148,30 @@ class SaladStudio(tk.Tk):
         self.vast_image_box.pack(side="left", padx=6)
         ttk.Button(add, text="Add instance", command=self._on_vast_add).pack(side="left")
         ttk.Label(
-            add, text="(one address, or several separated by commas)", style="Status.TLabel"
-        ).pack(side="left", padx=(6, 0))
+            box,
+            text="(one address, or several separated by commas)",
+            style="Status.TLabel",
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 6))
 
-        cols = ("use", "label", "endpoint", "image", "state", "gpu")
-        self.vast_tree = ttk.Treeview(box, columns=cols, show="headings", height=7)
-        for col, heading, width, stretch in (
-            ("use", "Use", 40, False),
-            ("label", "Label", 130, False),
-            ("endpoint", "Address", 220, True),
-            ("image", "Image", 300, True),
-            ("state", "State", 90, False),
-            ("gpu", "GPU", 130, True),
-        ):
+        self.vast_tree = ttk.Treeview(
+            box, columns=("use", "label", "endpoint", "image", "state", "gpu"),
+            show="headings", height=7,
+        )
+        for col, heading, width, _fill in VAST_GRID_COLUMNS:
             self.vast_tree.heading(col, text=heading)
-            self.vast_tree.column(col, width=width, stretch=stretch, anchor="w")
+            self.vast_tree.column(col, width=width, stretch=False, anchor="w")
+        self._keep_grid_filling(
+            self._config_section_pages["vast"], self.vast_tree, VAST_GRID_COLUMNS
+        )
         self.vast_tree.tag_configure("active", foreground=theme.PALETTE["valid"])
         vscroll = ttk.Scrollbar(box, orient="vertical", command=self.vast_tree.yview)
         self.vast_tree.configure(yscrollcommand=vscroll.set)
-        self.vast_tree.grid(row=1, column=0, sticky="nsew")
-        vscroll.grid(row=1, column=1, sticky="ns")
+        self.vast_tree.grid(row=2, column=0, sticky="nsew")
+        vscroll.grid(row=2, column=1, sticky="ns")
         self.vast_tree.bind("<<TreeviewSelect>>", self._on_vast_select)
 
         bar = ttk.Frame(box)
-        bar.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        bar.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         ttk.Button(bar, text="Remove selected", command=self._on_vast_remove).pack(
             side="left"
         )
@@ -1554,17 +2185,61 @@ class SaladStudio(tk.Tk):
             bar, text="Fetch instances from Vast.ai", command=self._on_vast_fetch
         )
         self.vast_fetch_btn.pack(side="left", padx=(6, 0))
+        ttk.Button(
+            bar, text="New profile for this instance", command=self._on_vast_make_profile
+        ).pack(side="left", padx=(6, 0))
         self.var_vast_status = tk.StringVar(value="")
         ttk.Label(bar, textvariable=self.var_vast_status, style="Status.TLabel").pack(
             side="left", padx=(12, 0)
         )
+
+        policy = vast.clean_replace(self._vast_doc.get("replace"))
+        replace = ttk.LabelFrame(
+            self._vast, text="If the selected instance is destroyed", padding=8
+        )
+        replace.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        self.var_vast_replace = tk.BooleanVar(value=bool(policy["enabled"]))
+        ttk.Checkbutton(
+            replace,
+            text="Create a replacement automatically when Generate finds it gone",
+            variable=self.var_vast_replace,
+        ).grid(row=0, column=0, columnspan=8, sticky="w")
+        self.var_vast_price = tk.StringVar(value=f"{policy['max_price']:.2f}")
+        self.var_vast_down = tk.StringVar(value=f"{policy['min_down_mbps']:.0f}")
+        self.var_vast_up = tk.StringVar(value=f"{policy['min_up_mbps']:.0f}")
+        self.var_vast_cuda = tk.StringVar(value=f"{policy['cuda_min']:g}")
+        fields = (
+            ("Max $/hr", self.var_vast_price, 6),
+            ("Min down Mbps", self.var_vast_down, 6),
+            ("Min up Mbps", self.var_vast_up, 6),
+            ("CUDA at least", self.var_vast_cuda, 5),
+        )
+        col = 0
+        for label, var, width in fields:
+            ttk.Label(replace, text=label).grid(
+                row=1, column=col, sticky="w", padx=(0 if col == 0 else 10, 4), pady=(6, 0)
+            )
+            ttk.Entry(replace, textvariable=var, width=width).grid(
+                row=1, column=col + 1, sticky="w", pady=(6, 0)
+            )
+            col += 2
+        self.vast_replace_btn = ttk.Button(
+            replace, text="Replace if destroyed now", command=self._on_vast_replace
+        )
+        self.vast_replace_btn.grid(row=2, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(
+            replace,
+            text="Cheapest offer that clears all four. A 24 GB card and a 140 GB disk are fixed.",
+            style="Status.TLabel",
+        ).grid(row=2, column=1, columnspan=7, sticky="w", padx=(10, 0), pady=(8, 0))
+
         self._refresh_image_refs()
         self._refresh_vast_page()
 
     def gen_mode(self) -> str:
-        """Which engine Generate uses: ``"salad"`` or ``"vast"``."""
-        mode = str(self.var_gen_mode.get() or "").strip().lower()
-        return mode if mode in vast.MODES else vast.MODE_SALAD
+        """Which hosting Generate uses: the active profile's target."""
+        mode = self._profile_mode()
+        return mode if mode in hostings.BY_KEY else hostings.DEFAULT
 
     def _vast_active(self) -> dict | None:
         """The instance Generate will POST to, or None when none is selected."""
@@ -1594,7 +2269,7 @@ class SaladStudio(tk.Tk):
         count = len(self._vast_doc.get("instances") or [])
         chosen = vast.row_label(self._vast_active() or {}) or "(none selected)"
         self.var_vast_mode_note.set(
-            f"{count} instance(s) saved; Generate uses {chosen} when Vast.ai is selected"
+            f"{count} instance(s) saved; the active profile's target uses {chosen}"
         )
 
     def _store_vast_doc(self, doc: dict, note: str) -> None:
@@ -1610,15 +2285,14 @@ class SaladStudio(tk.Tk):
         self.status.set(note)
         self.log("ok", f"vast.ai: {note} -> {path}")
 
-    def _on_gen_mode(self) -> None:
-        """Record the engine choice, so a reopened window still uses it."""
-        mode = self.gen_mode()
-        self._store_vast_doc(vast.set_mode(self._vast_doc, mode), f"Generate uses {mode}")
-        if mode == vast.MODE_VAST and not self._vast_active():
-            self.log("warn", "vast.ai mode selected with no instance selected")
-
     def _on_vast_add(self) -> None:
-        """Add one or more instances the user typed, comma- or space-separated."""
+        """Add one or more instances the user typed, comma- or space-separated.
+
+        The box holds addresses, and a phrase that names no host is refused here
+        rather than stored: the store's own refusal is reported, naming both what
+        was added and what was not, on the status line and in the Logs, so a
+        press that added three of five cannot read as five.
+        """
         parts = str(self.var_vast_new.get() or "").replace(",", " ").split()
         if not parts:
             messagebox.showinfo("Salad Studio", "Type an instance address first.")
@@ -1627,23 +2301,67 @@ class SaladStudio(tk.Tk):
         image = self.var_vast_image.get().strip()
         doc = self._vast_doc
         added: list[str] = []
-        refusals: list[str] = []
+        refused: list[tuple[str, str]] = []
         for i, part in enumerate(parts):
             doc, refusal = vast.add_instance(
                 doc, part, label=label if i == 0 else "", image=image if i == 0 else ""
             )
             if refusal:
-                refusals.append(refusal)
+                refused.append((part, refusal))
             else:
                 added.append(vast.normalize_endpoint(part))
         if not added:
-            messagebox.showinfo("Salad Studio", " ".join(refusals))
+            note = "Nothing was added. " + vast_refusal_note(refused)
+            self.var_vast_status.set(note)
+            self.status.set(note)
+            self.log("warn", f"vast.ai: {note}")
+            messagebox.showinfo("Salad Studio", note)
             return
         self.var_vast_new.set("")
         self.var_vast_label.set("")
-        self._store_vast_doc(doc, f"added {len(added)} instance(s): {', '.join(added)}")
-        if refusals:
-            self.log("warn", "vast.ai: " + " ".join(refusals))
+        note = f"added {len(added)} instance(s): {', '.join(added)}"
+        if refused:
+            note += f"; refused {len(refused)}: {vast_refusal_note(refused)}"
+        self._store_vast_doc(doc, note)
+
+    def _on_vast_make_profile(self) -> None:
+        """Create a profile whose target is the selected instance."""
+        row = self._vast_active()
+        if row is None:
+            self._config_status("Select an instance first.")
+            self.log("warn", "no instance is selected")
+            return
+        endpoint = str(row.get("endpoint") or "")
+        ident = str(row.get("id") or "").strip() or endpoint.rsplit(":", 1)[-1]
+        name = f"vast-{ident}"
+        allp = profiles.load_all()
+        if name in allp:
+            profiles.set_active(name)
+            self._refresh_profile_choices(name)
+            self._apply_profile(allp[name])
+            self._config_status(f"Profile {name} already targets {endpoint}")
+            return
+        p = profiles.default_profile(name)
+        p.mode = "vast"
+        p.gateway = endpoint
+        family = self._family_for_image(str(row.get("image") or ""))
+        if family:
+            p.checkpoints = profiles.seed_checkpoints(family)
+        profiles.upsert(p)
+        profiles.set_active(name)
+        self._refresh_profile_choices(name)
+        self._apply_profile(p)
+        self._config_status(f"Created profile {name} for {endpoint}")
+        self.log("ok", f"created profile {name} targeting {endpoint}")
+
+    def _family_for_image(self, tag: str) -> str:
+        """The family a deployment image tag bakes, or "" when it names none."""
+        doc = studio_meta.default()
+        for family in studio_meta.families(doc):
+            entry = studio_meta.deployment_for_family(family, doc)
+            if str(entry.get("tag") or "") == str(tag or ""):
+                return family
+        return ""
 
     def _on_vast_remove(self) -> None:
         selection = self.vast_tree.selection()
@@ -1651,6 +2369,12 @@ class SaladStudio(tk.Tk):
             messagebox.showinfo("Salad Studio", "Select an instance row first.")
             return
         endpoint = str(self.vast_tree.item(selection[0], "values")[2])
+        if not messagebox.askyesno(
+            "Salad Studio", f"Remove the vast.ai instance {endpoint}?"
+        ):
+            self.status.set(f"Kept {endpoint}")
+            self.log("info", f"kept the vast.ai instance {endpoint}")
+            return
         doc, removed = vast.remove_instance(self._vast_doc, endpoint)
         if not removed:
             return
@@ -1665,10 +2389,145 @@ class SaladStudio(tk.Tk):
         if endpoint == str(self._vast_doc.get("active") or ""):
             return
         self._store_vast_doc(vast.set_active(self._vast_doc, endpoint), f"using {endpoint}")
+        if self._profile_mode() == "vast":
+            # The page says this row is Generate's target, so the target box
+            # must name it too; otherwise the profile's old URL still wins.
+            self.var_gateway.set(endpoint)
 
     def _on_vast_save(self) -> None:
         count = len(self._vast_doc.get("instances") or [])
-        self._store_vast_doc(self._vast_doc, f"saved {count} instance(s)")
+        doc = dict(self._vast_doc)
+        doc["replace"] = self._vast_replace_settings()
+        self._store_vast_doc(doc, f"saved {count} instance(s)")
+
+    def _vast_replace_settings(self) -> dict:
+        """The replacement policy as the four boxes and the checkbox state it."""
+        return vast.clean_replace(
+            {
+                "enabled": bool(self.var_vast_replace.get()),
+                "max_price": self.var_vast_price.get(),
+                "min_down_mbps": self.var_vast_down.get(),
+                "min_up_mbps": self.var_vast_up.get(),
+                "cuda_min": self.var_vast_cuda.get(),
+            }
+        )
+
+    def _on_vast_replace(self) -> None:
+        """Check the selected instance, and rent the cheapest replacement if gone."""
+        if getattr(self, "_vast_replace_busy", False):
+            self.var_vast_status.set("a replacement check is already running")
+            return
+        row = self._vast_active()
+        if row is None:
+            self.var_vast_status.set("select an instance row first")
+            return
+        key = tokens.read_token("vast")
+        if not key:
+            messagebox.showinfo(
+                "Salad Studio",
+                "Save the Vast.ai key on the Tokens tab, then replace again.",
+            )
+            return
+        image = str(row.get("image") or "").strip()
+        if not image:
+            try:
+                image = profiles.policy_image_for(self._profile_from_form())
+            except ValueError:
+                image = ""
+        if not image:
+            messagebox.showinfo(
+                "Salad Studio",
+                "Set an image for the selected instance first (Set image for selected).",
+            )
+            return
+        settings = self._vast_replace_settings()
+        label = str(row.get("label") or "").strip() or f"salad-studio-{row['endpoint']}"
+        env = vast.replacement_env(
+            hf_token=tokens.read_token("huggingface"),
+            civitai_token=tokens.read_token("civitai"),
+        )
+        self._vast_replace_busy = True
+        self.vast_replace_btn.configure(state="disabled")
+        self.var_vast_status.set("checking the selected instance.")
+
+        def work() -> None:
+            try:
+                result = vast.replace_destroyed(
+                    key=key,
+                    endpoint=str(row.get("endpoint") or ""),
+                    instance_id=row.get("id")
+                    or (self._vast_doc.get("pending") or {}).get("contract"),
+                    image=image,
+                    settings=settings,
+                    label=label,
+                    env=env,
+                )
+            except Exception as e:  # noqa: BLE001 - the button must come back
+                result = {"action": "error", "message": f"{type(e).__name__}: {e}"}
+            self._later(0, lambda: self._apply_vast_replace(result, row))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _apply_vast_replace(self, result: dict, old_row: dict | None) -> None:
+        """Show what the replacement check did, and keep the row it returned."""
+        self._vast_replace_busy = False
+        if hasattr(self, "vast_replace_btn"):
+            try:
+                self.vast_replace_btn.configure(state="normal")
+            except tk.TclError:
+                pass
+        action = str(result.get("action") or "")
+        message = str(result.get("message") or "")
+        new = result.get("row")
+        if isinstance(new, dict) and old_row:
+            # A live check returns the API's row fields only; keep the label and
+            # image the user set, while the new endpoint and state win.
+            new = {**old_row, **new}
+        if isinstance(new, dict) and str(new.get("endpoint") or ""):
+            rows: list[dict] = []
+            old_endpoint = str((old_row or {}).get("endpoint") or "")
+            old_id = (old_row or {}).get("id")
+            replaced = False
+            for row in self._vast_doc.get("instances") or []:
+                same = bool(old_endpoint and str(row.get("endpoint") or "") == old_endpoint)
+                if not same and old_id is not None:
+                    same = str(row.get("id") or "") == str(old_id)
+                rows.append(dict(new) if same else row)
+                replaced = replaced or same
+            if not replaced:
+                rows.append(dict(new))
+            doc = dict(self._vast_doc)
+            doc["instances"] = rows
+            doc["active"] = str(new["endpoint"])
+            doc["replace"] = self._vast_replace_settings()
+            doc["pending"] = {}
+            self._store_vast_doc(doc, message)
+            if self._profile_mode() == "vast":
+                self.var_gateway.set(str(new["endpoint"]))
+                name = (self.var_name.get() or "").strip()
+                try:
+                    allp = profiles.load_all()
+                    if name in allp:
+                        prof = allp[name]
+                        prof.gateway = str(new["endpoint"])
+                        prof.mode = "vast"
+                        profiles.upsert(prof)
+                        self.log("info", f"profile {name} now targets {new['endpoint']}")
+                except Exception as e:  # noqa: BLE001 - a bad store must not undo the row
+                    self.log("warn", f"could not update profile {name}: {e}")
+        else:
+            if action == "created" and result.get("contract") is not None:
+                doc = dict(self._vast_doc)
+                doc["pending"] = {
+                    "contract": int(result["contract"]),
+                    "label": str(result.get("label") or ""),
+                    "image": str(result.get("image") or ""),
+                }
+                self._store_vast_doc(doc, message)
+            else:
+                self.var_vast_status.set(message)
+                self.status.set(message)
+        self.log("info" if action in ("alive", "created") else "error", message)
 
     def _on_vast_set_image(self) -> None:
         """Record which image a listed instance runs, so the row points at one.
@@ -1720,7 +2579,7 @@ class SaladStudio(tk.Tk):
                 self.vast_fetch_btn.configure(state="normal")
                 self._apply_vast_fetch(result)
 
-            self.after(0, done)
+            self._later(0, done)
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -1749,13 +2608,18 @@ class SaladStudio(tk.Tk):
             if not refusal:
                 added.append(str(row["endpoint"]))
         note = f"vast.ai listed {len(rows)} instance(s); added {len(added)}"
+        if result.get("truncated"):
+            note += (
+                f" — the account has more than {vast.MAX_PAGES} pages of instances, "
+                "so the list stops there"
+            )
         if added:
             self._store_vast_doc(doc, note)
         else:
             self.var_vast_status.set(note)
             self.log("info", f"vast.ai: {note}")
 
-    def _build_images_section(self) -> None:
+    def _build_images_section(self, body) -> None:
         """The container images: where each one lives, and what a host needs.
 
         The facts come from the metadata document, so a new image is a document
@@ -1765,9 +2629,9 @@ class SaladStudio(tk.Tk):
         refer to.
         """
         self._images = ttk.LabelFrame(
-            self._config_body, text="Container images", padding=8
+            body, text="Container images", padding=8
         )
-        self._images.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        self._images.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         self._images.columnconfigure(0, weight=1)
         ttk.Label(
             self._images,
@@ -1776,7 +2640,7 @@ class SaladStudio(tk.Tk):
                 "tag, the build arg, the ports and the documented environment come "
                 "from the metadata document; extra environment entries and your own "
                 f"images are stored in {image_deploy.SETTINGS_PATH} (not git). The "
-                "policy image field above and a Vast.ai instance row refer to a tag "
+                "policy image field on the Salad group sub-tab and a Vast.ai instance row refer to a tag "
                 "from here."
             ),
             wraplength=820,
@@ -1874,11 +2738,23 @@ class SaladStudio(tk.Tk):
         ttk.Entry(mine, textvariable=self.var_image_new_context).grid(
             row=1, column=3, sticky="ew", padx=6
         )
+        # The ports the image publishes, which its docker run and vast.ai lines
+        # need: without them a user's own image deploys with no port at all.
+        ttk.Label(mine, text="API port").grid(row=2, column=0, sticky="w")
+        self.var_image_new_api = tk.StringVar(value="")
+        ttk.Entry(mine, textvariable=self.var_image_new_api, width=8).grid(
+            row=2, column=1, sticky="w", padx=6
+        )
+        ttk.Label(mine, text="ComfyUI port").grid(row=2, column=2, sticky="w")
+        self.var_image_new_comfy = tk.StringVar(value="")
+        ttk.Entry(mine, textvariable=self.var_image_new_comfy, width=8).grid(
+            row=2, column=3, sticky="w", padx=6
+        )
         ttk.Button(mine, text="Add image", command=self._on_image_add_image).grid(
-            row=2, column=1, sticky="w", padx=6, pady=(6, 0)
+            row=3, column=1, sticky="w", padx=6, pady=(6, 0)
         )
         ttk.Button(mine, text="Remove image", command=self._on_image_remove_image).grid(
-            row=2, column=3, sticky="w", padx=6, pady=(6, 0)
+            row=3, column=3, sticky="w", padx=6, pady=(6, 0)
         )
         self._refresh_images_page()
 
@@ -1999,6 +2875,9 @@ class SaladStudio(tk.Tk):
             self.var_image_env_value.get(),
         )
         if refusal:
+            # The dialog is the only surface that carries this, and it does not
+            # outlive the dismissal; the status line keeps the last success.
+            self.status.set(f"Refused: {refusal}")
             messagebox.showinfo("Salad Studio", refusal)
             return
         self.var_image_env_name.set("")
@@ -2010,15 +2889,15 @@ class SaladStudio(tk.Tk):
         entry = self._image_entry()
         selection = self.image_env_tree.selection()
         if entry is None or not selection:
+            self.status.set("Refused: Select an environment row first.")
             messagebox.showinfo("Salad Studio", "Select an environment row first.")
             return
         name = str(self.image_env_tree.item(selection[0], "values")[0])
         settings, removed = image_deploy.remove_env(self._image_settings, str(entry["key"]), name)
         if not removed:
-            messagebox.showinfo(
-                "Salad Studio",
-                f"{name} comes from the metadata document, so remove it there.",
-            )
+            note = f"{name} comes from the metadata document, so remove it there."
+            self.status.set(f"Refused: {note}")
+            messagebox.showinfo("Salad Studio", note)
             return
         self._store_image_settings(settings, f"removed {name} from {entry['key']}")
 
@@ -2049,14 +2928,22 @@ class SaladStudio(tk.Tk):
             self.var_image_new_tag.get(),
             context=self.var_image_new_context.get(),
             build_arg=self.var_image_new_arg.get(),
+            ports={
+                studio_meta.PORT_API: self.var_image_new_api.get(),
+                studio_meta.PORT_COMFY: self.var_image_new_comfy.get(),
+            },
         )
         if refusal:
+            self.status.set(f"Refused: {refusal}")
+            self.log("warn", f"Refused: {refusal}")
             messagebox.showinfo("Salad Studio", refusal)
             return
         name = self.var_image_new_name.get().strip()
         self.var_image_new_name.set("")
         self.var_image_new_tag.set("")
         self.var_image_new_arg.set("")
+        self.var_image_new_api.set("")
+        self.var_image_new_comfy.set("")
         self._store_image_settings(settings, f"added the image {name}")
         self.var_image_key.set(name)
         self._refresh_images_page()
@@ -2069,6 +2956,14 @@ class SaladStudio(tk.Tk):
                 "Only an image you added here can be removed; the document owns the rest.",
             )
             return
+        env_rows = (self._image_settings.get("env") or {}).get(str(entry["key"])) or []
+        extra = f" and its {len(env_rows)} environment entry(s)" if env_rows else ""
+        if not messagebox.askyesno(
+            "Salad Studio", f"Remove the image '{entry['key']}'{extra}?"
+        ):
+            self.status.set(f"Kept the image {entry['key']}")
+            self.log("info", f"kept the image {entry['key']}")
+            return
         settings, removed = image_deploy.remove_image(self._image_settings, str(entry["key"]))
         if not removed:
             return
@@ -2079,10 +2974,11 @@ class SaladStudio(tk.Tk):
         return tokens.resolve_salad_key()
 
     def _build_loras_tab(self) -> None:
-        self._loras = ttk.Frame(self.nb, padding=10)
-        self._loras.columnconfigure(0, weight=1)
-        self._loras.rowconfigure(1, weight=1)
-        find = ttk.Frame(self._loras)
+        self._loras = ttk.Frame(self.nb)
+        body = self._scrollable_page(self._loras)
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(1, weight=1)
+        find = ttk.Frame(body)
         find.grid(row=0, column=0, sticky="ew", pady=(0, 6))
         ttk.Label(find, text="Find by name").pack(side="left")
         self.var_lora_find = tk.StringVar()
@@ -2095,7 +2991,7 @@ class SaladStudio(tk.Tk):
         ttk.Label(find, text="a part of the name is enough").pack(side="left", padx=(8, 0))
         self._lora_sort: tuple[str, bool] = ("", False)
         self.lora_tree = ttk.Treeview(
-            self._loras, columns=LORA_COLUMNS, show="headings", height=12
+            body, columns=LORA_COLUMNS, show="headings", height=12
         )
         for col, heading, width in (
             ("verified", "Verified", 80),
@@ -2118,7 +3014,7 @@ class SaladStudio(tk.Tk):
         self.lora_tree.grid(row=1, column=0, sticky="nsew")
         self.lora_tree.bind("<<TreeviewSelect>>", self._on_lora_tree_select)
         self.var_lora_find.trace_add("write", lambda *_a: self._refresh_lora_tree())
-        add = ttk.LabelFrame(self._loras, text="Add / edit LoRA", padding=8)
+        add = ttk.LabelFrame(body, text="Add / edit LoRA", padding=8)
         add.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         add.columnconfigure(1, weight=1)
         ttk.Label(add, text="Civitai / HF URL / civitai:id@version / local path").grid(
@@ -2172,10 +3068,11 @@ class SaladStudio(tk.Tk):
         ttk.Button(row, text="Remove extra", command=self._on_remove_lora).pack(side="left")
 
     def _build_editor_tab(self) -> None:
-        self._editor = ttk.Frame(self.nb, padding=10)
-        self._editor.columnconfigure(0, weight=1)
-        self._editor.rowconfigure(0, weight=1)
-        pane = ttk.Panedwindow(self._editor, orient=tk.HORIZONTAL)
+        self._editor = ttk.Frame(self.nb)
+        body = self._scrollable_page(self._editor)
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(0, weight=1)
+        pane = ttk.Panedwindow(body, orient=tk.HORIZONTAL)
         self._editor_pane = pane
         self._editor_sash_set = False
         pane.grid(row=0, column=0, sticky="nsew")
@@ -2216,7 +3113,7 @@ class SaladStudio(tk.Tk):
         self.graph_pane.grid(row=0, column=0, sticky="nsew")
         pane.add(left, weight=1)
         pane.add(right, weight=3)
-        prompts = ttk.Frame(self._editor)
+        prompts = ttk.Frame(body)
         self._editor_prompts = prompts
         prompts.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         # Positive on the left, negative on the right; the positive box is the
@@ -2244,7 +3141,7 @@ class SaladStudio(tk.Tk):
         theme.style_text(self.negative_text)
         self.negative_text.grid(row=0, column=0, sticky="nsew")
         self.negative_text.bind("<KeyRelease>", lambda _e: self._patch_editor_from_prompt())
-        bar = ttk.Frame(self._editor)
+        bar = ttk.Frame(body)
         self._editor_bar = bar
         bar.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         ttk.Button(bar, text="Rebuild from Config", command=self._sync_editor).pack(
@@ -2268,11 +3165,12 @@ class SaladStudio(tk.Tk):
         the local URL field below. Every string here that names a backend says
         which one, and the ones both use do not name either.
         """
-        self._helper = ttk.Frame(self.nb, padding=10)
-        self._helper.columnconfigure(0, weight=1)
-        self._helper.rowconfigure(1, weight=1)
+        self._helper = ttk.Frame(self.nb)
+        body = self._scrollable_page(self._helper)
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(1, weight=1)
         mirror = ttk.LabelFrame(
-            self._helper, text="Current prompts (from the Prompt Editor)", padding=8
+            body, text="Current prompts (from the Prompt Editor)", padding=8
         )
         mirror.grid(row=0, column=0, sticky="ew")
         mirror.columnconfigure(0, weight=1)
@@ -2287,7 +3185,7 @@ class SaladStudio(tk.Tk):
         self.helper_editor_neg.grid(row=1, column=1, sticky="nsew", pady=(2, 0))
 
         adjusted = ttk.LabelFrame(
-            self._helper, text="Adjusted prompts (edit these; Help rewrites them)", padding=8
+            body, text="Adjusted prompts (edit these; Help rewrites them)", padding=8
         )
         adjusted.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
         adjusted.columnconfigure(0, weight=1)
@@ -2305,7 +3203,7 @@ class SaladStudio(tk.Tk):
         self.helper_adj_neg.grid(row=1, column=1, sticky="nsew", pady=(2, 0))
 
         issue_box = ttk.LabelFrame(
-            self._helper,
+            body,
             text="Image issue / problem (highest priority, the AI must fix this first)",
             padding=8,
         )
@@ -2326,7 +3224,7 @@ class SaladStudio(tk.Tk):
         self.helper_image_lbl = ttk.Label(image_row, text="")
         self.helper_image_lbl.pack(side="left", padx=(10, 0))
 
-        bar = ttk.Frame(self._helper)
+        bar = ttk.Frame(body)
         bar.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         ttk.Button(
             bar, text="Refresh from Prompt Editor", command=self._refresh_prompt_helper
@@ -2350,7 +3248,7 @@ class SaladStudio(tk.Tk):
         self._helper_local_vision: bool | None = None
         self._helper_local_model = ""
 
-        local_row = ttk.Frame(self._helper)
+        local_row = ttk.Frame(body)
         local_row.grid(row=4, column=0, sticky="ew", pady=(6, 0))
         ttk.Label(local_row, text="Local LLM URL (LM Studio)").pack(side="left")
         self.var_helper_local_url = tk.StringVar(value=ai_helper.LOCAL_BASE_URL)
@@ -2363,7 +3261,7 @@ class SaladStudio(tk.Tk):
         ).pack(side="left", padx=(8, 0))
 
         reply_box = ttk.LabelFrame(
-            self._helper, text="Reply (raw, from DeepSeek or the local model)", padding=8
+            body, text="Reply (raw, from DeepSeek or the local model)", padding=8
         )
         reply_box.grid(row=5, column=0, sticky="nsew", pady=(8, 0))
         reply_box.columnconfigure(0, weight=1)
@@ -2466,10 +3364,14 @@ class SaladStudio(tk.Tk):
             key = tokens.read_token("deepseek")
             if not key:
                 self.helper_state.set("No DeepSeek key. Save one on the Tokens tab")
-                self._set_helper_reply(
+                note = (
                     "No DeepSeek key is saved. Add it on the Tokens tab, then press "
                     "Help again."
                 )
+                self._set_helper_reply(note)
+                # The reply box is the only surface carrying this, and the next
+                # reply overwrites it; the status line keeps the last success.
+                self.status.set(f"Refused: {note}")
                 self.log("error", "Prompt Assist: DeepSeek key is empty")
                 return
         # Read the URL here: the worker thread must not touch Tk widgets.
@@ -2517,7 +3419,7 @@ class SaladStudio(tk.Tk):
                     except Exception as e:  # noqa: BLE001 - the call below reports it
                         self.log("warn", f"Prompt Assist: local model list failed ({e})")
                     if picked:
-                        self.after(0, lambda p=picked: self._note_local_model(p))
+                        self._later(0, lambda p=picked: self._note_local_model(p))
                     out = ai_helper.help_with_prompts_local(
                         url=local_url,
                         model=str(picked.get("id") or ""),
@@ -2525,11 +3427,11 @@ class SaladStudio(tk.Tk):
                         image_path=image,
                         **inputs,
                     )
-                self.after(0, lambda: self._helper_done(out, None, backend))
+                self._later(0, lambda: self._helper_done(out, None, backend))
             except ai_helper.ReplyError as e:
-                self.after(0, lambda err=e: self._helper_done(None, err, backend))
+                self._later(0, lambda err=e: self._helper_done(None, err, backend))
             except Exception as e:  # noqa: BLE001 - surface every failure in the page
-                self.after(0, lambda err=e: self._helper_done(None, err, backend))
+                self._later(0, lambda err=e: self._helper_done(None, err, backend))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -2544,21 +3446,15 @@ class SaladStudio(tk.Tk):
                 "for help first.",
             )
             return
-        raw = self.editor_text.get("1.0", "end").strip()
-        try:
-            generator.parse_request_json(raw)
-            patchable = True
-        except (ValueError, json.JSONDecodeError):
-            patchable = False
         # The prompt boxes are the live source the JSON is patched from, so
         # writing them and re-running the shipped patch does both in one step.
         self.prompt_text.delete("1.0", "end")
         self.prompt_text.insert("1.0", positive)
         self.negative_text.delete("1.0", "end")
         self.negative_text.insert("1.0", negative)
-        self._patch_editor_from_prompt()
+        patched = self._patch_editor_from_prompt()
         self._refresh_prompt_helper()
-        if patchable:
+        if patched:
             self.status.set("Prompt Assist: committed to the prompts and the JSON")
             self.log("ok", "Prompt Assist: adjusted prompts committed to the editor JSON")
         else:
@@ -2667,8 +3563,32 @@ class SaladStudio(tk.Tk):
                 f"completed in {continued} continuation(s)",
             )
 
+    @staticmethod
+    def _page_keeps_its_own_size(body: ttk.Frame, scroller) -> None:
+        """Keep ``scroller``'s own request out of the page's requested size.
+
+        A Treeview asks for the sum of its columns and for every row it can
+        show. A page that asked for that would size the whole window from it
+        again - which is what the Prompt Catalog, Prompt History and Queue pages
+        did before they scrolled, and what made the window open 1455x1238. A
+        page built this way keeps the size the rest of its content needs, the
+        tree is squeezed into what is left of the canvas, and the tree's own
+        bars are what bring its columns and its rows back.
+        """
+        body.update_idletasks()
+        others = [child for child in body.winfo_children() if child is not scroller]
+        rest_w = max([int(child.winfo_reqwidth()) for child in others] or [1])
+        rest_h = max(1, int(body.winfo_reqheight()) - int(scroller.winfo_reqheight()))
+        body.grid_propagate(False)
+        body.configure(width=rest_w, height=rest_h)
+
     def _build_prompt_catalog_tab(self) -> None:
-        self._catalog = ttk.Frame(self.nb, padding=10)
+        # Wrapped the way its eight siblings are: five columns of Treeview would
+        # otherwise set the window's size for the whole layout. The frame the
+        # content lives in keeps the name it always had, so every control and
+        # every lookup below stays where it was.
+        self._catalog_page = ttk.Frame(self.nb)
+        self._catalog = self._scrollable_page(self._catalog_page)
         self._catalog.columnconfigure(0, weight=1)
         self._catalog.rowconfigure(1, weight=1)
         form = ttk.Frame(self._catalog)
@@ -2689,25 +3609,29 @@ class SaladStudio(tk.Tk):
         self.catalog_tree = ttk.Treeview(
             self._catalog, columns=cols, show="headings", height=16
         )
-        for col, heading, width, stretch in (
-            ("when", "Added", 130, False),
-            ("name", "Short name", 180, False),
-            ("description", "Description", 260, True),
-            ("preview", "Prompt", 380, True),
-            ("stats", "Graph", 300, True),
-        ):
+        for col, heading, width, _fill in CATALOG_GRID_COLUMNS:
             self.catalog_tree.heading(col, text=heading)
-            self.catalog_tree.column(col, width=width, stretch=stretch)
+            self.catalog_tree.column(col, width=width, stretch=False)
+        self._keep_grid_filling(self._catalog_page, self.catalog_tree, CATALOG_GRID_COLUMNS)
         self.catalog_tree.grid(row=1, column=0, sticky="nsew")
         yscroll = ttk.Scrollbar(
             self._catalog, orient="vertical", command=self.catalog_tree.yview
         )
-        self.catalog_tree.configure(yscrollcommand=yscroll.set)
+        # The columns total more than a narrow window, so the right-hand ones
+        # (the Graph column among them) are off-screen without a bar to reach
+        # them; the vertical bar alone leaves them unreachable.
+        hscroll = ttk.Scrollbar(
+            self._catalog, orient="horizontal", command=self.catalog_tree.xview
+        )
+        self.catalog_tree.configure(
+            yscrollcommand=yscroll.set, xscrollcommand=hscroll.set
+        )
         yscroll.grid(row=1, column=1, sticky="ns")
+        hscroll.grid(row=2, column=0, sticky="ew")
         self.catalog_tree.bind("<<TreeviewSelect>>", lambda _e: self._fill_catalog_form())
         self.catalog_tree.bind("<Double-1>", lambda _e: self._on_catalog_load())
         bar = ttk.Frame(self._catalog)
-        bar.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        bar.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         ttk.Button(
             bar, text="Copy from Prompt Editor", command=self._on_catalog_add
         ).pack(side="left", padx=(0, 6))
@@ -2721,10 +3645,15 @@ class SaladStudio(tk.Tk):
             bar, text="Load into Prompt Editor", command=self._on_catalog_load
         ).pack(side="left", padx=(0, 6))
         ttk.Button(bar, text="Delete", command=self._on_catalog_delete).pack(side="left")
+        self.catalog_empty_lbl = ttk.Label(
+            self._catalog, text=CATALOG_EMPTY_TEXT, style="Status.TLabel"
+        )
+        self.catalog_empty_lbl.grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
         self.catalog_status = tk.StringVar(value="")
         ttk.Label(self._catalog, textvariable=self.catalog_status).grid(
-            row=3, column=0, columnspan=2, sticky="w", pady=(6, 0)
+            row=5, column=0, columnspan=2, sticky="w", pady=(6, 0)
         )
+        self._page_keeps_its_own_size(self._catalog, self.catalog_tree)
         self._refresh_prompt_catalog()
 
     def _selected_catalog_id(self) -> str | None:
@@ -2769,6 +3698,12 @@ class SaladStudio(tk.Tk):
             )
         if keep and keep in tree.get_children():
             tree.selection_set(keep)
+        empty = getattr(self, "catalog_empty_lbl", None)
+        if empty is not None:
+            if tree.get_children():
+                empty.grid_remove()
+            else:
+                empty.grid()
 
     def _on_catalog_add(self) -> None:
         name = self.var_cat_name.get().strip()
@@ -2853,12 +3788,13 @@ class SaladStudio(tk.Tk):
         self.log("warn", f"catalog - {entry['name']}")
 
     def _build_import_tab(self) -> None:
-        self._import = ttk.Frame(self.nb, padding=10)
-        self._import.columnconfigure(0, weight=1)
-        self._import.rowconfigure(1, weight=1)
-        self._import.rowconfigure(2, weight=2)
+        self._import = ttk.Frame(self.nb)
+        body = self._scrollable_page(self._import)
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(1, weight=1)
+        body.rowconfigure(2, weight=2)
         url_box = ttk.LabelFrame(
-            self._import,
+            body,
             text="Civitai image URL (Copy All + Comfy nodes when the post has them)",
             padding=8,
         )
@@ -2873,7 +3809,7 @@ class SaladStudio(tk.Tk):
             url_box, text="Fetch from Civitai", command=self._on_fetch_civitai_image
         ).grid(row=0, column=2, sticky="e")
         meta_box = ttk.LabelFrame(
-            self._import,
+            body,
             text="Civitai generation data (prompt + Steps / CFG, or Sampler / Seed / Model)",
             padding=8,
         )
@@ -2884,7 +3820,7 @@ class SaladStudio(tk.Tk):
         theme.style_text(self.import_meta)
         self.import_meta.grid(row=0, column=0, sticky="nsew")
         wf_box = ttk.LabelFrame(
-            self._import,
+            body,
             text="Comfy workflow JSON (paste is held in memory. Clear Import if the UI crawls)",
             padding=8,
         )
@@ -2903,7 +3839,7 @@ class SaladStudio(tk.Tk):
         self.import_workflow.grid(row=0, column=0, sticky="nsew")
         yscroll.grid(row=0, column=1, sticky="ns")
         knobs = ttk.LabelFrame(
-            self._import,
+            body,
             text="Graph knobs (applied on Convert, empty = from paste; set to override)",
             padding=8,
         )
@@ -2944,7 +3880,7 @@ class SaladStudio(tk.Tk):
             width=16,
         ).grid(row=1, column=5, sticky="w", pady=(6, 0))
         iss_box = ttk.LabelFrame(
-            self._import,
+            body,
             text="Salad replica issues",
             padding=8,
         )
@@ -2957,7 +3893,7 @@ class SaladStudio(tk.Tk):
         theme.style_text(self.import_issues)
         self.import_issues.grid(row=0, column=0, sticky="nsew")
         self.import_issues.configure(state="disabled")
-        bar = ttk.Frame(self._import)
+        bar = ttk.Frame(body)
         bar.grid(row=5, column=0, sticky="ew", pady=(8, 0))
         ttk.Button(bar, text="Fill knobs from paste", command=self._fill_import_knobs).pack(
             side="left"
@@ -2995,7 +3931,7 @@ class SaladStudio(tk.Tk):
 
     def _schedule_fill_import_knobs(self) -> None:
         self._cancel_fill_import_knobs()
-        self._imp_fill_after = self.after(400, lambda: self._fill_import_knobs(only_empty=True, quiet=True))
+        self._imp_fill_after = self._later(400, lambda: self._fill_import_knobs(only_empty=True, quiet=True))
 
     def _on_import_workflow_paste(self, _event=None):
         try:
@@ -3136,6 +4072,14 @@ class SaladStudio(tk.Tk):
         meta = self.import_meta.get("1.0", "end").strip()
         if not wf and not meta:
             self._set_import_issues(None)
+            if not quiet:
+                note = (
+                    "Nothing to fill. Paste a Comfy workflow JSON and/or Civitai "
+                    "generation data (prompt + Steps/CFG, or Sampler/Seed/Model)."
+                )
+                self.status.set(f"Refused: {note}")
+                self.log("warn", "fill knobs refused: no workflow and no generation data")
+                messagebox.showerror("Salad Studio", note)
             return
         try:
             knobs = comfy_import.knobs_from_sources(meta, wf)
@@ -3210,12 +4154,56 @@ class SaladStudio(tk.Tk):
     def _scheduler_id_from_label(self, raw: str) -> str:
         return "simple" if "simple" in (raw or "").lower() else "flux2"
 
+    def _import_generation_data(self, meta_text: str) -> bool:
+        """Whether the generation-data box describes a picture on its own.
+
+        The page's own wording for a bad paste asks for ``prompt + Steps/CFG, or
+        Sampler/Seed/Model``; a Draw Things paste adds its Tools and Size. Bare
+        text names no field at all, so there is nothing to build from it.
+        """
+        text = (meta_text or "").strip()
+        if not text:
+            return False
+        if comfy_import.ls.civitai_image_id(text):
+            return True
+        parsed = comfy_import.parse_civitai_metadata(text)
+        return any(
+            parsed.get(field) not in (None, "", [], {})
+            for field in (
+                "steps",
+                "cfg",
+                "sampler",
+                "scheduler",
+                "seed",
+                "model",
+                "width",
+                "height",
+                "tools",
+            )
+        )
+
     def _on_import_civitai(self) -> None:
         wf = self._import_workflow_text()
         meta = self.import_meta.get("1.0", "end").strip()
         url = (self.var_imp_image_url.get() or "").strip()
         if url and comfy_import.ls.civitai_image_id(url) and not comfy_import.ls.civitai_image_id(meta):
             meta = url + "\n" + meta
+        # Convert is a paste converter: with no workflow anywhere (split_pastes
+        # also lifts a graph pasted into the generation-data box) and no
+        # generation data, there is nothing to convert. Building the default
+        # Klein graph from bare text would replace the graph the user wrote in
+        # the Prompt Editor and report an import that never happened, so refuse
+        # before anything is touched.
+        _, wf_raw = comfy_import.split_pastes(meta, wf)
+        if not wf_raw and not self._import_generation_data(meta):
+            note = (
+                "Nothing to convert. Paste a Comfy workflow JSON and/or Civitai "
+                "generation data (prompt + Steps/CFG, or Sampler/Seed/Model)."
+            )
+            self.status.set(f"Refused: {note}")
+            self.log("warn", "convert refused: no workflow and no generation data")
+            messagebox.showerror("Salad Studio", note)
+            return
         try:
             self._fill_import_knobs(only_empty=True, quiet=True)
             payload = comfy_import.import_to_request(
@@ -3224,6 +4212,7 @@ class SaladStudio(tk.Tk):
                 knobs=self._import_knobs_from_form(),
             )
         except (ValueError, json.JSONDecodeError, TypeError) as e:
+            self.status.set("Refused: cannot convert the Civitai paste")
             self.log("error", f"Import failed: {e}")
             messagebox.showerror("Salad Studio", f"Cannot convert Civitai paste: {e}")
             return
@@ -3237,7 +4226,10 @@ class SaladStudio(tk.Tk):
         self.log("ok", f"imported Civitai paste  {stats}" + (f"  {census}" if census else ""))
 
     def _build_prompt_history_tab(self) -> None:
-        self._prompt_hist = ttk.Frame(self.nb, padding=10)
+        # Wrapped like its siblings: the stored prompts' grid is taller than a
+        # window, and the frame the content lives in keeps its own name.
+        self._prompt_hist_page = ttk.Frame(self.nb)
+        self._prompt_hist = self._scrollable_page(self._prompt_hist_page)
         self._prompt_hist.columnconfigure(0, weight=1)
         self._prompt_hist.rowconfigure(0, weight=1)
         cols = ("when", "profile", "preview", "stats")
@@ -3252,30 +4244,41 @@ class SaladStudio(tk.Tk):
         )
         self.prompt_hist_tree.heading("#0", text="")
         self.prompt_hist_tree.column("#0", width=56, minwidth=52, stretch=False, anchor="center")
-        self.prompt_hist_tree.heading("when", text="When")
-        self.prompt_hist_tree.heading("profile", text="Profile")
-        self.prompt_hist_tree.heading("preview", text="Prompt")
-        self.prompt_hist_tree.heading("stats", text="Graph")
-        self.prompt_hist_tree.column("when", width=140, stretch=False)
-        self.prompt_hist_tree.column("profile", width=100, stretch=False)
-        self.prompt_hist_tree.column("preview", width=480, stretch=True)
-        self.prompt_hist_tree.column("stats", width=380, stretch=True)
+        for col, heading, width, _fill in HISTORY_GRID_COLUMNS:
+            self.prompt_hist_tree.heading(col, text=heading)
+            self.prompt_hist_tree.column(col, width=width, stretch=False)
+        self._keep_grid_filling(
+            self._prompt_hist_page, self.prompt_hist_tree, HISTORY_GRID_COLUMNS
+        )
         self._hist_photos: list = []
         yscroll = ttk.Scrollbar(
             self._prompt_hist, orient="vertical", command=self.prompt_hist_tree.yview
         )
-        self.prompt_hist_tree.configure(yscrollcommand=yscroll.set)
+        # The same rule the Catalog grid follows: the columns are wider than a
+        # narrow window, so the right-hand ones need a horizontal bar to reach.
+        hscroll = ttk.Scrollbar(
+            self._prompt_hist, orient="horizontal", command=self.prompt_hist_tree.xview
+        )
+        self.prompt_hist_tree.configure(
+            yscrollcommand=yscroll.set, xscrollcommand=hscroll.set
+        )
         self.prompt_hist_tree.grid(row=0, column=0, sticky="nsew")
         yscroll.grid(row=0, column=1, sticky="ns")
+        hscroll.grid(row=1, column=0, sticky="ew")
         self.prompt_hist_tree.bind("<Double-1>", lambda _e: self._reuse_prompt_history())
         bar = ttk.Frame(self._prompt_hist)
-        bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        bar.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         ttk.Button(bar, text="Reuse", command=self._reuse_prompt_history).pack(
             side="left", padx=(0, 6)
         )
         ttk.Button(bar, text="Delete", command=self._delete_prompt_history).pack(
             side="left"
         )
+        self.prompt_hist_empty_lbl = ttk.Label(
+            self._prompt_hist, text=HISTORY_EMPTY_TEXT, style="Status.TLabel"
+        )
+        self.prompt_hist_empty_lbl.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        self._page_keeps_its_own_size(self._prompt_hist, self.prompt_hist_tree)
         self._refresh_prompt_history()
 
     def _refresh_prompt_history(self) -> None:
@@ -3316,6 +4319,14 @@ class SaladStudio(tk.Tk):
                     stats,
                 ),
             )
+        # After the rows: the state is shown only while there is nothing to show,
+        # like the Queue page's.
+        empty = getattr(self, "prompt_hist_empty_lbl", None)
+        if empty is not None:
+            if tree.get_children():
+                empty.grid_remove()
+            else:
+                empty.grid()
 
     def _selected_history_index(self) -> int | None:
         sel = self.prompt_hist_tree.selection()
@@ -3355,9 +4366,26 @@ class SaladStudio(tk.Tk):
         if idx is None:
             messagebox.showinfo("Salad Studio", "Select a prompt to delete.")
             return
+        rows = prompt_history.list_prompts()
+        if idx < 0 or idx >= len(rows):
+            self.status.set("No prompt history entry to delete")
+            self.log("warn", f"no prompt history entry #{idx}; nothing was deleted")
+            return
+        label = prompt_history.preview(str(rows[idx].get("text") or ""), 60) or f"#{idx}"
+        # A delete here drops a stored prompt and its thumbnail, so it asks
+        # first the way the Catalog's Delete and the profile Delete do.
+        if not messagebox.askyesno(
+            "Salad Studio",
+            f"Delete prompt history entry #{idx}?\n\n{label}\n\n"
+            "Its stored prompt and thumbnail are removed, and this cannot be undone.",
+        ):
+            self.status.set(f"Kept prompt history #{idx}")
+            self.log("info", f"kept prompt history #{idx}")
+            return
         prompt_history.remove_at(idx)
         self._refresh_prompt_history()
-        self.log("info", f"deleted prompt history #{idx}")
+        self.status.set(f"Deleted prompt history #{idx}: {label}")
+        self.log("info", f"deleted prompt history #{idx}  {label}")
 
     def _remember_request(self, payload: dict | None = None) -> None:
         body = payload
@@ -3387,7 +4415,7 @@ class SaladStudio(tk.Tk):
         self.log(level, message)
         if getattr(self, "queue_tree", None) is not None:
             try:
-                self.after(0, self._refresh_queue_page)
+                self._later(0, self._refresh_queue_page)
             except Exception:  # noqa: BLE001 - no main loop (a test), or a dead window
                 pass
 
@@ -3396,9 +4424,11 @@ class SaladStudio(tk.Tk):
 
         The page keeps no copy of job state: every row is read back out of
         ``self.gen_queue`` on a refresh, so what the page shows is what the
-        queue will act on.
+        queue will act on. It is wrapped like its siblings, so the request grid
+        cannot set the window's size for the whole layout.
         """
-        self._queue = ttk.Frame(self.nb, padding=10)
+        self._queue_page = ttk.Frame(self.nb)
+        self._queue = self._scrollable_page(self._queue_page)
         self._queue.columnconfigure(0, weight=1)
         self._queue.rowconfigure(1, weight=1)
         bar = ttk.Frame(self._queue)
@@ -3422,30 +4452,27 @@ class SaladStudio(tk.Tk):
         )
         cols = ("id", "profile", "state", "attempts", "status", "reason", "request", "finished")
         self.queue_tree = ttk.Treeview(self._queue, columns=cols, show="headings", height=14)
-        for col, heading, width, stretch in (
-            ("id", "#", 40, False),
-            ("profile", "Profile", 110, False),
-            ("state", "State", 90, False),
-            ("attempts", "Attempts", 70, False),
-            ("status", "Last status", 90, False),
-            ("reason", "Reason", 260, True),
-            ("request", "Request", 200, True),
-            ("finished", "Finished", 70, False),
-        ):
+        for col, heading, width, _fill in QUEUE_GRID_COLUMNS:
             self.queue_tree.heading(col, text=heading)
-            self.queue_tree.column(col, width=width, stretch=stretch, anchor="w")
+            self.queue_tree.column(col, width=width, stretch=False, anchor="w")
+        self._keep_grid_filling(self._queue_page, self.queue_tree, QUEUE_GRID_COLUMNS)
         qscroll = ttk.Scrollbar(self._queue, orient="vertical", command=self.queue_tree.yview)
-        self.queue_tree.configure(yscrollcommand=qscroll.set)
+        # The row is wider than a narrow window, so the right-hand columns
+        # (Reason and Request among them) need a bar of their own to reach them.
+        qhscroll = ttk.Scrollbar(self._queue, orient="horizontal", command=self.queue_tree.xview)
+        self.queue_tree.configure(yscrollcommand=qscroll.set, xscrollcommand=qhscroll.set)
         self.queue_tree.grid(row=1, column=0, sticky="nsew")
         qscroll.grid(row=1, column=1, sticky="ns")
+        qhscroll.grid(row=2, column=0, sticky="ew")
         self.queue_empty_lbl = ttk.Label(
             self._queue, text=QUEUE_EMPTY_TEXT, style="Status.TLabel"
         )
-        self.queue_empty_lbl.grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        self.queue_empty_lbl.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
         self.var_queue_note = tk.StringVar(value=QUEUE_CANCEL_NOTE)
         ttk.Label(
             self._queue, textvariable=self.var_queue_note, style="Status.TLabel"
-        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        self._page_keeps_its_own_size(self._queue, self.queue_tree)
         self._refresh_queue_page()
 
     @staticmethod
@@ -3561,9 +4588,41 @@ class SaladStudio(tk.Tk):
             return None
         return self.gen_queue.job_by_id(job_id)
 
+    def _selected_kept_note(self, word: str) -> str:
+        """The sentence for a selected row whose request the queue kept, or "".
+
+        The Queue page keeps a finished record for the retention window, and a
+        row restored from an earlier session is keyed ``kept-<id>``: the key is
+        not the id, so the id is read off the row's own first cell, and the queue
+        holds no job for it. A row whose job is still here is not this case.
+        """
+        tree = getattr(self, "queue_tree", None)
+        if tree is None:
+            return ""
+        selection = tree.selection()
+        if not selection:
+            return ""
+        values = tree.item(selection[0], "values")
+        if not values:
+            return ""
+        rid = str(values[0]).strip()
+        if not rid:
+            return ""
+        for record in self.gen_queue.finished():
+            if str(record.get("id") or "") == rid:
+                return (
+                    f"Queue: request {rid} finished in an earlier session, so it "
+                    f"cannot be {word}"
+                )
+        return ""
+
     def _on_queue_cancel(self) -> None:
         job = self._selected_queue_job()
         if job is None:
+            note = self._selected_kept_note("cancelled")
+            if note:
+                self._queue_status(note)
+                return
             self._queue_status("Queue: select a request first")
             return
         if self.gen_queue.cancel(job):
@@ -3580,6 +4639,10 @@ class SaladStudio(tk.Tk):
     def _on_queue_retry(self) -> None:
         job = self._selected_queue_job()
         if job is None:
+            note = self._selected_kept_note("retried")
+            if note:
+                self._queue_status(note)
+                return
             self._queue_status("Queue: select a request first")
             return
         if not job.retryable:
@@ -3597,7 +4660,7 @@ class SaladStudio(tk.Tk):
                 self.gen_queue.retry(job)
             except Exception as e:
                 self.log("error", f"Queue retry failed: {e}")
-            self.after(0, self._refresh_queue_page)
+            self._later(0, self._refresh_queue_page)
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -3607,10 +4670,11 @@ class SaladStudio(tk.Tk):
         self._refresh_queue_page()
 
     def _build_logs_tab(self) -> None:
-        self._logs = ttk.Frame(self.nb, padding=10)
-        self._logs.columnconfigure(0, weight=1)
-        self._logs.rowconfigure(0, weight=1)
-        paned = ttk.Panedwindow(self._logs, orient="vertical")
+        self._logs = ttk.Frame(self.nb)
+        body = self._scrollable_page(self._logs)
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(0, weight=1)
+        paned = ttk.Panedwindow(body, orient="vertical")
         paned.grid(row=0, column=0, sticky="nsew")
         salad_box = ttk.LabelFrame(paned, text="Salad container logs (active gateway)", padding=4)
         salad_box.columnconfigure(0, weight=1)
@@ -3623,9 +4687,10 @@ class SaladStudio(tk.Tk):
         self.salad_log_text.configure(yscrollcommand=sscroll.set)
         self.salad_log_text.grid(row=0, column=0, sticky="nsew")
         sscroll.grid(row=0, column=1, sticky="ns")
-        ttk.Button(
+        self.refresh_salad_logs_btn = ttk.Button(
             salad_box, text="Refresh Salad logs", command=self._refresh_salad_logs
-        ).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        )
+        self.refresh_salad_logs_btn.grid(row=1, column=0, sticky="w", pady=(4, 0))
         paned.add(salad_box, weight=1)
         studio_box = ttk.LabelFrame(paned, text="Studio / HTTP", padding=4)
         studio_box.columnconfigure(0, weight=1)
@@ -3646,23 +4711,77 @@ class SaladStudio(tk.Tk):
         paned.add(studio_box, weight=1)
 
     def _set_salad_logs(self, text: str) -> None:
+        """Show the container's own stdout, with the secrets masked.
+
+        The same value reaches both panes, so it is redacted the same way
+        ``log`` redacts: a container that echoes an ``HF_TOKEN`` must not put it
+        on screen in clear here while the Studio pane masks it.
+        """
         widget = self.salad_log_text
         widget.configure(state="normal")
         widget.delete("1.0", "end")
-        widget.insert("1.0", text)
+        widget.insert("1.0", studio_log.redact(text, self._log_secrets()))
         widget.configure(state="disabled")
 
+    def _set_check_salad_enabled(self, enabled: bool) -> None:
+        """The top-bar check goes down while a probe runs, like its siblings."""
+        btn = getattr(self, "check_salad_btn", None)
+        if btn is None:
+            return
+        try:
+            btn.configure(state="normal" if enabled else "disabled")
+        except tk.TclError:
+            pass
+
+    def _set_salad_logs_enabled(self, enabled: bool) -> None:
+        """Take the Refresh Salad logs button down while a status check runs.
+
+        The probe that fetches the pane is one at a time, so a live-looking
+        button that cannot refresh anything is the surface lying (the same rule
+        the Tokens page's Check keys button follows).
+        """
+        btn = getattr(self, "refresh_salad_logs_btn", None)
+        if btn is None:
+            return
+        try:
+            btn.configure(state="normal" if enabled else "disabled")
+        except tk.TclError:
+            pass
+
     def _refresh_salad_logs(self) -> None:
+        """Re-read the container's own log pane, or say why it cannot right now."""
+        if self._salad_check_busy:
+            self.status.set("Refresh Salad logs: a status check is already running")
+            return
         self._check_salad_status(silent=True)
 
+    def _token_stamp(self) -> tuple[int, int] | None:
+        """A cheap fingerprint of the token store: its mtime and size.
+
+        The redaction list must follow any write to the store, not only the ones
+        this window makes: the file can be edited by hand, seeded from
+        ``~/.config``, or written by another tool. A stat per log line is far
+        cheaper than re-reading the tokens, and it changes exactly when the
+        tokens do.
+        """
+        try:
+            st = tokens.LOCAL_PATH.stat()
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size)
+
     def _log_secrets(self) -> list[str]:
-        """Values to redact from log lines, cached until a token is saved.
+        """Values to redact from log lines, cached until the token store changes.
 
         ``tokens.read_token`` re-seeds from ``~/.config`` and can write on every
-        call, so this must not run once per log line.
+        call, so this must not run once per log line. The cache is keyed on the
+        store's fingerprint rather than cleared by one save path, so a token that
+        arrives any other way is masked too.
         """
-        if self._log_secrets_cache is None:
+        stamp = self._token_stamp()
+        if self._log_secrets_cache is None or stamp != self._log_secrets_stamp:
             self._log_secrets_cache = self._read_log_secrets()
+            self._log_secrets_stamp = self._token_stamp()
         return self._log_secrets_cache
 
     def _read_log_secrets(self) -> list[str]:
@@ -3694,7 +4813,7 @@ class SaladStudio(tk.Tk):
             if threading.current_thread() is threading.main_thread():
                 append()
             else:
-                self.after(0, append)
+                self._later(0, append)
         except Exception:
             append()
 
@@ -3746,7 +4865,7 @@ class SaladStudio(tk.Tk):
                 cb.grid(row=row_i, column=col, sticky="nw", padx=(0, 10), pady=1)
                 self._lora_checks[lid] = cb
                 var.trace_add("write", lambda *_a: self._schedule_lora_sync())
-                cb.bind("<ButtonRelease-1>", lambda _e: self.after_idle(self._on_lora_toggle))
+                cb.bind("<ButtonRelease-1>", lambda _e: self._later_idle(self._on_lora_toggle))
                 col += 1
                 if col >= LORA_CHECK_COLUMNS:
                     col = 0
@@ -3815,7 +4934,7 @@ class SaladStudio(tk.Tk):
         if self._syncing_loras or self._applying_profile:
             return
         self._on_lora_toggle()
-        self.after_idle(self._on_lora_toggle)
+        self._later_idle(self._on_lora_toggle)
 
     def _on_lora_toggle(self) -> None:
         if self._syncing_loras or self._applying_profile:
@@ -3914,16 +5033,27 @@ class SaladStudio(tk.Tk):
         if not sel:
             messagebox.showinfo("Salad Studio", "Select a user extra in the list.")
             return
-        lid = sel[0]
-        if not lora_store.remove_lora(lid):
-            messagebox.showinfo(
-                "Salad Studio",
-                "Known catalog LoRAs stay in the list; only extras added here can be removed.",
-            )
+        # The neighbouring Verify acts on every selected row, so this one does
+        # too: a selection of two extras is two removals, and the report says
+        # how many, because a row that stays behind must not read as removed.
+        removed: list[str] = []
+        refused: list[str] = []
+        for lid in sel:
+            if lora_store.remove_lora(lid):
+                removed.append(lid)
+                self.log("ok", f"removed extra LoRA {lid}")
+            else:
+                refused.append(lid)
+        if not removed:
+            note = "Known catalog LoRAs stay in the list; only extras added here can be removed."
+            self.status.set(f"Refused: {note}")
+            messagebox.showinfo("Salad Studio", note)
             return
         self._refresh_lora_lists()
-        self.status.set(f"Removed {lid}")
-        self.log("ok", f"removed extra LoRA {lid}")
+        note = f"Removed {len(removed)} extra LoRA(s): " + ", ".join(removed)
+        if refused:
+            note += f" ({len(refused)} known catalog LoRA(s) kept)"
+        self.status.set(note)
         self._sync_editor()
 
     def _parse_strength(self, raw: str, default: float) -> float:
@@ -3967,6 +5097,18 @@ class SaladStudio(tk.Tk):
         self._sync_editor()
 
     def _on_close(self) -> None:
+        """Closing the window: report a callback Tk would not take, then save.
+
+        ``_dropped_afters`` is the record of a worker's handoff that never ran, so
+        this is where it is read: a state reset that never happened is worth one
+        line in the log the user is about to lose.
+        """
+        if self._dropped_afters:
+            self.log(
+                "warn",
+                f"{len(self._dropped_afters)} scheduled callback(s) were dropped; "
+                f"last: {self._dropped_afters[-1]}",
+            )
         try:
             self._save_ui_state()
         except Exception as e:
@@ -3979,6 +5121,13 @@ class SaladStudio(tk.Tk):
             tab = str(self.nb.tab(self.nb.select(), "text"))
         except tk.TclError:
             pass
+        editor = self.editor_text.get("1.0", "end-1c")
+        try:
+            parsed = json.loads(editor)
+        except (TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict):
+            editor = json.dumps(prompt_history.redact_request(parsed), indent=2)
         return {
             "tab": tab,
             "profile": self.var_name.get(),
@@ -3994,7 +5143,7 @@ class SaladStudio(tk.Tk):
             "selected_loras": self._selected_lora_ids(),
             "prompt": self.prompt_text.get("1.0", "end-1c"),
             "negative": self.negative_text.get("1.0", "end-1c"),
-            "editor": self.editor_text.get("1.0", "end-1c"),
+            "editor": editor,
             "helper_issue": self.helper_issue.get("1.0", "end-1c"),
             "helper_local_url": self.var_helper_local_url.get(),
             "helper_image": bool(self.var_helper_image.get()),
@@ -4100,24 +5249,29 @@ class SaladStudio(tk.Tk):
             return True
         return False
 
-    def _patch_editor_from_prompt(self) -> None:
-        """Keep the loaded graph. Only the positive and negative CLIP text change."""
+    def _patch_editor_from_prompt(self) -> bool:
+        """Keep the loaded graph. Only the positive and negative CLIP text change.
+
+        Returns True when the loaded graph took the text. False means the
+        editor was rebuilt from Prompt Settings instead, which the Prompt Assist
+        commit reports as a rebuild rather than as a patch.
+        """
         if self._syncing_editor or self._applying_profile:
-            return
+            return False
         raw = self.editor_text.get("1.0", "end").strip()
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError:
             self._sync_editor()
-            return
+            return False
         if not isinstance(payload, dict):
             self._sync_editor()
-            return
+            return False
         text = self.prompt_text.get("1.0", "end").strip()
         neg = self.negative_text.get("1.0", "end").strip()
         if not request_json.apply_prompt_texts(payload, text, neg):
             self._sync_editor()
-            return
+            return False
         dumped = json.dumps(payload, indent=2)
         self._syncing_editor = True
         try:
@@ -4126,6 +5280,7 @@ class SaladStudio(tk.Tk):
         finally:
             self._syncing_editor = False
         self._apply_json_chrome()
+        return True
 
     def _sync_editor(self) -> None:
         if self._syncing_editor or self._applying_profile:
@@ -4192,6 +5347,10 @@ class SaladStudio(tk.Tk):
                     strength_model=float(spec.get("strength_model") or 1),
                     strength_clip=float(spec.get("strength_clip") or 1),
                     base=lora_store.graph_label(str(cfg.get("graph") or "klein")),
+                    # No live Civitai/HTTP check here: this runs on the Tk thread
+                    # when a graph is loaded, and one 15-20 s round trip per
+                    # unmatched LoRA freezes the window. Verify is a button.
+                    verify=False,
                 )
             except (Exception, SystemExit) as e:
                 # A LoRA the store cannot register (a local filename that is not
@@ -4248,6 +5407,45 @@ class SaladStudio(tk.Tk):
             f"loras={ids}",
         )
 
+    def _screen_work_area(self) -> tuple[int, int]:
+        """The area a window can be seen in: the desktop minus the taskbar.
+
+        Tk reports the whole screen (``winfo_screenwidth``/``winfo_screenheight``),
+        which is not the same thing: a window as tall as the screen puts its last
+        rows - the status line every refusal is written to among them - behind
+        the taskbar. Windows knows the work area, so it is asked directly there,
+        and anywhere else the screen is the best answer available.
+        """
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            rect = wintypes.RECT()
+            ok = ctypes.windll.user32.SystemParametersInfoW(
+                _SPI_GETWORKAREA, 0, ctypes.byref(rect), 0
+            )
+            if ok and int(rect.right) > int(rect.left) and int(rect.bottom) > int(rect.top):
+                return int(rect.right) - int(rect.left), int(rect.bottom) - int(rect.top)
+        except Exception:  # noqa: BLE001 - no ctypes, no windll, no Windows
+            pass
+        try:
+            return int(self.winfo_screenwidth()), int(self.winfo_screenheight())
+        except tk.TclError:
+            return 0, 0
+
+    def _fitted_size(self, width: int, height: int) -> tuple[int, int]:
+        """``width``x``height``, cut down to what the screen can show.
+
+        The whole layout asks for more than a laptop screen has (the three
+        pages that used to size it do not any more, but the chrome and the
+        widest page still can), and a window that opens past the bottom edge
+        hides the surfaces that report what the app is doing.
+        """
+        screen_w, screen_h = self._screen_work_area()
+        fit_w = min(width, screen_w) if screen_w > 0 else width
+        fit_h = min(height, screen_h) if screen_h > 0 else height
+        return max(1, fit_w), max(1, fit_h)
+
     def _hold_opened_size(self, event=None) -> None:
         """Open at the layout size, then refuse a later startup growth.
 
@@ -4266,13 +5464,12 @@ class SaladStudio(tk.Tk):
             height = max(int(self.winfo_reqheight()), 1)
         except tk.TclError:
             return
-        self._opened_width = width
-        self._opened_height = height
+        self._opened_width, self._opened_height = self._fitted_size(width, height)
         self._opened_size_held = True
-        self.geometry(f"{width}x{height}")
+        self.geometry(f"{self._opened_width}x{self._opened_height}")
         for delay in (100, 400, 900, 1600, 2200):
             try:
-                self.after(delay, self._reapply_opened_size)
+                self._later(delay, self._reapply_opened_size)
             except tk.TclError:
                 return
 
@@ -4294,7 +5491,15 @@ class SaladStudio(tk.Tk):
         """Open the Prompt Editor with the JSON box at 25% and the diagram at 75%."""
         if self._editor_sash_set:
             return
-        self._hold_opened_size()
+        # Hold the size only once the window has been laid out at least once:
+        # the graph pane embeds its web view from inside a builder, and that
+        # embedding pumps the event loop (tkwry calls ``update_idletasks`` while
+        # it attaches), so this handler can run while half the pages are still
+        # being built. Latching the open size then would record a size from a
+        # half-built window and open the app that small; __init__ latches it
+        # after the last page exists.
+        if self._opened_size_held:
+            self._hold_opened_size()
         pane = self._editor_pane
         try:
             pane.update_idletasks()
@@ -4400,9 +5605,9 @@ class SaladStudio(tk.Tk):
     def _lift_editor_soon(self) -> None:
         self._lift_editor_over_webview()
         try:
-            self.after_idle(self._lift_editor_over_webview)
-            self.after(50, self._lift_editor_over_webview)
-            self.after(200, self._lift_editor_over_webview)
+            self._later_idle(self._lift_editor_over_webview)
+            self._later(50, self._lift_editor_over_webview)
+            self._later(200, self._lift_editor_over_webview)
         except tk.TclError:
             pass
 
@@ -4474,7 +5679,7 @@ class SaladStudio(tk.Tk):
                 self.after_cancel(self._json_after)
             except Exception:
                 pass
-        self._json_after = self.after(
+        self._json_after = self._later(
             60, lambda: self._apply_json_chrome(refresh_graph=refresh_graph)
         )
 
@@ -4604,19 +5809,48 @@ class SaladStudio(tk.Tk):
             return list(stored.checkpoints)
         return profiles.seed_checkpoints(name)
 
+    @staticmethod
+    def _whole_number(field: str, raw: str, default: int) -> int:
+        """One whole-number knob off the form, refusing with the knob's own name.
+
+        ``int()`` names the literal it was handed and nothing else, so a typo in
+        one of the five numeric fields reached the user as the interpreter's
+        words with no way to tell which knob to fix. The field's name goes into
+        the sentence instead, and an empty knob still takes the default.
+        """
+        text = str(raw or "").strip()
+        if not text:
+            return default
+        try:
+            return int(text)
+        except ValueError:
+            raise ValueError(f"{field} must be a whole number (got {text!r})") from None
+
+    @staticmethod
+    def _number(field: str, raw: str, default: float) -> float:
+        """One decimal knob off the form, refusing with the knob's own name."""
+        text = str(raw or "").strip()
+        if not text:
+            return default
+        try:
+            return float(text)
+        except ValueError:
+            raise ValueError(f"{field} must be a number (got {text!r})") from None
+
     def _profile_from_form(self) -> SaladProfile:
         name = (self.var_name.get() or "klein").strip()
         selected = self._selected_lora_ids()
         return SaladProfile(
             name=name,
             gateway=self.var_gateway.get().strip(),
+            mode=self._profile_mode(),
             key_path=profiles.DEFAULT_KEY_PATH,
             graph=lora_store.graph_id(self.var_graph.get()),
-            width=int(self.var_width.get() or 1024),
-            height=int(self.var_height.get() or 1024),
-            steps=int(self.var_steps.get() or 20),
-            cfg=float(self.var_cfg.get() or 5),
-            seed=int(float(self.var_seed.get() or 1)),
+            width=self._whole_number("Width", self.var_width.get(), 1024),
+            height=self._whole_number("Height", self.var_height.get(), 1024),
+            steps=self._whole_number("Steps", self.var_steps.get(), 20),
+            cfg=self._number("CFG", self.var_cfg.get(), 5),
+            seed=int(self._number("Seed", self.var_seed.get(), 1)),
             scheduler=self._scheduler_id(),
             checkpoints=self._form_checkpoints(name),
             use_loras=bool(selected),
@@ -4630,6 +5864,10 @@ class SaladStudio(tk.Tk):
             self._set_selected_lora_ids(list(p.selected_loras))
             self.var_name.set(p.name)
             self.var_gateway.set(p.gateway)
+            mode = p.mode if p.mode in hostings.BY_KEY else hostings.DEFAULT
+            self.var_profile_mode.set(mode)
+            self._sync_hosting_controls(mode)
+            self._repair_hosting_url(mode)
             self.var_width.set(str(p.width))
             self.var_height.set(str(p.height))
             self.var_steps.set(str(p.steps))
@@ -4690,6 +5928,14 @@ class SaladStudio(tk.Tk):
         self._refresh_checkpoint_list(prof)
         self._show_policy(self._policy_for_display(prof))
         self._recheck_policy(prof)
+        mode = prof.mode if prof.mode in hostings.BY_KEY else hostings.DEFAULT
+        self.var_profile_mode.set(mode)
+        self._sync_hosting_controls(mode)
+        if prof.gateway:
+            # The target belongs to the profile, not to the window. A restored URL
+            # from before the target changed would pair a vast mode with a Salad
+            # gateway, and the press would POST the graph to the wrong host.
+            self.var_gateway.set(prof.gateway)
 
     def _on_select_profile(self) -> None:
         name = self.var_name.get().strip()
@@ -4719,6 +5965,21 @@ class SaladStudio(tk.Tk):
     def _delete_profile(self) -> None:
         name = self.var_name.get().strip()
         if not name:
+            return
+        # A delete this destructive asks first, the way the Catalog's Delete and
+        # Clean gallery do, and it reports what it actually did: the button is one
+        # click away from losing a saved gateway, its checkpoints and its policy.
+        if name not in profiles.load_all():
+            self.status.set(f"No saved profile named {name}")
+            self.log("warn", f"no saved profile named {name}; nothing was deleted")
+            return
+        if not messagebox.askyesno(
+            "Salad Studio",
+            f"Delete the saved profile {name!r}?\n\nIts gateway, checkpoints and "
+            "policy are removed, and this cannot be undone.",
+        ):
+            self.status.set(f"Kept {name}")
+            self.log("info", f"kept profile {name}")
             return
         profiles.delete(name)
         remaining = profiles.load_all()
@@ -4790,24 +6051,38 @@ class SaladStudio(tk.Tk):
             messagebox.showerror("Salad Studio", str(e))
 
     def _on_generate(self) -> None:
-        """Generate: Salad profiles, or a vast.ai instance, per the config page."""
-        if self.gen_mode() == vast.MODE_VAST:
-            self._on_generate_vast()
-            return
-        # No early return on a render already in flight: the press is queued and
-        # starts when the container is free, which is what salad_queue is for.
+        """Generate: parse the editor JSON, then dispatch on the profile's hosting."""
         raw = self.editor_text.get("1.0", "end").strip()
         try:
             payload = generator.parse_request_json(raw)
         except (ValueError, json.JSONDecodeError) as e:
+            # Every refusal writes the status line as well as the dialog: the
+            # dialog is dismissed, the status line stays, and a stale "Generating…"
+            # beside a refused press is the surface that lies.
+            self.status.set("Refused: the Prompt Editor JSON is invalid")
             self.log("error", f"Generate aborted: invalid JSON: {e}")
             messagebox.showerror("Salad Studio", f"Prompt Editor JSON is invalid: {e}")
             return
         try:
             p = self._profile_from_form()
         except ValueError as e:
+            self.status.set(f"Refused: {e}")
+            self.log("error", f"Generate aborted: {e}")
             messagebox.showerror("Salad Studio", str(e))
             return
+        adapter = hostings.BY_KEY.get(p.mode)
+        if adapter is None:
+            note = f"Refused: unknown hosting {p.mode!r}"
+            self.status.set(note)
+            self.log("error", note)
+            messagebox.showerror("Salad Studio", note)
+            return
+        adapter(self).generate(payload, p)
+
+    def _generate_salad(self, payload: dict, p: SaladProfile) -> None:
+        """Salad half of Generate: route, key, badge gate, then queue the POST."""
+        # No early return on a render already in flight: the press is queued and
+        # starts when the container is free, which is what salad_queue is for.
         # Route by the unet the graph loads. One container group serves one unet
         # family: a second ~9 GB unet cannot fit in VRAM beside the 8.66 GB text
         # encoder, so Comfy streams weights from host memory and a seconds-long
@@ -4826,6 +6101,7 @@ class SaladStudio(tk.Tk):
             allp = {}
         route, refusal = profiles.plan_route(payload, p, allp)
         if refusal:
+            self.status.set(f"Refused: {refusal}")
             self.log("error", f"Generate blocked: {refusal}")
             messagebox.showerror("Salad Studio", refusal)
             return
@@ -4837,32 +6113,59 @@ class SaladStudio(tk.Tk):
                 f"This graph loads {loaded[0]}, so it belongs on the {route.family} "
                 f"group{note}.",
             )
+            mixed = profiles.mixed_family_reason(route.profile)
+            if mixed:
+                self.log("warn", mixed)
             p = route.profile
+        if (p.gateway or "").strip() in self._vast_endpoints():
+            note = (
+                "Refused: the Salad target holds a vast.ai instance URL, so the "
+                "Salad key would be sent to that machine. Pick the Salad gateway "
+                "on the Config page, then Generate again."
+            )
+            self.status.set(note)
+            self.log("error", note)
+            messagebox.showerror("Salad Studio", note)
+            return
         try:
             key = self._salad_api_key()
         except (OSError, FileNotFoundError) as e:
-            messagebox.showerror("Salad Studio", f"Cannot read Salad API key: {e}")
+            note = f"Refused: {e}"
+            self.status.set(note)
+            self.log("error", note)
+            messagebox.showerror("Salad Studio", note)
             return
         if not p.gateway:
-            self.log("error", "Generate aborted: gateway URL is empty")
-            messagebox.showerror("Salad Studio", "Gateway URL is empty.")
+            note = "Refused: the gateway URL is empty"
+            self.status.set(note)
+            self.log("error", note)
+            messagebox.showerror("Salad Studio", note)
             return
         word = (self.var_salad_status.get() or "").strip()
         if (word or "").split()[:1] != ["Ready"]:
-            # A stopped group is not a reason to refuse: the queue starts the
-            # container this request routes to and the generator waits for its
-            # /ready before it POSTs. Only a replica that is gone is refused,
-            # with the badge's own reason (salad_status owns that vocabulary).
+            # The press is the gate for the two states that cannot render: a
+            # replica that is gone, and a group the badge says is stopped, which
+            # the queue would refuse anyway (this app never starts a container).
+            # Both are refused here, with the reason, before anything is queued.
+            # A replica that is still coming up is dispatched: the queue reads
+            # the group's state again and the generator waits for its /ready.
             snap = (getattr(self, "_last_snaps", None) or {}).get(p.name) or {}
-            reason = salad_status.generate_dispatch_reason(snap, word=word)
+            reason = salad_status.generate_dispatch_reason(
+                snap, word=word, profile=p.name, gateway=p.gateway
+            )
             if reason:
-                self.log("warn", f"Generate blocked: {reason}")
+                # Probe once, the way the queue's own refusal path does: the badge
+                # is up to a tick old, so a user who has just started the
+                # container would otherwise be refused again on the next press.
+                self._check_salad_status(silent=True)
+                self.log("warn", f"Generate refused: {reason}")
+                self.status.set(f"Refused: {reason}")
                 messagebox.showinfo("Salad Studio", reason)
                 return
             self.log(
                 "info",
-                f"{p.name} reads {word or 'unknown'}; the queue starts it if it is "
-                "stopped and waits for it to become ready",
+                f"{p.name} reads {word or 'unknown'}; the request waits for the "
+                "container's /ready before it POSTs",
             )
         # A press that repeats the request at the head of the queue adds nothing:
         # that one is about to be submitted (or is being submitted) already. The
@@ -4896,6 +6199,7 @@ class SaladStudio(tk.Tk):
 
         def work() -> None:
             err = ""
+            refused = ""
             out: Path | None = None
             try:
                 out = generator.generate_from_payload(
@@ -4908,6 +6212,12 @@ class SaladStudio(tk.Tk):
                     line=p.name,
                     checksum=digest,
                 )
+            except generator.ContainerDown as e:
+                # The group went down between the badge read and the dispatch, so
+                # the queue refused the request before any POST. Its own line in
+                # the Logs already carries this sentence; the press reports it
+                # without repeating it, and without calling it a failed render.
+                refused = str(e)
             except Exception as e:
                 err = str(e)
                 self.log("error", err)
@@ -4915,7 +6225,12 @@ class SaladStudio(tk.Tk):
             def done() -> None:
                 self._gen_jobs = max(0, self._gen_jobs - 1)
                 elapsed = max(0, int(time.monotonic() - self._gen_t0))
-                if err:
+                if refused:
+                    self._check_salad_status(silent=True)
+                    self.var_gen_state.set("Refused")
+                    self.status.set(f"Refused: {refused}")
+                    messagebox.showinfo("Salad Studio", refused)
+                elif err:
                     # Probe rather than re-apply the cached word. A failed render
                     # usually means the replica went away mid-job, and the cache
                     # still says Ready from before it did, which is how the app
@@ -4942,39 +6257,119 @@ class SaladStudio(tk.Tk):
                     self.var_gen_state.set(f"{self._gen_jobs} render(s) still queued")
                 self._refresh_queue_page()
 
-            self.after(0, done)
+            self._later(0, done)
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _on_generate_vast(self) -> None:
-        """Generate against the selected vast.ai instance.
+    def _on_generate_vast(self, payload=None, p: SaladProfile | None = None) -> None:
+        """Generate against the profile's vast.ai URL, or the selected instance.
 
         The vast half of the press: the same editor JSON, POSTed to the
-        instance's own ComfyUI instead of a Salad gateway. No Salad queue line
-        is involved, because the instance is the user's own machine rather than
-        a container this app shares and serializes; the press runs one worker
-        and reports its outcome the way the Salad path does. The key is not
-        required here: it authenticates the vast.ai control API (the Vast.ai
-        tab's listing and the Tokens tab's check), while the render goes
+        instance's own ComfyUI instead of a Salad gateway. Unet routing, the
+        Salad key, the badge gate and the container checks are Salad's; this
+        path skips them. The POST still goes through the queue on this
+        profile's line, so the request appears on the Queue page and a busy
+        instance is retried there. The key is not required here: it
+        authenticates the vast.ai control API (the Config page's Vast.ai
+        instances section and the Tokens tab's check), while the render goes
         straight to the instance.
         """
-        raw = self.editor_text.get("1.0", "end").strip()
-        try:
-            payload = generator.parse_request_json(raw)
-        except (ValueError, json.JSONDecodeError) as e:
-            self.log("error", f"Generate aborted: invalid JSON: {e}")
-            messagebox.showerror("Salad Studio", f"Prompt Editor JSON is invalid: {e}")
-            return
+        if payload is None:
+            raw = self.editor_text.get("1.0", "end").strip()
+            try:
+                payload = generator.parse_request_json(raw)
+            except (ValueError, json.JSONDecodeError) as e:
+                # Both refusals write the status line as well as the dialog, the way
+                # the Salad path does: the dialog is dismissed, the status line
+                # stays, and a stale "Wrote …" beside a refused press is the surface
+                # that lies.
+                self.status.set("Refused: the Prompt Editor JSON is invalid")
+                self.log("error", f"Generate aborted: invalid JSON: {e}")
+                messagebox.showerror("Salad Studio", f"Prompt Editor JSON is invalid: {e}")
+                return
+        if p is None:
+            try:
+                p = self._profile_from_form()
+            except ValueError as e:
+                self.status.set(f"Refused: {e}")
+                self.log("error", f"Generate aborted: {e}")
+                messagebox.showerror("Salad Studio", str(e))
+                return
+        endpoint = (p.gateway or "").strip()
         row = self._vast_active()
-        if row is None:
-            self.log("error", "Generate aborted: no vast.ai instance is selected")
-            messagebox.showinfo(
-                "Salad Studio",
-                "No vast.ai instance is selected. Add one under Vast.ai instances "
-                "on the Config page and select it, then Generate again.",
+        if not endpoint:
+            if row is None:
+                self.status.set("Refused: no vast.ai instance is selected")
+                self.log("error", "Generate aborted: no vast.ai instance is selected")
+                messagebox.showinfo(
+                    "Salad Studio",
+                    "No vast.ai instance is selected. Add one under Vast.ai instances "
+                    "on the Config page and select it, then Generate again.",
+                )
+                return
+            endpoint = str(row["endpoint"])
+            self.log(
+                "info",
+                f"profile {p.name} has no instance URL; using the selected "
+                f"{vast.row_label(row)}",
             )
+        if self._is_salad_gateway(endpoint):
+            note = (
+                "Refused: the vast.ai target holds a Salad gateway URL, so the "
+                "graph would go to the wrong host. Pick the instance on the "
+                "Config page, then Generate again."
+            )
+            self.status.set(note)
+            self.log("error", note)
+            messagebox.showerror("Salad Studio", note)
             return
-        endpoint = str(row["endpoint"])
+        digest = salad_queue.request_checksum(payload)
+        head = self.gen_queue.duplicate_of_head(line=p.name, checksum=digest)
+        if head is not None:
+            note = self._duplicate_note(head)
+            self.log("warn", f"Generate: {note}")
+            self.status.set(note)
+            return
+        who = vast.row_label(row) if row is not None else endpoint
+        replace_policy = (
+            self._vast_replace_settings() if self._profile_mode() == "vast" else {}
+        )
+        replacing = bool(replace_policy.get("enabled"))
+        pending_contract = (self._vast_doc.get("pending") or {}).get("contract")
+        replace_key = ""
+        replace_env = ""
+        replace_image = ""
+        replace_label = ""
+        if replacing:
+            if getattr(self, "_vast_replace_busy", False):
+                note = "Refused: a replacement check is already running"
+                self.status.set(note)
+                self.log("warn", note)
+                return
+            replace_key = tokens.read_token("vast")
+            replace_image = str((row or {}).get("image") or "").strip()
+            if not replace_image:
+                try:
+                    replace_image = profiles.policy_image_for(p)
+                except Exception:  # noqa: BLE001 - a broken document is not a crash
+                    replace_image = ""
+            if not replace_key or not replace_image:
+                note = (
+                    "Refused: automatic replacement needs the Vast.ai key and an "
+                    "image. Set both, then Generate again."
+                )
+                self.status.set(note)
+                self.log("error", note)
+                messagebox.showerror("Salad Studio", note)
+                return
+            replace_env = vast.replacement_env(
+                hf_token=tokens.read_token("huggingface"),
+                civitai_token=tokens.read_token("civitai"),
+            )
+            replace_label = str((row or {}).get("label") or "").strip() or (
+                f"salad-studio-{p.name}"
+            )
+            self._vast_replace_busy = True
         self._gen_jobs += 1
         first = self._gen_jobs == 1
         self._busy = True
@@ -4985,27 +6380,63 @@ class SaladStudio(tk.Tk):
         self.status.set("Generating…")
         self._schedule_gen_tick()
         self._remember_request(payload)
-        self.log("info", f"Generate  vast.ai {endpoint}  {vast.row_label(row)}")
+        self.log("info", f"Generate  vast.ai {endpoint}  {who}")
         self.log("debug", studio_log.summarize_payload(payload))
 
         def work() -> None:
+            nonlocal endpoint
             err = ""
+            stop = ""
             out: Path | None = None
-            try:
-                out = generator.generate_from_vast(
-                    endpoint=endpoint,
-                    payload=payload,
-                    out_dir=OUT_DIR,
-                    on_log=self.log,
-                )
-            except Exception as e:
-                err = str(e)
-                self.log("error", err)
+            if replacing:
+                self._later(0, lambda: self.var_gen_state.set("Checking instance."))
+                try:
+                    result = vast.replace_destroyed(
+                        key=replace_key,
+                        endpoint=endpoint,
+                        instance_id=(row or {}).get("id") or pending_contract,
+                        image=replace_image,
+                        settings=replace_policy,
+                        label=replace_label,
+                        env=replace_env,
+                    )
+                except Exception as e:  # noqa: BLE001 - end the press, not the app
+                    result = {"action": "error", "message": f"{type(e).__name__}: {e}"}
+                action = str(result.get("action") or "")
+                self._later(0, lambda: self._apply_vast_replace(result, row))
+                if action == "alive":
+                    endpoint = str(
+                        (result.get("row") or {}).get("endpoint") or endpoint
+                    )
+                elif action == "created":
+                    stop = str(result.get("message") or "") + (
+                        " Generate again when it is ready."
+                    )
+                else:
+                    err = str(result.get("message") or "the instance check failed")
+            if not err and not stop:
+                try:
+                    out = generator.generate_from_vast(
+                        endpoint=endpoint,
+                        payload=payload,
+                        out_dir=OUT_DIR,
+                        on_log=self.log,
+                        queue=self.gen_queue,
+                        line=p.name,
+                        checksum=digest,
+                    )
+                except Exception as e:
+                    err = str(e)
+                    self.log("error", err)
 
             def done() -> None:
                 self._gen_jobs = max(0, self._gen_jobs - 1)
                 elapsed = max(0, int(time.monotonic() - self._gen_t0))
-                if err:
+                if stop:
+                    self.var_gen_state.set("Replacement created")
+                    self.status.set(stop)
+                    self.log("info", stop)
+                elif err:
                     self.var_gen_state.set(f"Failed after {elapsed}s")
                     self.status.set("Failed. See Logs")
                     messagebox.showerror("Salad Studio", err)
@@ -5020,13 +6451,16 @@ class SaladStudio(tk.Tk):
                             self.log("warn", f"history thumb skipped: {e}")
                         self._refresh_prompt_history()
                     self._refresh_history()
+                if replacing:
+                    self._vast_replace_busy = False
                 if self._gen_jobs <= 0:
                     self._busy = False
                     self._cancel_gen_tick()
                 else:
                     self.var_gen_state.set(f"{self._gen_jobs} render(s) still queued")
+                self._refresh_queue_page()
 
-            self.after(0, done)
+            self._later(0, done)
 
         threading.Thread(target=work, daemon=True).start()
 

@@ -165,8 +165,10 @@ class FamiliesFromMetadataTest(unittest.TestCase):
         doc = meta.load(path=self._write(_document(snofs_unets=[])))
         self.assertEqual(profiles.seed_checkpoints("klein5090", doc), [])
         # ... and such a profile is then routable for nothing until one is added.
-        empty = profiles.SaladProfile(name="klein5090")
-        self.assertEqual(profiles.route_payload(self._graph(SNOFS_UNET), {"klein5090": empty}), None)
+        empty = profiles.SaladProfile(name="klein5090", gateway="https://empty.example/")
+        route, refusal = profiles.plan_route(self._graph(SNOFS_UNET), empty, {"klein5090": empty})
+        self.assertIsNone(route)
+        self.assertIn("No profile lists", refusal)
 
     @staticmethod
     def _graph(unet: str) -> dict:

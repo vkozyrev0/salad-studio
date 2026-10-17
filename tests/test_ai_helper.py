@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import base64
 import http.server
+import inspect
 import io
 import json
 import socket
 import sys
 import tempfile
+import textwrap
 import threading
 import unittest
 from pathlib import Path
@@ -27,6 +29,48 @@ for p in (str(TOOLS), str(PKG)):
 
 from salad_studio import ai_helper as ai  # noqa: E402
 from salad_studio import tokens as tok  # noqa: E402
+
+
+def _old_form(func, edits: list[tuple[str, str]]):
+    """The shipped function with a pass's fix undone: the old form, rebuilt.
+
+    ``edits`` are (shipped text, the text it replaced) pairs, applied to the
+    source ``inspect.getsource`` returns. The old behaviour is therefore rebuilt
+    from the shipped file rather than copied into a literal that could drift
+    away from it, and a test can drive both to show what the fix changed.
+    """
+    source = textwrap.dedent(inspect.getsource(func))
+    for new, old in edits:
+        assert new in source, f"{func.__name__} no longer holds {new!r}"
+        source = source.replace(new, old, 1)
+    namespace: dict = {}
+    exec(compile(source, f"<old {func.__name__}>", "exec"), func.__globals__, namespace)
+    return namespace[func.__name__]
+
+
+# `_collect`'s last round always raised, so the trailing return was unreachable
+# and the stitched text never reached the parser.
+_COLLECT_EDITS = [
+    (
+        (
+            "        if round_no < attempts:\n"
+            "            payload = _continuation_payload(payload, text)\n"
+            "    # The budget is spent with the reply still cut: fall out and return what was\n"
+            "    # stitched. The parser scores every complete object in it, so a reply the\n"
+            "    # model restarted after the cut is still recovered rather than discarded.\n"
+        ),
+        (
+            "        if round_no == attempts:\n"
+            "            raise AiError(\n"
+            '                f"{who} kept hitting the output-token limit after "\n'
+            '                f"{round_no} continuation(s), so the reply never finished. "\n'
+            '                "Shorten the context (the request JSON and the prompts) or raise "\n'
+            '                "max_tokens, then press Help again."\n'
+            "            )\n"
+            "        payload = _continuation_payload(payload, text)\n"
+        ),
+    ),
+]
 
 STORED_KEY = "ds-test-key-abcdef123456"
 
@@ -205,7 +249,7 @@ class IssueAndImage(unittest.TestCase):
         """The standing instruction, not just the per-press context.
 
         The rules live in the metadata document (origin:
-        docs/workflow/19-two-body-prompt-playbook.md); a rewrite that loses them
+        docs/workflow/21-klein-image-handoff.md); a rewrite that loses them
         goes back to prompts that omit the act. test_studio_meta.py drives the
         document side of the same contract.
         """
@@ -547,11 +591,13 @@ class LocalBackend(unittest.TestCase):
             ai.help_with_prompts_local(url="localhost:1234", send=send, **INPUTS)
         self.assertIn("no message content", str(ctx.exception))
 
-    def test_fetch_local_models_tolerates_a_broken_server(self) -> None:
-        self.assertEqual(ai.fetch_local_models("http://x/v1", send=LocalSend(offline=True)), [])
-        self.assertEqual(ai.fetch_local_models("http://x/v1", send=LocalSend(models_status=500)), [])
+    def test_local_models_tolerates_a_broken_server(self) -> None:
+        """The one call the page makes: [] when the server cannot answer."""
+        self.assertEqual(ai.local_models("http://x/v1", send=LocalSend(offline=True)), [])
+        self.assertEqual(ai.local_models("http://x/v1", send=LocalSend(models_status=500)), [])
         self.assertEqual(
-            ai.fetch_local_models("http://x/v1", send=LocalSend(models=("a", "b"))), ["a", "b"]
+            [row["id"] for row in ai.local_models("http://x/v1", send=LocalSend(models=("a", "b")))],
+            ["a", "b"],
         )
 
 
@@ -599,10 +645,11 @@ class ReplyParsing(unittest.TestCase):
         with self.assertRaises(ai.ReplyError):
             ai.parse_reply("   ")
 
-    def test_content_of_reads_the_chat_completions_shape(self) -> None:
-        self.assertEqual(ai.content_of(_reply_body("hello")), "hello")
-        self.assertEqual(ai.content_of(b"not json"), "")
-        self.assertEqual(ai.content_of(json.dumps({"choices": []}).encode()), "")
+    def test_reply_info_reads_the_chat_completions_shape(self) -> None:
+        """The shipped reader of a reply body: content, and nothing for a non-reply."""
+        self.assertEqual(ai.reply_info(_reply_body("hello"))["content"], "hello")
+        self.assertEqual(ai.reply_info(b"not json")["content"], "")
+        self.assertEqual(ai.reply_info(json.dumps({"choices": []}).encode())["content"], "")
 
     def test_parse_reply_full_reads_the_issue_field(self) -> None:
         out = ai.parse_reply_full(
@@ -748,9 +795,66 @@ class ACutOffReplyIsContinued(unittest.TestCase):
 
     def test_a_still_cut_reply_is_reported_rather_than_accepted(self) -> None:
         send = ScriptedSend(_reply_body_full('{"positive": "a', finish="length"))
-        with self.assertRaises(ai.AiError) as ctx:
+        with self.assertRaises(ai.ReplyError) as ctx:
             ai.help_with_prompts(STORED_KEY, send=send, **INPUTS)
+        self.assertEqual(len(send.requests), 1 + ai.CONTINUE_ATTEMPTS)
+        self.assertEqual(
+            ctx.exception.raw,
+            '{"positive": "a' * (1 + ai.CONTINUE_ATTEMPTS),
+            "the whole stitched fragment reaches the parser instead of being dropped",
+        )
+
+    def test_an_exhausted_budget_returns_the_stitched_text(self) -> None:
+        """The trailing return was unreachable: the last round always raised.
+
+        A budget spent with the reply still cut now hands the stitched text to
+        the parser, which scores every complete object in it — so a reply the
+        model restarted after the cut is recovered rather than discarded. The
+        old form, rebuilt from the shipped source, raises and loses the text.
+        """
+        body = _reply_body_full('{"positive": "a', finish="length")
+        call = {
+            "make_request": lambda payload: ai.request_for(STORED_KEY, payload),
+            "timeout": ai.TIMEOUT_S,
+            "who": "DeepSeek",
+            "status_error": lambda status, _body: f"DeepSeek HTTP {status}",
+        }
+
+        old = _old_form(ai._collect, _COLLECT_EDITS)
+        with self.assertRaises(ai.AiError) as ctx:
+            old({"model": ai.MODEL, "messages": []}, sender=ScriptedSend(body), **call)
         self.assertIn("output-token limit", str(ctx.exception))
+
+        send = ScriptedSend(body)
+        text, continuations, info = ai._collect(
+            {"model": ai.MODEL, "messages": []}, sender=send, **call
+        )
+        self.assertEqual(continuations, ai.CONTINUE_ATTEMPTS)
+        self.assertEqual(text, '{"positive": "a' * (1 + ai.CONTINUE_ATTEMPTS))
+        self.assertEqual(len(send.requests), 1 + ai.CONTINUE_ATTEMPTS)
+        self.assertTrue(info["truncated"])
+
+    def test_a_cut_reply_the_model_restarted_is_still_recovered(self) -> None:
+        """Why returning the fragment is not a loss: the parser still wins.
+
+        The continuation restarts the object instead of resuming it, so the
+        stitched text carries a complete one. The old form raised before the
+        parser ever saw it; the new form returns the answer.
+        """
+        send = ScriptedSend(
+            _reply_body_full(
+                '{"issue": "head missing", "positive": "a prompt the limit cut',
+                finish="length",
+            ),
+            _reply_body_full(
+                '{"issue": "head missing", "positive": "REAL POSITIVE", '
+                '"negative": "REAL NEGATIVE"}',
+                finish="length",
+            ),
+        )
+        out = ai.help_with_prompts(STORED_KEY, send=send, **INPUTS)
+        self.assertEqual(out["positive"], "REAL POSITIVE")
+        self.assertEqual(out["negative"], "REAL NEGATIVE")
         self.assertEqual(len(send.requests), 1 + ai.CONTINUE_ATTEMPTS)
 
     def test_a_trace_that_ate_the_budget_demands_the_answer(self) -> None:
@@ -804,7 +908,7 @@ class AStreamedBodyIsAssembled(unittest.TestCase):
 
     def test_the_frames_add_up_to_the_whole_reply(self) -> None:
         body = self._stream()
-        self.assertEqual(ai.content_of(body), '{"positive": "P", "negative": "N"}')
+        self.assertEqual(ai.reply_info(body)["content"], '{"positive": "P", "negative": "N"}')
 
         send = ScriptedSend(body)
         out = ai.help_with_prompts(STORED_KEY, send=send, **INPUTS)

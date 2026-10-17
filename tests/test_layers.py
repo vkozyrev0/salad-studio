@@ -65,9 +65,9 @@ print(f"logging: {line.strip()} | {explained[:60]}")
 
 # --- Salad communication layer: route a graph, queue a request -----------
 doc = studio_meta.load()
-family = studio_meta.family_for_unet(profiles.SNOFS_UNET, doc)
+family = studio_meta.family_for_unet(request_json.UNET_SNOFS, doc)
 seed = profiles.seed_checkpoints("klein5090", doc)
-assert family == "snofs" and seed == [profiles.SNOFS_UNET], (family, seed)
+assert family == "snofs" and seed == [request_json.UNET_SNOFS], (family, seed)
 line_q = salad_queue.SaladQueue(sleep=lambda _s: None, now=lambda: 0.0)
 job = line_q.deliver(
     {"url": "https://example.salad.test/prompt"},
@@ -76,7 +76,7 @@ job = line_q.deliver(
 )
 assert job.state == salad_queue.ACCEPTED, job.state
 print(
-    f"salad: {profiles.SNOFS_UNET} -> {family}, "
+    f"salad: {request_json.UNET_SNOFS} -> {family}, "
     f"profile klein5090 serves {len(seed)} checkpoint(s), queued job {job.state}"
 )
 

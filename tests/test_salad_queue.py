@@ -7,8 +7,10 @@ outcome is asserted on the queue's own recorded job, not on log text.
 from __future__ import annotations
 
 import base64
+import inspect
 import json
 import sys
+import textwrap
 import threading
 import time
 import unittest
@@ -25,6 +27,41 @@ for _p in (PKG, HERE.parent):
 import generator  # noqa: E402
 import salad_queue as q  # noqa: E402
 import studio_meta  # noqa: E402
+
+
+def _old_form(func, edits: list[tuple[str, str]]):
+    """The shipped function with a pass's fix undone: the old form, rebuilt.
+
+    ``edits`` are (shipped text, the text it replaced) pairs, applied to the
+    source ``inspect.getsource`` returns. The old behaviour is therefore rebuilt
+    from the shipped file rather than copied into a literal that could drift
+    away from it, and a test can drive both to show what the fix changed.
+    """
+    source = textwrap.dedent(inspect.getsource(func))
+    for new, old in edits:
+        assert new in source, f"{func.__name__} no longer holds {new!r}"
+        source = source.replace(new, old, 1)
+    namespace: dict = {}
+    exec(compile(source, f"<old {func.__name__}>", "exec"), func.__globals__, namespace)
+    return namespace[func.__name__]
+
+
+# `_run`'s last iteration took FAIL, which returned before the tail, so the
+# "gave up after N attempts" reason never recorded. `_old_form` dedents the
+# source, so a method body starts at four spaces.
+_RUN_EDITS = [
+    (
+        (
+            "            if job.outcome == BUSY:\n"
+            "                # The attempts are spent with the container still busy, so\n"
+            "                # there is no retry left: fall out for the tail below, which\n"
+            "                # records why the job gave up. A definitive failure keeps\n"
+            "                # its own reason and returns here.\n"
+            "                break\n"
+        ),
+        "",
+    ),
+]
 
 
 class ClassifyTest(unittest.TestCase):
@@ -270,6 +307,37 @@ class ClassificationTest(unittest.TestCase):
         self.assertEqual(len(calls), 3)
         self.assertEqual(gate.slept, [8, 8])
 
+    def test_a_job_that_exhausts_its_attempts_records_the_gave_up_reason(self) -> None:
+        """The "gave up after N attempts" tail was unreachable.
+
+        `next_action` returns RETRY only while attempts remain, so the final
+        iteration took FAIL and returned with the server's own words before the
+        tail ran. The exhausted-busy case falls out of the loop now, and the old
+        form is rebuilt to show what the job used to record.
+        """
+        calls: list[int] = []
+
+        def transport(_request):
+            calls.append(1)
+            return q.Attempt(status=503, body=b'{"title": "unavailable"}')
+
+        old = _old_form(q.SaladQueue._run, _RUN_EDITS)
+        reasons: list[str] = []
+        for run in (old, q.SaladQueue._run):
+            calls.clear()
+            with patch.object(q.SaladQueue, "_run", run):
+                line, gate, _logs = _queue(transport, max_attempts=3)
+                job = line.deliver({"id": 1}, transport)
+            self.assertEqual(job.state, q.FAILED)
+            self.assertEqual(job.attempts, 3)
+            self.assertEqual(len(calls), 3)
+            self.assertEqual(gate.slept, [8, 8], "the last attempt is not slept on")
+            reasons.append(job.reason)
+
+        old_reason, new_reason = reasons
+        self.assertEqual(old_reason, "HTTP 503: unavailable")
+        self.assertEqual(new_reason, "gave up after 3 attempts")
+
 
 class ManagementTest(unittest.TestCase):
     """Cancel a job that has not been submitted, retry a failed one, clear the rest."""
@@ -480,6 +548,18 @@ class DuplicateGuardTest(unittest.TestCase):
             "the klein head is not the head of the snofs line",
         )
         self.assertIsNone(line.head_of("snofs"))
+
+    def test_deliver_with_a_gatewayless_request_does_not_adopt_the_line(self) -> None:
+        """A vast request carries no gateway; adopting it would idle-stop Salad."""
+        line, _gate, _logs = _queue()
+        job = line.deliver(
+            {"endpoint": "http://203.0.113.9:31234", "profile": "studio"},
+            lambda _job: q.Attempt(status=200, accepted=True, result="plate"),
+            line="studio",
+        )
+        self.assertEqual(job.state, q.ACCEPTED)
+        self.assertEqual(line.containers(), {}, "a gateway-less request owns no container")
+        self.assertEqual(line.records(), {})
 
 
 class PerProfileDispatchTest(unittest.TestCase):
@@ -909,6 +989,38 @@ class LifecycleIdleTest(unittest.TestCase):
         self._run_one(line2, gate=gate2)
         gate2.t += 46
         self.assertEqual(line2.idle_check(), [])
+
+    def test_a_timeout_written_onto_the_queue_is_the_one_it_reads(self) -> None:
+        """``idle_timeout_s()`` reads the queue's own ``_idle_stop_s``.
+
+        The window's tests hold the app's queue and set its timeout on the
+        object. A write to any other name is dead, and the shipped document's
+        own hour is the same number the tests wrote, so a dead write looks
+        right until the document says otherwise.
+        """
+        life = _FakeLifecycle({"klein": True})
+        with TemporaryDirectory() as td:
+            path = Path(td) / "studio-metadata.json"
+            path.write_text(json.dumps({"queue": {"idle_stop_s": 45}}), encoding="utf-8")
+            line, gate, _logs = _queue(lifecycle=life, meta=studio_meta.load(path=path))
+            line._idle_stop_s = 3600
+            self.assertEqual(line.idle_timeout_s(), 3600, "the value written on the queue")
+            self._run_one(line, gate=gate)
+            gate.t += 46
+            self.assertEqual(line.idle_check(), [], "an hour has not passed")
+
+        # The name the window's tests used before this pass: read by nothing.
+        other = _FakeLifecycle({"klein": True})
+        with TemporaryDirectory() as td:
+            path = Path(td) / "studio-metadata.json"
+            path.write_text(json.dumps({"queue": {"idle_stop_s": 45}}), encoding="utf-8")
+            line2, _gate2, _logs2 = _queue(lifecycle=other, meta=studio_meta.load(path=path))
+            line2.idle_stop_s = 3600
+            self.assertEqual(
+                line2.idle_timeout_s(),
+                45,
+                "a write to `idle_stop_s` reaches no reader; the document still rules",
+            )
 
     def test_a_rejected_stop_is_reported_and_not_retried_immediately(self) -> None:
         life = _FakeLifecycle({"klein": True}, stop_code=500)
@@ -1424,6 +1536,32 @@ class FinishedRecordTest(unittest.TestCase):
         self.assertEqual(line.finished(), [])
         self.assertEqual(self._file_finished(), [], "the cleared history leaves the file")
 
+    def test_clear_finished_counts_a_row_kept_from_an_earlier_session(self) -> None:
+        """The page's count must include rows that only live in the ledger.
+
+        ``clear_finished`` counted terminal jobs in memory only, then emptied
+        the kept history, so the visible rows vanished and the status said 0.
+        """
+        q.save_ledger(
+            self.ledger,
+            {},
+            [
+                {
+                    "id": 41,
+                    "profile": "klein",
+                    "state": q.ACCEPTED,
+                    "status": 200,
+                    "reason": "",
+                    "finished_at": 900.0,
+                }
+            ],
+        )
+        line = self._queue()
+        self.assertEqual(len(line.finished()), 1)
+        self.assertEqual(line.clear_finished(), 1)
+        self.assertEqual(line.finished(), [])
+        self.assertEqual(self._file_finished(), [])
+
     def test_the_ownership_shape_is_unchanged(self) -> None:
         line = self._queue()
         self.gate.t = 12_000.0
@@ -1767,6 +1905,91 @@ class GeneratorThroughTheQueue(unittest.TestCase):
             [],
             "the queue never starts a container for a request",
         )
+
+
+class LockAndOrderDiscipline(unittest.TestCase):
+    """The queue's own locks stay out of Tk, and its order survives a retry."""
+
+    def test_the_queue_logs_outside_its_condition_lock(self) -> None:
+        """A log callback may marshal onto Tk, which can wait on this lock.
+
+        Calling it while ``_cond`` is held lets the main thread's queue refresh
+        deadlock the worker that holds the lock.
+        """
+        held: list[bool] = []
+        line = q.SaladQueue(
+            sleep=lambda _s: None,
+            now=lambda: 0.0,
+            max_attempts=1,
+            on_log=lambda _level, _message: held.append(line._cond.locked()),
+        )
+        failed = line.deliver({"id": 1}, lambda _job: q.Attempt(status=503), line="klein")
+        line.retry(failed)
+        self.assertTrue(held, "the queue must still log")
+        self.assertEqual(
+            [value for value in held if value], [], "no log call may run under _cond"
+        )
+
+    def test_a_retried_job_goes_to_the_back_of_the_line(self) -> None:
+        """The head is the next job in queue order, not the first ever submitted.
+
+        Before the order field, a failed A retried behind B still read as the
+        head, so a repeat press of B's request was accepted as a new render.
+        """
+        line, _gate, _logs = _queue()
+        first = line.enqueue(
+            {"id": 1}, lambda _job: q.Attempt(status=200, accepted=True), line="klein"
+        )
+        second = line.enqueue(
+            {"id": 2}, lambda _job: q.Attempt(status=200, accepted=True), line="klein"
+        )
+        first.state = q.FAILED
+        first.reason = "failed before"
+        line.retry(first)
+        self.assertIs(line.head_of("klein"), second)
+        self.assertIs(line.duplicate_of_head({"id": 2}, line="klein"), second)
+
+    def test_concurrent_saves_never_publish_a_torn_ledger(self) -> None:
+        with TemporaryDirectory() as td:
+            target = Path(td) / "studio-queue.json"
+            payloads = [
+                {
+                    "containers": {
+                        f"line-{index}": {
+                            "gateway": "https://example.salad.test/" + "x" * 50000,
+                            "last_active": float(index),
+                            "started_by_app": True,
+                        }
+                    },
+                    "finished": [],
+                }
+                for index in range(8)
+            ]
+            errors: list[str] = []
+
+            def write(payload: dict) -> None:
+                for _ in range(10):
+                    reason = q.save_ledger(
+                        target, payload["containers"], payload["finished"]
+                    )
+                    if reason:
+                        errors.append(reason)
+
+            threads = [
+                threading.Thread(target=write, args=(payload,))
+                for payload in payloads
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            self.assertEqual(errors, [], "a save must not fail on a shared temp name")
+            data = json.loads(target.read_text(encoding="utf-8"))
+            self.assertIn(
+                data["containers"],
+                [payload["containers"] for payload in payloads],
+                "the published file must be one whole write",
+            )
 
 
 if __name__ == "__main__":

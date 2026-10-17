@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -544,7 +545,7 @@ class CivitaiImageHints(unittest.TestCase):
             "anima-preview-3-masterpieces-v5": {"version_id": 2905490},
         }
         tags = ci.resource_order_tags(item, hints)
-        assert tags is not None
+        self.assertIsNot(tags, None)
         names = [t["name"] for t in tags]
         self.assertEqual(
             names,
@@ -580,7 +581,7 @@ class DarkAtmospheric122279320(unittest.TestCase):
             "DarkAtmospheric01a_CE_FLUX2_Klein9b_AIT4k", hints
         )
         self.assertIsNotNone(hit)
-        assert hit is not None
+        self.assertIsNot(hit, None)
         self.assertEqual(int(hit["version_id"]), 2720915)
 
     def test_resolve_local_uses_unique_resource_hint(self) -> None:
@@ -761,7 +762,7 @@ class NonComfyResourceOrder(unittest.TestCase):
             if "Klein-Anime" in title:
                 last_klein = nid
         self.assertEqual(last_klein, "86")
-        self.assertTrue(any("ABKSK" in t for t in titles) or len(loaders) >= 8)
+        self.assertTrue(any("ABKSK" in t for t in titles), joined)
 
     def test_image_url_extract(self) -> None:
         self.assertEqual(
@@ -1416,7 +1417,8 @@ class DistilledKleinImport(unittest.TestCase):
         self.assertIn("197", prompt)
         self.assertEqual(prompt["197"]["class_type"], "ReferenceLatent")
         self.assertEqual(prompt["191"]["class_type"], "ConditioningZeroOut")
-        blob = "\n".join(ci.issues_from_pastes(DISTILLED_META, extra))
+        blocking, notes = ci.inspect_pastes(DISTILLED_META, extra)
+        blob = "\n".join(blocking + notes)
         self.assertIn("Warning:", blob)
         self.assertIn("ReferenceLatent", blob)
         self.assertNotIn("full_encoder_small_decoder", blob)
@@ -1470,7 +1472,8 @@ class DistilledKleinImport(unittest.TestCase):
         self.assertIn("CLIPTextEncode", pastes["workflow"])
 
     def test_stallion_paste_has_no_replica_issues(self) -> None:
-        issues = ci.issues_from_pastes("", json.dumps(WORKFLOW))
+        blocking, notes = ci.inspect_pastes("", json.dumps(WORKFLOW))
+        issues = blocking + notes
         self.assertFalse(any(i.startswith("Warning:") for i in issues))
         self.assertTrue(
             any("dropped MarkdownNote" in i for i in issues) or issues == []
@@ -2679,7 +2682,7 @@ class ArtificealFetch(unittest.TestCase):
         hints = ci.ls.lora_hints_from_generation(ci.ls.unwrap_image_generation(item))
         self.assertEqual(hints["Artificeal"]["version_id"], 3088444)
         tags = ci.resource_order_tags(item, hints)
-        assert tags is not None
+        self.assertIsNot(tags, None)
         self.assertEqual([t["name"] for t in tags], ["Artificeal"])
 
     def test_fetch_pastes_include_lora_when_trpc_fills_resources(self) -> None:
@@ -3745,6 +3748,83 @@ class CivitaiImage123550044Test(unittest.TestCase):
                 f"#{nid} would 500 on the replica: {name!r}",
             )
         self.assertEqual(len(kept), 1, f"only the resolvable LoRA survives: {kept}")
+
+
+class LocalLoraSearchIsConcurrent(unittest.TestCase):
+    """A graph's LoRA names are searched in one parallel Civitai pass.
+
+    The old ``resolve_local_lora_nodes`` called ``resolve_prompt_loras`` once per
+    node, and a one-name call builds a one-worker pool, so four names cost four
+    serial searches inside the press path (measured 1.21 s with a 0.3 s stub,
+    against 12.5-15.7 s per live Civitai search). This drives the shipped
+    function with a search stub that sleeps a fixed delay and requires the wall
+    time to stay under three delays.
+
+    The margin is safe because the only work besides the searches is a handful
+    of in-memory catalog lookups and four small extras writes: one parallel pass
+    costs about one delay, four serial passes cost about four, and three delays
+    sits well clear of both. A sleeping thread releases the GIL, so the pool
+    really overlaps the searches.
+    """
+
+    DELAY = 0.3
+    HIT = {
+        "page": "https://civitai.com/models/561940?modelVersionId=2760251",
+        "download": "https://civitai.com/api/download/models/2760251",
+        "filename": "ConcurrentProbe.safetensors",
+        "name": "Concurrency Probe",
+        "version_id": 2760251,
+        "version_name": "V01 - Flux.2 Klein 9b",
+        "verified": True,
+    }
+
+    def test_four_names_are_searched_in_one_pass(self) -> None:
+        names = [
+            f"ConcurrentProbe{i}_CE_FLUX2_Klein9b_AIT4k.safetensors"
+            for i in range(4)
+        ]
+        prompt = {
+            str(80 + i): {
+                "class_type": "LoraLoader",
+                "inputs": {
+                    "model": ["70", 0],
+                    "clip": ["71", 0],
+                    "lora_name": name,
+                    "strength_model": 1,
+                    "strength_clip": 1,
+                },
+            }
+            for i, name in enumerate(names)
+        }
+        seen: list[str] = []
+
+        def slow_search(query: str) -> dict:
+            seen.append(query)
+            time.sleep(self.DELAY)
+            return dict(self.HIT)
+
+        with tempfile.TemporaryDirectory() as td:
+            extras = Path(td) / "studio-loras.json"
+            with patch.object(ci.ls, "civitai_search_lora", side_effect=slow_search):
+                start = time.monotonic()
+                missing = ci.resolve_local_lora_nodes(prompt, extras_path=extras)
+                elapsed = time.monotonic() - start
+
+        self.assertEqual(len(seen), 4, f"every name must be searched once: {seen}")
+        self.assertEqual(missing, [], "every name resolved, so nothing is missing")
+        for i in range(4):
+            url = str(prompt[str(80 + i)]["inputs"]["lora_name"])
+            with self.subTest(node=80 + i):
+                self.assertIn("2760251", url)
+                self.assertTrue(
+                    url.lower().startswith(("http://", "https://")), url
+                )
+        self.assertLess(
+            elapsed,
+            self.DELAY * 3,
+            f"four names took {elapsed:.2f}s; one parallel pass is ~{self.DELAY}s, "
+            f"four serial passes are ~{self.DELAY * 4:.2f}s",
+        )
 
 
 if __name__ == "__main__":

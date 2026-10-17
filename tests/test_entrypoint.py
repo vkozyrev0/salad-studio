@@ -28,6 +28,23 @@ class ModuleEntryPoint(unittest.TestCase):
         self.assertTrue(callable(m.main))
         self.assertIs(m.main, app.main)
 
+    def test_the_apps_annotations_resolve(self) -> None:
+        """Every annotation names a real object, not a missing import.
+
+        ``Any`` was used at three sites without being imported; the deferred
+        annotations hid it until ``get_type_hints`` evaluated one.
+        """
+        import typing
+
+        import salad_studio.app as app
+
+        for name in ("queue_request_label", "SaladStudio._finished_label"):
+            with self.subTest(name=name):
+                obj = app
+                for part in name.split("."):
+                    obj = getattr(obj, part)
+                self.assertIsInstance(typing.get_type_hints(obj), dict)
+
 
 if __name__ == "__main__":
     unittest.main()

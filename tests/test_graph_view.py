@@ -5,13 +5,38 @@ import inspect
 import json
 import os
 import sys
+import textwrap
 import tkinter as tk
 import unittest
+from pathlib import Path
 from unittest import mock
 
-import lora_store as ls
+HERE = Path(__file__).resolve().parent
+PKG = HERE.parent / "salad_studio"
+for _p in (PKG, HERE.parent):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
+
+import lora_store as ls  # noqa: E402
 
 from salad_studio import graph_view as gv
+
+
+def _old_form(func, edits: list[tuple[str, str]]):
+    """The shipped function with a pass's fix undone: the old form, rebuilt.
+
+    ``edits`` are (shipped text, the text it replaced) pairs, applied to the
+    source ``inspect.getsource`` returns. The old behaviour is therefore rebuilt
+    from the shipped file rather than copied into a literal that could drift
+    away from it, and a test can drive both to show what the fix changed.
+    """
+    source = textwrap.dedent(inspect.getsource(func))
+    for new, old in edits:
+        assert new in source, f"{func.__name__} no longer holds {new!r}"
+        source = source.replace(new, old, 1)
+    namespace: dict = {}
+    exec(compile(source, f"<old {func.__name__}>", "exec"), func.__globals__, namespace)
+    return namespace[func.__name__]
 
 
 class SwapPayloads(unittest.TestCase):
@@ -451,12 +476,13 @@ class LivePaneExport(unittest.TestCase):
             swapped["81"]["inputs"]["lora_name"],
             "https://civitai.com/api/download/models/1",
         )
+        lora_before = swapped["80"]["inputs"]["lora_name"]
         same, still = gv.apply_live_pane_message(
             swapped, selected, {"op": "position", "id": "80", "x": 400, "y": 12}
         )
         self.assertIs(same, swapped)
         self.assertEqual(still, selected)
-        self.assertEqual(same["80"]["inputs"]["lora_name"], swapped["80"]["inputs"]["lora_name"])
+        self.assertEqual(same["80"]["inputs"]["lora_name"], lora_before)
         self.assertEqual(same["80"]["inputs"]["model"], ["70", 0])
 
     def test_embedded_refresh_replaces_in_place_and_page_zooms_at_pointer(self) -> None:
@@ -722,9 +748,75 @@ class EmbedReadiness(_PaneCase):
         self.assertIn("reloading", str(pane._hint.cget("text")).lower())
 
 
+class PaneScheduledWorkIsCancelled(_PaneCase):
+    """``GraphPane._soon`` and its ``destroy`` override, driven on a real pane.
+
+    ``_soon`` runs a callback at the next idle moment and records the ``after``
+    id, and ``destroy`` cancels what is still recorded before the widget goes. A
+    pane that is torn down with a callback still pending leaves Tk reporting
+    ``invalid command name`` for the rest of the run, which is what the override
+    is for.
+    """
+
+    def test_soon_runs_the_callback_and_drops_its_handle(self) -> None:
+        pane = self._pane()
+        ran: list[int] = []
+        pane._soon(lambda: ran.append(1))
+        self.assertEqual(len(pane._pending_afters), 1, "the handle is recorded")
+        self.root.update()
+        self.assertEqual(ran, [1], "the callback runs at the next idle moment")
+        self.assertEqual(pane._pending_afters, set(), "and is forgotten once it has run")
+
+    def test_destroy_cancels_what_the_pane_scheduled(self) -> None:
+        pane = self._pane()
+        ran: list[int] = []
+        pane._soon(lambda: ran.append(1))
+        pane.destroy()
+        self.assertEqual(
+            pane._pending_afters, set(), "destroy must forget what it cancelled"
+        )
+        self.root.update()
+        self.assertEqual(ran, [], "the callback must not run into a destroyed pane")
+
+    def test_the_old_destroy_leaves_the_handle_pending(self) -> None:
+        """Without the override the ``after`` id is never cancelled."""
+        old_destroy = _old_form(gv.GraphPane.destroy, self.DESTROY_EDITS)
+        pane = self._pane()
+        ran: list[int] = []
+        pane._soon(lambda: ran.append(1))
+        with mock.patch.object(gv.GraphPane, "destroy", old_destroy):
+            pane.destroy()
+        self.assertEqual(
+            len(pane._pending_afters),
+            1,
+            "the old destroy drops the widget with the callback still scheduled",
+        )
+
+    # The shipped override, with its body taken out. `_old_form` dedents the
+    # source, so a method body starts at four spaces, and a zero-argument
+    # `super()` has no `__class__` cell outside the class body, so the base call
+    # is spelled out.
+    DESTROY_EDITS = (
+        (
+            (
+                "    for handle in list(self._pending_afters):\n"
+                "        try:\n"
+                "            self.after_cancel(handle)\n"
+                "        except Exception:\n"
+                "            pass\n"
+                "    self._pending_afters.clear()\n"
+            ),
+            "",
+        ),
+        (
+            "    super().destroy()\n",
+            "    ttk.Frame.destroy(self)\n",
+        ),
+    )
+
+
 class PaneFallback(_PaneCase):
     """M8: with no embed there is no way to select two cards, so Swap refuses."""
-
     def test_embed_failure_disables_swap_and_reports_why(self) -> None:
         swapped: list = []
         pane = self._pane(on_swap=swapped.append)

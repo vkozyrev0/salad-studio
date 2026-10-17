@@ -7,9 +7,11 @@ it; requested geometry stands in for the on-screen size of an unmapped window.
 """
 from __future__ import annotations
 
+import inspect
 import json
 import sys
 import tempfile
+import textwrap
 import threading
 import time
 import unittest
@@ -51,6 +53,23 @@ def _destroy_quietly(app) -> None:
         app.destroy()
     except tk.TclError:
         pass
+
+
+def _old_form(func, edits: list[tuple[str, str]]):
+    """The shipped function with a pass's edits undone: the old handler, rebuilt.
+
+    ``edits`` are (shipped text, the text it replaced) pairs, applied to the
+    source ``inspect.getsource`` returns. The old behaviour is therefore rebuilt
+    from the shipped file rather than copied into a literal that could drift
+    away from it, and a test can drive it to show what the fix changed.
+    """
+    source = textwrap.dedent(inspect.getsource(func))
+    for new, old in edits:
+        assert new in source, f"{func.__name__} no longer holds {new!r}"
+        source = source.replace(new, old, 1)
+    namespace: dict = {}
+    exec(compile(source, f"<old {func.__name__}>", "exec"), func.__globals__, namespace)
+    return namespace[func.__name__]
 
 
 @unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
@@ -329,7 +348,7 @@ class QueuePage(unittest.TestCase):
         calls: list[int] = []
         queued = self.app.gen_queue.enqueue(
             {"id": 1, "url": "https://gw.example/prompt", "bytes": 12},
-            lambda _job: q.Attempt(status=200),
+            lambda _job: calls.append(1) or q.Attempt(status=200),
         )
         self._open_page()
         self.app.queue_tree.selection_set("1")
@@ -399,6 +418,80 @@ class QueuePage(unittest.TestCase):
         self.assertIn("select a request", self.app.status.get())
         self.app.queue_retry_btn.invoke()
         self.assertIn("select a request", self.app.status.get())
+
+    def test_a_kept_row_is_answered_with_the_earlier_session_fact(self) -> None:
+        """Issue 1 of the 2026-10-15b sweep: a row kept from an earlier session.
+
+        The queue keeps a finished record for four hours, and a window opening on
+        it shows the row under the key ``kept-<id>``. Cancel and Retry read the
+        selection as an integer, so both refused a row the user had visibly
+        selected. The id is read off the row's own first cell instead, and a kept
+        row is answered with the fact that its request finished in an earlier
+        session.
+        """
+        self._accept(1, line="klein")
+        self._open_page()
+        # A second window on the same paths is what a restart looks like.
+        other = self.app_mod.SaladStudio(show=False)
+        other.withdraw()
+        self.addCleanup(_destroy_quietly, other)
+        other.update_idletasks()
+        other._goto_tab("Queue")
+        other._refresh_queue_page()
+        self.assertTrue(
+            other.queue_tree.exists("kept-1"), "the kept row must be on the page"
+        )
+        self.assertEqual(
+            str(other.queue_tree.item("kept-1", "values")[0]),
+            "1",
+            "the row's own first cell carries the id, not the key",
+        )
+        other.queue_tree.selection_set("kept-1")
+        other.update_idletasks()
+
+        other.queue_cancel_btn.invoke()
+        cancel = other.status.get()
+        self.assertIn("earlier session", cancel, f"Cancel must name the fact: {cancel!r}")
+        self.assertNotIn(
+            "select a request", cancel, "a row the user selected must not be refused"
+        )
+
+        other.queue_retry_btn.invoke()
+        retry = other.status.get()
+        self.assertIn("earlier session", retry, f"Retry must name the fact: {retry!r}")
+        self.assertNotIn(
+            "select a request", retry, "a row the user selected must not be refused"
+        )
+        self.assertEqual(other.gen_queue.jobs(), [], "a kept row has no job to retry")
+        self.assertTrue(other.queue_tree.exists("kept-1"), "and it stays on the page")
+
+        # The old handlers, rebuilt from this file, answer both with the false
+        # refusal: that is what the kept-row branch replaced.
+        for name, word in (
+            ("_on_queue_cancel", "cancelled"),
+            ("_on_queue_retry", "retried"),
+        ):
+            with self.subTest(handler=name):
+                edits = [
+                    (
+                        (
+                            f'        note = self._selected_kept_note("{word}")\n'
+                            "        if note:\n"
+                            "            self._queue_status(note)\n"
+                            "            return\n"
+                        ),
+                        "",
+                    )
+                ]
+                old = _old_form(getattr(self.app_mod.SaladStudio, name), edits)
+                with mock.patch.object(self.app_mod.SaladStudio, name, old):
+                    other.queue_tree.selection_set("kept-1")
+                    getattr(other, name)()
+                self.assertEqual(
+                    other.status.get(),
+                    "Queue: select a request first",
+                    f"the old {name} refused the selected kept row",
+                )
 
     # -- reachability and the UI read -------------------------------------
     def test_the_page_is_reachable_from_the_sidebar_and_the_tab_lookup(self) -> None:

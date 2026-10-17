@@ -71,7 +71,7 @@ class CatalogStore(unittest.TestCase):
         self.assertEqual(rows[0]["id"], entry["id"])
         self.assertEqual(rows[0]["request"], _body("a stool"))
         found = pc.get_entry(entry["id"])
-        assert found is not None
+        self.assertIsNot(found, None)
         self.assertEqual(found["name"], "Cover scene")
         self.assertEqual(pc.find_by_name("cover SCENE")["id"], entry["id"])
 
@@ -119,7 +119,7 @@ class CatalogStore(unittest.TestCase):
         self.assertEqual(renamed["description"], "second pass")
         self.assertEqual(renamed["request"], _body("v2"))
         on_disk = pc.get_entry(entry["id"])
-        assert on_disk is not None
+        self.assertIsNot(on_disk, None)
         self.assertEqual(on_disk["name"], "Cover scene v2")
         self.assertEqual(on_disk["request"], _body("v2"))
 
@@ -132,7 +132,7 @@ class CatalogStore(unittest.TestCase):
         with self.assertRaises(ValueError):
             pc.update_entry(entry["id"], request={"nope": 1})
         still = pc.get_entry(entry["id"])
-        assert still is not None
+        self.assertIsNot(still, None)
         self.assertEqual(still["name"], "Cover scene")
         self.assertEqual(still["description"], "d")
 

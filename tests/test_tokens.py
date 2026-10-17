@@ -17,8 +17,18 @@ for p in (str(TOOLS), str(PKG)):
         sys.path.insert(0, p)
 
 from salad_studio import tokens as tok  # noqa: E402
+from tests import _stores  # noqa: E402
 
 GITIGNORE = HERE.parent / ".gitignore"
+
+
+def setUpModule() -> None:
+    """A window built here builds a queue, and the queue writes its ledger."""
+    _stores.keep_queue_ledger_off_the_user_store()
+
+
+def tearDownModule() -> None:
+    _stores.restore_queue_ledger()
 
 
 def _walk(widget):
@@ -161,18 +171,19 @@ class KeyValidity(unittest.TestCase):
             _header(send.requests[0], "Authorization"), "Bearer ds-env-only"
         )
 
-    def test_probe_all_covers_every_probe_spec(self) -> None:
+    def test_every_probe_spec_is_probed_by_its_own_call(self) -> None:
+        """One slot at a time is what the Tokens page asks for."""
         for kind, _l, _r in tok.TOKEN_SPECS:
             tok.write_token(kind, f"{kind}-key")
-        results = tok.probe_all(send=_FakeSend(200), timeout=1)
-        self.assertEqual(sorted(results), sorted(tok.PROBE_SPECS))
-        self.assertTrue(all(r["state"] == tok.VALID for r in results.values()))
-
-    def test_probe_all_reports_an_empty_slot_as_unknown(self) -> None:
-        results = tok.probe_all(send=_FakeSend(200), timeout=1)
-        self.assertEqual(sorted(results), sorted(tok.PROBE_SPECS))
-        for kind, result in results.items():
+        for kind in tok.PROBE_SPECS:
             with self.subTest(kind=kind):
+                result = tok.probe_token(kind, send=_FakeSend(200), timeout=1)
+                self.assertEqual(result["state"], tok.VALID)
+
+    def test_an_empty_slot_is_probed_as_unknown(self) -> None:
+        for kind in tok.PROBE_SPECS:
+            with self.subTest(kind=kind):
+                result = tok.probe_token(kind, send=_FakeSend(200), timeout=1)
                 self.assertIn(result["state"], (tok.UNKNOWN, tok.VALID))
 
     def test_state_color_maps_each_state_to_its_own_palette_key(self) -> None:
@@ -206,7 +217,7 @@ class TokenFiles(unittest.TestCase):
         self.assertIn("salad_studio/studio-tokens.json", text)
 
     def test_paths_stay_under_temp(self) -> None:
-        self.assertEqual(tok.token_path("salad"), tok.LOCAL_PATH)
+        self.assertEqual(tok.LOCAL_PATH, Path(self._td.name) / "studio-tokens.json")
         self.assertTrue(str(tok.default_path("salad")).startswith(str(tok.CONFIG_HOME)))
         self.assertNotEqual(tok.LOCAL_PATH, PKG / "studio-tokens.json")
 
@@ -265,7 +276,6 @@ class TokenFiles(unittest.TestCase):
         self.assertIn("deepseek", kinds)
         self.assertEqual(tok.token_label("deepseek"), "DeepSeek")
         self.assertEqual(tok.default_path("deepseek"), tok.CONFIG_HOME / "deepseek" / "key")
-        self.assertEqual(tok.token_path("deepseek"), tok.LOCAL_PATH)
 
     def test_deepseek_reads_the_environment_when_no_file_has_it(self) -> None:
         with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "  ds-env-key  "}):
@@ -328,6 +338,8 @@ class LiveTokensTab(unittest.TestCase):
 
         old_home = tok.CONFIG_HOME
         old_local = tok.LOCAL_PATH
+        old_profiles = profiles.PROFILES_PATH
+        old_extras = lora_store.EXTRAS_PATH
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
             tok.CONFIG_HOME = tmp / "defaults"
@@ -387,6 +399,8 @@ class LiveTokensTab(unittest.TestCase):
             finally:
                 tok.CONFIG_HOME = old_home
                 tok.LOCAL_PATH = old_local
+                profiles.PROFILES_PATH = old_profiles
+                lora_store.EXTRAS_PATH = old_extras
 
 
 if __name__ == "__main__":

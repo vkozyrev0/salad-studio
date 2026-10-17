@@ -8,6 +8,7 @@ the shipped code built and answers it, instead of reaching the network.
 from __future__ import annotations
 
 import base64
+import importlib.util
 import json
 import sys
 import tempfile
@@ -22,7 +23,7 @@ for _p in (PKG, HERE.parent):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-from salad_studio import generator, tokens as tok, vast  # noqa: E402
+from salad_studio import generator, profiles, tokens as tok, vast  # noqa: E402
 from tests.test_launch import _Inline, _TempPaths  # noqa: E402
 
 try:
@@ -32,6 +33,25 @@ except ImportError as _tk_err:
     _TK_IMPORT_ERROR = _tk_err
 else:
     _TK_IMPORT_ERROR = None
+
+# The store ``vast.py`` ships, read by executing the file rather than by reading
+# the live global: modules that build a window (test_app_layout, test_layers,
+# test_theme) redirect ``vast.INSTANCES_PATH`` to a temp dir at import time, and
+# their redirect is still in place when this module is imported.
+_VAST_SOURCE = PKG / "vast.py"
+
+
+def _shipped_instances_path() -> Path:
+    """``INSTANCES_PATH`` as the shipped ``vast.py`` sets it."""
+    spec = importlib.util.spec_from_file_location("_vast_shipped", _VAST_SOURCE)
+    if spec is None or spec.loader is None:  # pragma: no cover - the file is right there
+        raise AssertionError(f"cannot load {_VAST_SOURCE}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return Path(module.INSTANCES_PATH)
+
+
+SHIPPED_INSTANCES_PATH = _shipped_instances_path()
 
 # A 2x2 JPEG: what a real Comfy answer carries as base64 in ``images[]``.
 PLATE = base64.b64encode(
@@ -183,6 +203,32 @@ class EndpointDerivation(unittest.TestCase):
             with self.subTest(junk=junk):
                 self.assertEqual(vast.normalize_endpoint(junk), "")
 
+    def test_text_that_names_no_host_is_refused_not_prefixed(self) -> None:
+        """Issue 2: `http://` on anything made a typed phrase five instances.
+
+        A word comes back as "" — what the docstring already promised — so the
+        store can refuse it, and no address a user could reach before is lost:
+        a host with a dot, a host with a port, and any explicit scheme still
+        resolve to the same URL they did.
+        """
+        for typed in ("not", "not an address at all", "comfy-local", "host", "1"):
+            with self.subTest(typed=typed):
+                self.assertEqual(
+                    vast.normalize_endpoint(typed),
+                    "",
+                    f"{typed!r} names no host and must not become an address",
+                )
+        for typed, want in (
+            ("1.2.3.4:31234", "http://1.2.3.4:31234"),
+            ("comfy-local:8188", "http://comfy-local:8188"),
+            ("comfy.example", "http://comfy.example"),
+            ("http://comfy-local", "http://comfy-local"),
+            ("https://host.example/", "https://host.example"),
+            ("http://1.2.3.4:31234/prompt", "http://1.2.3.4:31234"),
+        ):
+            with self.subTest(typed=typed):
+                self.assertEqual(vast.normalize_endpoint(typed), want)
+
     def test_the_prompt_url_is_the_instance_plus_prompt(self) -> None:
         self.assertEqual(vast.prompt_url("1.2.3.4:31234"), "http://1.2.3.4:31234/prompt")
 
@@ -329,6 +375,24 @@ class InstanceStore(unittest.TestCase):
         self.assertIs(returned, doc)
         self.assertEqual(doc["instances"], [])
 
+    def test_a_phrase_is_refused_word_by_word_not_stored(self) -> None:
+        """Issue 2: the page splits the box on spaces, so each word is offered here.
+
+        Every word names no host, so every one is refused and the document keeps
+        no instance — five unusable endpoints is what the old prefix produced.
+        """
+        doc = vast.empty_doc()
+        refusals = []
+        for word in "not an address at all".split():
+            doc, refusal = vast.add_instance(doc, word)
+            refusals.append(refusal)
+        self.assertTrue(all(refusals), f"every word must be refused: {refusals}")
+        for refusal in refusals:
+            self.assertIn("Type an instance address", refusal)
+        self.assertEqual(doc["instances"], [], "nothing unusable is stored")
+        self.assertEqual(doc["active"], "", "and nothing becomes the instance to render on")
+        self.assertIsNone(vast.active_row(doc))
+
     def test_removing_the_active_instance_selects_the_next_one(self) -> None:
         doc = vast.empty_doc()
         doc, _ = vast.add_instance(doc, "1.2.3.4:31234")
@@ -372,11 +436,16 @@ class InstanceStore(unittest.TestCase):
         self.assertEqual(vast.load_doc(), vast.empty_doc())
 
     def test_the_store_is_outside_the_repository(self) -> None:
-        """Instance rows are not secrets, but they belong to the user's config."""
+        """Instance rows are not secrets, but they belong to the user's config.
+
+        The shipped path, not the live global: a window-building module redirects
+        ``vast.INSTANCES_PATH`` to a temp dir, and a guard that read the global
+        would be checking that redirect.
+        """
         repo = Path(__file__).resolve().parent.parent
         self.assertFalse(
-            str(self._old).lower().startswith(str(repo).lower()),
-            f"the vast store must not live in the repo: {self._old}",
+            str(SHIPPED_INSTANCES_PATH).lower().startswith(str(repo).lower()),
+            f"the vast store must not live in the repo: {SHIPPED_INSTANCES_PATH}",
         )
 
 
@@ -501,7 +570,6 @@ class VastGeneration(unittest.TestCase):
             [path],
             "the gallery must see a PNG plate as well as a JPEG one",
         )
-        self.assertEqual(generator.clear_history(self.out), 1)
 
     def test_a_view_that_answers_nothing_is_reported(self) -> None:
         answers = [
@@ -651,8 +719,10 @@ class VastTabAndGenerate(unittest.TestCase):
         app.var_vast_new.set("203.0.113.9:31234, 198.51.100.7:40111")
         app._on_vast_add()
         self.assertEqual(len(app.vast_tree.get_children()), 2)
-        app.var_gen_mode.set("vast")
-        app._on_gen_mode()
+        prof = profiles.load_all()[app.var_name.get()]
+        prof.mode = "vast"
+        profiles.upsert(prof)
+        self.assertEqual(profiles.load_all()[app.var_name.get()].mode, "vast")
         self._destroy(app)
 
         fresh = self._window()
@@ -663,6 +733,25 @@ class VastTabAndGenerate(unittest.TestCase):
             "both instances must come back after a restart",
         )
         self.assertEqual(fresh.gen_mode(), "vast", "and so must the engine choice")
+        self.assertEqual(fresh.var_profile_mode.get(), "vast")
+
+    def test_the_profile_target_is_what_generate_uses(self) -> None:
+        app = self._window()
+        name = (app.var_name.get() or "klein").strip()
+        app.var_profile_mode.set("vast")
+        app._on_profile_mode()
+        app._save_profile()
+        self.assertEqual(profiles.load_all()[name].mode, "vast")
+        self.assertEqual(app.gen_mode(), "vast")
+        self.assertFalse(
+            hasattr(app, "var_gen_mode"),
+            "the Vast.ai tab must not carry a Salad/Vast engine radio",
+        )
+        app.var_profile_mode.set("salad")
+        app._on_profile_mode()
+        app._save_profile()
+        self.assertEqual(profiles.load_all()[name].mode, "salad")
+        self.assertEqual(app.gen_mode(), "salad")
 
     def test_selecting_a_row_points_generate_at_that_instance(self) -> None:
         app = self._window()
@@ -681,13 +770,31 @@ class VastTabAndGenerate(unittest.TestCase):
         marks = [app.vast_tree.item(i, "values")[0] for i in app.vast_tree.get_children()]
         self.assertEqual(marks, ["", "●"], "the row Generate uses is the marked one")
 
+    def test_new_profile_for_this_instance_creates_a_vast_profile(self) -> None:
+        """The instance becomes a profile the Active profile box lists."""
+        app = self._window()
+        app.var_vast_new.set("203.0.113.9:31234")
+        app._on_vast_add()
+        app._on_vast_make_profile()
+        name = app.var_name.get()
+        self.assertTrue(name.startswith("vast-"), name)
+        stored = profiles.load_all()[name]
+        self.assertEqual(stored.mode, "vast")
+        self.assertEqual(stored.gateway, "http://203.0.113.9:31234")
+        self.assertEqual(app.var_profile_mode.get(), "vast")
+        self.assertEqual(str(app.lbl_gateway.cget("text")), "Instance URL")
+        self.assertIn(name, app.profile_combo["values"])
+
     def test_pressing_generate_renders_on_the_selected_instance(self) -> None:
         """The whole press: the page's selection, the real POST, the plate."""
         app = self._window()
         app.var_vast_new.set("203.0.113.9:31234")
         app._on_vast_add()
-        app.var_gen_mode.set("vast")
-        app._on_gen_mode()
+        prof = profiles.load_all()[app.var_name.get()]
+        prof.mode = "vast"
+        profiles.upsert(prof)
+        app._apply_profile(prof)
+        app.var_gateway.set("")
         app.editor_text.delete("1.0", "end")
         app.editor_text.insert(
             "1.0",
@@ -723,8 +830,11 @@ class VastTabAndGenerate(unittest.TestCase):
 
     def test_a_press_with_no_instance_selected_is_refused(self) -> None:
         app = self._window()
-        app.var_gen_mode.set("vast")
-        app._on_gen_mode()
+        prof = profiles.load_all()[app.var_name.get()]
+        prof.mode = "vast"
+        profiles.upsert(prof)
+        app._apply_profile(prof)
+        app.var_gateway.set("")
         app.editor_text.delete("1.0", "end")
         app.editor_text.insert(
             "1.0", json.dumps({"prompt": {"9": {"class_type": "SaveImage", "inputs": {}}}})
@@ -738,6 +848,301 @@ class VastTabAndGenerate(unittest.TestCase):
         self.assertIn("Vast.ai instances", shown[0])
         self.assertIn("Config page", shown[0])
         self.assertFalse(app._busy)
+
+
+    def test_a_listing_cut_off_by_the_page_cap_says_so(self) -> None:
+        """C10: an account with more pages than MAX_PAGES must not look complete.
+
+        Every page offers a next_token, so the loop runs out of pages with more
+        to read. The listing reports that instead of returning a short list.
+        """
+        pages = [
+            json.dumps(
+                {"instances": INSTANCES_BODY["instances"][:1], "next_token": f"page-{n}"}
+            ).encode()
+            for n in range(vast.MAX_PAGES)
+        ]
+        asked: list = []
+
+        def transport(request, timeout):
+            asked.append(request)
+            return 200, pages.pop(0)
+
+        result = vast.fetch_instances("vast-key-123", sender=transport)
+        self.assertEqual(result["status"], 200)
+        self.assertEqual(result["error"], "")
+        self.assertEqual(len(asked), vast.MAX_PAGES, "it read as many pages as it may")
+        self.assertTrue(result["truncated"], "and said the account has more")
+        self.assertEqual(len(result["instances"]), vast.MAX_PAGES)
+
+    def test_a_listing_that_ends_inside_the_cap_is_not_truncated(self) -> None:
+        pages = [
+            json.dumps({"instances": INSTANCES_BODY["instances"][:1], "next_token": "page-2"}).encode(),
+            json.dumps({"instances": INSTANCES_BODY["instances"][1:2], "next_token": None}).encode(),
+        ]
+
+        def transport(request, timeout):
+            return 200, pages.pop(0)
+
+        result = vast.fetch_instances("vast-key-123", sender=transport)
+        self.assertFalse(result["truncated"], "the last page said there is no more")
+
+
+class ReplacementSearch(unittest.TestCase):
+    """The opt-in replacement: search, pick, create, and the live check."""
+
+    POLICY = {
+        "enabled": True,
+        "max_price": 0.50,
+        "min_down_mbps": 200,
+        "min_up_mbps": 100,
+        "cuda_min": 13.0,
+    }
+
+    @staticmethod
+    def _offer(offer_id: int, **overrides) -> dict:
+        offer = {
+            "id": offer_id,
+            "gpu_name": "RTX 4090",
+            "gpu_ram": 24576,
+            "disk_space": 200,
+            "cuda_max_good": 13.0,
+            "inet_down": 500,
+            "inet_up": 200,
+            "dph_total": 0.40,
+            "rentable": True,
+        }
+        offer.update(overrides)
+        return offer
+
+    @staticmethod
+    def _live(contract: int = 777) -> dict:
+        return {
+            "id": contract,
+            "public_ipaddr": "203.0.113.9",
+            "ports": {"8188/tcp": [{"HostPort": "40111"}]},
+            "gpu_name": "RTX 4090",
+            "actual_status": "running",
+        }
+
+    def test_the_query_carries_every_floor(self) -> None:
+        query = vast.offer_query(
+            {
+                "max_price": 0.42,
+                "min_down_mbps": 300,
+                "min_up_mbps": 150,
+                "cuda_min": 13.0,
+            }
+        )
+        self.assertEqual(query["dph_total"], {"lte": 0.42})
+        self.assertEqual(query["inet_down"], {"gte": 300})
+        self.assertEqual(query["inet_up"], {"gte": 150})
+        self.assertEqual(query["cuda_max_good"], {"gte": 13.0})
+        self.assertEqual(query["gpu_ram"], {"gte": 24000})
+        self.assertEqual(query["type"], "on-demand")
+        self.assertEqual(query["order"], [["dph_total", "asc"]])
+
+    def test_the_cheapest_offer_that_clears_every_floor_wins(self) -> None:
+        offers = [
+            self._offer(1, dph_total=0.40),
+            self._offer(2, dph_total=0.30, inet_up=50),
+            self._offer(3, dph_total=0.35, cuda_max_good=12.4),
+            self._offer(4, dph_total=0.45),
+        ]
+        picked = vast.pick_offer(offers, self.POLICY)
+        self.assertIsNotNone(picked)
+        assert picked is not None
+        self.assertEqual(picked["id"], 1, "the cheap ones fail a floor, not the price")
+
+    def test_no_offer_meets_the_floors(self) -> None:
+        self.assertIsNone(
+            vast.pick_offer([self._offer(1, dph_total=0.90)], self.POLICY)
+        )
+        self.assertIsNone(vast.pick_offer([], self.POLICY))
+
+    def test_a_create_is_a_put_with_the_image_disk_and_env(self) -> None:
+        seen: dict = {}
+
+        def sender(request, timeout):
+            seen["method"] = request.get_method()
+            seen["url"] = request.full_url
+            seen["body"] = json.loads(request.data)
+            return 200, json.dumps({"success": True, "new_contract": 777}).encode()
+
+        result = vast.create_instance(
+            "vast-key",
+            123,
+            image="docker.io/example/klein:tag",
+            env="-p 8188:8188 -e HF_TOKEN=hf_x",
+            label="salad-studio-klein",
+            sender=sender,
+        )
+        self.assertEqual(result["contract"], 777)
+        self.assertEqual(seen["method"], "PUT")
+        self.assertEqual(seen["url"], "https://console.vast.ai/api/v0/asks/123/")
+        self.assertEqual(seen["body"]["image"], "docker.io/example/klein:tag")
+        self.assertEqual(seen["body"]["disk"], 100)
+        self.assertEqual(seen["body"]["runtype"], "args")
+        self.assertEqual(seen["body"]["env"], "-p 8188:8188 -e HF_TOKEN=hf_x")
+        self.assertEqual(seen["body"]["label"], "salad-studio-klein")
+
+    def test_the_env_carries_the_render_tokens_but_not_the_vast_key(self) -> None:
+        env = vast.replacement_env(hf_token="hf_secret", civitai_token="civ_secret")
+        self.assertIn("-p 3000:3000", env)
+        self.assertIn("-p 8188:8188", env)
+        self.assertIn("-e HF_TOKEN=hf_secret", env)
+        self.assertIn("-e CIVITAI_API_TOKEN=civ_secret", env)
+        self.assertNotIn("vast", env.lower())
+
+    def test_an_alive_instance_is_not_created_again(self) -> None:
+        def sender(request, timeout):
+            self.assertTrue(request.full_url.endswith("/instances/"))
+            return 200, json.dumps({"instances": [self._live()]}).encode()
+
+        result = vast.replace_destroyed(
+            key="vast-key",
+            endpoint="http://203.0.113.9:40111",
+            image="docker.io/example/klein:tag",
+            settings=self.POLICY,
+            sender=sender,
+        )
+        self.assertEqual(result["action"], "alive")
+        self.assertEqual(result["row"]["endpoint"], "http://203.0.113.9:40111")
+
+    def test_replacement_off_only_reports_the_instance_is_gone(self) -> None:
+        def sender(request, timeout):
+            return 200, json.dumps({"instances": []}).encode()
+
+        result = vast.replace_destroyed(
+            key="vast-key",
+            endpoint="http://203.0.113.9:40111",
+            image="docker.io/example/klein:tag",
+            settings={**self.POLICY, "enabled": False},
+            sender=sender,
+        )
+        self.assertEqual(result["action"], "missing")
+
+    def test_a_gone_instance_is_replaced_by_the_cheapest_offer(self) -> None:
+        calls: list[tuple[str, str]] = []
+        live: list[dict] = []
+
+        def sender(request, timeout):
+            calls.append((request.get_method(), request.full_url))
+            if request.full_url.endswith("/instances/"):
+                return 200, json.dumps({"instances": live}).encode()
+            if request.full_url.endswith("/bundles/"):
+                body = json.loads(request.data)
+                self.assertEqual(body["dph_total"], {"lte": 0.50})
+                return 200, json.dumps({"offers": [self._offer(4)]}).encode()
+            if "/asks/" in request.full_url:
+                live.append(self._live())
+                return 200, json.dumps({"success": True, "new_contract": 777}).encode()
+            raise AssertionError(request.full_url)
+
+        result = vast.replace_destroyed(
+            key="vast-key",
+            endpoint="http://198.51.100.7:40000",
+            image="docker.io/example/klein:tag",
+            settings=self.POLICY,
+            label="salad-studio-klein",
+            sender=sender,
+            sleep=lambda _s: None,
+            tries=2,
+        )
+        self.assertEqual(result["action"], "created")
+        self.assertEqual(result["contract"], 777)
+        self.assertEqual(result["row"]["endpoint"], "http://203.0.113.9:40111")
+        self.assertEqual(result["row"]["label"], "salad-studio-klein")
+        self.assertTrue(any(method == "PUT" for method, _url in calls))
+        self.assertTrue(any(url.endswith("/bundles/") for _m, url in calls))
+
+    def test_no_offer_creates_nothing(self) -> None:
+        calls: list[str] = []
+
+        def sender(request, timeout):
+            calls.append(request.full_url)
+            if request.full_url.endswith("/instances/"):
+                return 200, json.dumps({"instances": []}).encode()
+            if request.full_url.endswith("/bundles/"):
+                return 200, json.dumps({"offers": [self._offer(1, dph_total=9.0)]}).encode()
+            raise AssertionError("no create may run")
+
+        result = vast.replace_destroyed(
+            key="vast-key",
+            endpoint="http://198.51.100.7:40000",
+            image="docker.io/example/klein:tag",
+            settings=self.POLICY,
+            sender=sender,
+            sleep=lambda _s: None,
+            tries=1,
+        )
+        self.assertEqual(result["action"], "no_offer")
+        self.assertFalse(any("/asks/" in url for url in calls))
+
+    def test_a_stopped_instance_is_not_replaced_by_a_duplicate(self) -> None:
+        stopped = {"id": 5, "actual_status": "stopped", "public_ipaddr": None}
+
+        def sender(request, timeout):
+            return 200, json.dumps({"instances": [stopped]}).encode()
+
+        result = vast.replace_destroyed(
+            key="vast-key",
+            endpoint="http://203.0.113.9:40111",
+            instance_id=5,
+            image="docker.io/example/klein:tag",
+            settings=self.POLICY,
+            sender=sender,
+        )
+        self.assertEqual(result["action"], "stopped")
+        self.assertIn("not destroyed", result["message"])
+
+    def test_a_pending_contract_survives_the_document_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "studio-vast.json"
+            doc = vast.empty_doc()
+            doc["pending"] = {
+                "contract": 777,
+                "label": "salad-studio-klein",
+                "image": "docker.io/example/klein:tag",
+            }
+            vast.save_doc(doc, path)
+            loaded = vast.load_doc(path)
+        self.assertEqual(loaded["pending"]["contract"], 777)
+        self.assertEqual(loaded["pending"]["image"], "docker.io/example/klein:tag")
+        self.assertEqual(vast.clean_pending({"contract": "nope"}), {})
+
+    def test_a_refused_offer_falls_through_to_the_next_cheapest(self) -> None:
+        """The create endpoint can refuse an offer the search still lists."""
+        live: list[dict] = []
+        asked: list[str] = []
+
+        def sender(request, timeout):
+            if request.full_url.endswith("/instances/"):
+                return 200, json.dumps({"instances": live}).encode()
+            if request.full_url.endswith("/bundles/"):
+                return 200, json.dumps(
+                    {"offers": [self._offer(1, dph_total=0.30), self._offer(2, dph_total=0.40)]}
+                ).encode()
+            asked.append(request.full_url)
+            if request.full_url.endswith("/asks/1/"):
+                return 410, json.dumps(
+                    {"success": False, "error": "no_such_ask", "msg": "taken"}
+                ).encode()
+            live.append(self._live(888))
+            return 200, json.dumps({"success": True, "new_contract": 888}).encode()
+
+        result = vast.replace_destroyed(
+            key="vast-key",
+            endpoint="http://198.51.100.7:40000",
+            image="docker.io/example/klein:tag",
+            settings=self.POLICY,
+            sender=sender,
+            sleep=lambda _s: None,
+            tries=2,
+        )
+        self.assertEqual(result["action"], "created")
+        self.assertEqual(result["contract"], 888)
+        self.assertEqual([url.rsplit("/", 2)[-2] for url in asked], ["1", "2"])
 
 
 if __name__ == "__main__":

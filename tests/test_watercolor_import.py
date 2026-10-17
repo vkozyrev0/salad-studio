@@ -360,7 +360,7 @@ class WatercolorLoraMatching(unittest.TestCase):
             with self.subTest(tag=tag):
                 hit = ls.best_civitai_hit(tag, WATERCOLOR_CIVITAI_ITEMS)
                 self.assertIsNotNone(hit, tag)
-                assert hit is not None
+                self.assertIsNot(hit, None)
                 self.assertEqual(hit["version_id"], ver, tag)
                 self.assertEqual(hit["filename"], fname, tag)
                 self.assertIn(str(ver), hit["download"])
@@ -370,13 +370,13 @@ class WatercolorLoraMatching(unittest.TestCase):
             "cass_aruhshuraanima_preview3_1-step00004500",
             WATERCOLOR_CIVITAI_ITEMS,
         )
-        assert hit is not None
+        self.assertIsNot(hit, None)
         self.assertEqual(hit["version_id"], 2848936)
         self.assertNotEqual(hit["version_id"], 2255999)
 
     def test_klein_anime_does_not_pick_v1(self) -> None:
         hit = ls.best_civitai_hit("Flux.2 Klein 9B anime", WATERCOLOR_CIVITAI_ITEMS)
-        assert hit is not None
+        self.assertIsNot(hit, None)
         self.assertEqual(hit["version_id"], 2825584)
         self.assertNotEqual(hit["version_id"], 2735459)
 
@@ -384,7 +384,7 @@ class WatercolorLoraMatching(unittest.TestCase):
         hit = ls.best_civitai_hit(
             "Ah! My Goddess_illustriousXL", WATERCOLOR_CIVITAI_ITEMS
         )
-        assert hit is not None
+        self.assertIsNot(hit, None)
         self.assertEqual(hit["version_id"], 1810929)
         self.assertNotEqual(hit["version_id"], 3131267)
         self.assertFalse(

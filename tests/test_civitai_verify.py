@@ -148,7 +148,6 @@ class ListGroups(unittest.TestCase):
         self.assertTrue(rows[1]["ready"])
         picked = cv.pick_studio_group(rows)
         self.assertIsNotNone(picked)
-        assert picked is not None
         self.assertEqual(picked["profile_id"], "klein5090")
         self.assertEqual(picked["word"], "Ready")
 

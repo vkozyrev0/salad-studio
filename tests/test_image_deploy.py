@@ -272,6 +272,67 @@ class SettingsStore(unittest.TestCase):
         )
 
 
+    def test_a_users_own_image_keeps_the_ports_it_was_given(self) -> None:
+        """C5: the ports survive add_image -> save -> load -> entries.
+
+        Without this the row read ports that could never be stored, so every
+        command and field for a user's own image was portless and hand-editing
+        the store did not help either.
+        """
+        ports = {studio_meta.PORT_API: 3000, studio_meta.PORT_COMFY: 8188}
+        settings, err = deploy.add_image(
+            deploy.empty_settings(), "mine", "user/x:1", ports=ports
+        )
+        self.assertEqual(err, "")
+        deploy.save_settings(settings)
+        back = deploy.load_settings()
+        self.assertEqual(back["images"][0]["ports"], ports, "the store kept them")
+        entry = deploy.entry_by_ref(deploy.entries(studio_meta.load(), back), "mine")
+        self.assertIsNotNone(entry)
+        self.assertIsNot(entry, None)
+        self.assertEqual(entry["ports"], ports)
+        self.assertEqual(deploy.port_args(entry), ["-p 3000:3000", "-p 8188:8188"])
+        self.assertIn("-p 8188:8188", deploy.docker_run_command(entry, {}))
+
+    def test_a_hand_edited_ports_key_survives_the_round_trip(self) -> None:
+        self.path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "images": [
+                        {
+                            "name": "mine",
+                            "tag": "user/x:1",
+                            "context": "",
+                            "build_arg": "",
+                            "ports": {"api": 3000},
+                        }
+                    ],
+                    "env": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        loaded = deploy.load_settings()
+        self.assertEqual(loaded["images"][0]["ports"], {"api": 3000})
+        deploy.save_settings(loaded)
+        self.assertEqual(
+            deploy.load_settings()["images"][0]["ports"],
+            {"api": 3000},
+            "a saved store must not drop the key it just read",
+        )
+
+    def test_an_image_with_no_ports_publishes_none(self) -> None:
+        settings, _ = deploy.add_image(deploy.empty_settings(), "plain", "user/x:2")
+        deploy.save_settings(settings)
+        entry = deploy.entry_by_ref(
+            deploy.entries(studio_meta.load(), deploy.load_settings()), "plain"
+        )
+        self.assertIsNot(entry, None)
+        self.assertEqual(deploy.port_args(entry), [])
+        self.assertEqual(entry["ports"], {studio_meta.PORT_API: 0, studio_meta.PORT_COMFY: 0})
+
+
 @unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
 class ImagesPage(unittest.TestCase):
     """The page, through the real window, with every path in a temp dir."""
@@ -458,6 +519,40 @@ class ImagesPage(unittest.TestCase):
         app._on_image_remove_image()
         self.assertEqual(app.image_box["values"], ("klein", "snofs"))
         self.assertNotIn("user/eldermark-klein:test", app.pol_image_box["values"])
+
+    def test_the_form_carries_the_ports_into_the_commands_it_prints(self) -> None:
+        """C1+U1: the two fields are what makes a user image's commands publish a port."""
+        app = self._window()
+        app.var_image_new_name.set("my-fork")
+        app.var_image_new_tag.set("user/eldermark-klein:test")
+        app.var_image_new_api.set("3000")
+        app.var_image_new_comfy.set("8188")
+        app._on_image_add_image()
+
+        stored = deploy.load_settings()["images"][0]
+        self.assertEqual(
+            stored["ports"], {studio_meta.PORT_API: 3000, studio_meta.PORT_COMFY: 8188}
+        )
+        entry = deploy.entry_by_ref(deploy.entries(studio_meta.default(), deploy.load_settings()), "my-fork")
+        self.assertIsNotNone(entry)
+        assert entry is not None
+        self.assertEqual(deploy.port_args(entry), ["-p 3000:3000", "-p 8188:8188"])
+
+        script = app.image_script.get("1.0", "end")
+        self.assertIn("-p 3000:3000", script, "the docker run line must publish the port")
+        self.assertIn("-p 8188:8188", script)
+        self.assertIn("-p 3000:3000", deploy.vast_create_command(entry, []))
+        # The fields are cleared for the next image.
+        self.assertEqual(app.var_image_new_api.get(), "")
+        self.assertEqual(app.var_image_new_comfy.get(), "")
+
+    def test_an_image_added_with_no_ports_publishes_none(self) -> None:
+        app = self._window()
+        app.var_image_new_name.set("plain")
+        app.var_image_new_tag.set("user/x:2")
+        app._on_image_add_image()
+        self.assertEqual(deploy.load_settings()["images"][0]["ports"], {})
+        self.assertNotIn("-p ", app.image_script.get("1.0", "end").split("# vast.ai")[0])
 
     def test_a_documented_image_cannot_be_removed_from_the_page(self) -> None:
         app = self._window()

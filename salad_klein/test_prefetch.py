@@ -11,7 +11,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from weights_zip import ensure_safetensors, is_zip_file, unzip_safetensors, zip_safetensors  # noqa: E402
+from weights_zip import ensure_safetensors, is_zip_file, unzip_safetensors  # noqa: E402
 
 
 class ImageStaysSmall(unittest.TestCase):
@@ -68,6 +68,44 @@ class ImageStaysSmall(unittest.TestCase):
         self.assertTrue(any("huggingface_hub" in ln for ln in run_lines))
         self.assertFalse(any("unzip" in ln.lower() for ln in run_lines))
         self.assertFalse(any("prefetch" in ln.lower() for ln in run_lines))
+
+        # A serial loop over the same jobs costs four delays; the pool costs
+        # about one, because a sleeping fetch releases the GIL.
+        import time
+        from unittest.mock import patch
+
+        import prefetch as pf
+
+        delay = 0.3
+        jobs = [
+            {
+                "repo": "probe",
+                "file": f"probe-{i}.safetensors",
+                "dest": f"/tmp/probe-{i}.safetensors",
+            }
+            for i in range(4)
+        ]
+        seen: list[str] = []
+
+        def slow_fetch(job: dict[str, str]) -> str:
+            seen.append(job["dest"])
+            time.sleep(delay)
+            return f"ok {job['dest']}"
+
+        with patch.object(pf, "JOBS", jobs), patch.object(
+            pf, "_install_progress"
+        ), patch.object(pf, "_fetch", side_effect=slow_fetch):
+            start = time.monotonic()
+            rc = pf.main([])
+            elapsed = time.monotonic() - start
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(seen), len(jobs), f"every job must be fetched: {seen}")
+        self.assertLess(
+            elapsed,
+            delay * 3,
+            f"four jobs took {elapsed:.2f}s; one parallel pass is ~{delay}s, "
+            f"four serial passes are ~{delay * 4:.2f}s",
+        )
 
 
 class TokenIsPassed(unittest.TestCase):
@@ -161,7 +199,9 @@ class ZipIsTransportOnly(unittest.TestCase):
             raw = root / "flux2-vae.safetensors"
             payload = b"fake-safetensors-bytes-not-a-zip"
             raw.write_bytes(payload)
-            archive = zip_safetensors(raw)
+            archive = Path(str(raw) + ".zip")
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.write(raw, arcname="flux2-vae.safetensors")
             raw.unlink()
             dest = root / "models" / "vae" / "flux2-vae.safetensors"
             unzip_safetensors(archive, dest)
@@ -226,6 +266,62 @@ class UnetSetSelection(unittest.TestCase):
         self.assertIn("snofsSexNudesAndOther_distilledV12KleinFp8.safetensors", names)
         self.assertIn("flux-2-klein-base-9b-fp8.safetensors", names)
         self.assertNotIn("flux-2-klein-9b-fp8.safetensors", names)
+
+
+class ATruncatedWeightIsRefetched(unittest.TestCase):
+    """C3: a file that is there but far too small is not "have".
+
+    The shipped order asks ``ensure_safetensors`` first, which answers "have" for
+    any existing non-zip file; the size floor is what decides whether the fetch is
+    done, so a 9-byte ``*.safetensors`` must be downloaded again.
+    """
+
+    def _job(self, dest: Path) -> dict[str, str]:
+        return {
+            "repo": "black-forest-labs/FLUX.2-klein-9b-fp8",
+            "file": dest.name,
+            "dest": str(dest),
+        }
+
+    def _fake_download(self, calls: list[dict]):
+        def fake_dl(**kwargs):
+            calls.append(kwargs)
+            dest_dir = Path(kwargs["local_dir"])
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            path = dest_dir / Path(kwargs["filename"]).name
+            path.write_bytes(b"w" * 2_000_000)
+            return str(path)
+
+        return fake_dl
+
+    def test_a_truncated_weight_is_fetched_again(self) -> None:
+        import prefetch as pf
+        from unittest.mock import patch
+
+        calls: list[dict] = []
+        with tempfile.TemporaryDirectory() as td:
+            dest = Path(td) / "diffusion_models" / "flux-2-klein-9b-fp8.safetensors"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"truncated")  # 9 bytes, and not a zip
+            with patch.object(pf, "hf_hub_download", side_effect=self._fake_download(calls)):
+                result = pf._fetch(self._job(dest))
+            self.assertTrue(calls, "a truncated weight must be fetched again")
+            self.assertTrue(result.startswith("ok "), result)
+            self.assertGreater(dest.stat().st_size, 1_000_000, "the weight was replaced")
+
+    def test_a_complete_weight_is_left_alone(self) -> None:
+        import prefetch as pf
+        from unittest.mock import patch
+
+        calls: list[dict] = []
+        with tempfile.TemporaryDirectory() as td:
+            dest = Path(td) / "diffusion_models" / "flux-2-klein-9b-fp8.safetensors"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"w" * 2_000_000)
+            with patch.object(pf, "hf_hub_download", side_effect=self._fake_download(calls)):
+                result = pf._fetch(self._job(dest))
+            self.assertEqual(calls, [], "a complete weight is not downloaded again")
+            self.assertTrue(result.startswith("have "), result)
 
 
 if __name__ == "__main__":

@@ -19,7 +19,7 @@ for _p in (PKG, HERE.parent):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-from salad_studio import comfy_import, lora_store  # noqa: E402
+from salad_studio import comfy_import  # noqa: E402
 from tests.test_launch import _TempPaths  # noqa: E402
 
 try:
@@ -34,6 +34,28 @@ FIXTURE = HERE / "civitai_fixtures" / "image_125073040.json"
 
 
 FIXTURES = HERE / "civitai_fixtures"
+
+
+def _redirect_convert_off_the_network(case: unittest.TestCase) -> None:
+    """Serve the fixture from the lora_store Convert actually calls.
+
+    ``comfy_import`` binds top-level ``lora_store`` as ``ls``. That object is
+    not ``salad_studio.lora_store``, so a patch on the package copy never
+    lands. ``ls.EXTRAS_PATH`` is also the user's file unless it moves: Convert
+    writes each resolved LoRA there.
+    """
+    ls = comfy_import.ls
+    search = mock.patch.object(ls, "civitai_search_lora", return_value=None)
+    search.start()
+    case.addCleanup(search.stop)
+    fetch = mock.patch.object(
+        ls, "fetch_civitai_image", return_value=case.fixture["image"]
+    )
+    fetch.start()
+    case.addCleanup(fetch.stop)
+    saved = ls.EXTRAS_PATH
+    ls.EXTRAS_PATH = case.tmp / "studio-loras.json"
+    case.addCleanup(setattr, ls, "EXTRAS_PATH", saved)
 
 
 @unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
@@ -63,15 +85,13 @@ class ImportTabLoraManagerImage(unittest.TestCase):
         self.app.withdraw()
         self.addCleanup(self.app.destroy)
         self.app.update_idletasks()
+        _redirect_convert_off_the_network(self)
 
     def _fetch_and_convert(self) -> None:
         app = self.app
         app._goto_tab("Import")
         app.var_imp_image_url.set(self.fixture["source"])
-        with mock.patch.object(
-            lora_store, "fetch_civitai_image", return_value=self.fixture["image"]
-        ):
-            app._on_fetch_civitai_image()
+        app._on_fetch_civitai_image()
         app.update_idletasks()
         app._on_import_civitai()
         app.update_idletasks()
@@ -176,16 +196,14 @@ class ImportTabCivitaiImage(unittest.TestCase):
         self.app.withdraw()
         self.addCleanup(self.app.destroy)
         self.app.update_idletasks()
+        _redirect_convert_off_the_network(self)
 
     def _fetch(self) -> None:
         """Press Fetch from Civitai, served from the fixture."""
         app = self.app
         app._goto_tab("Import")
         app.var_imp_image_url.set(self.fixture["source"])
-        with mock.patch.object(
-            lora_store, "fetch_civitai_image", return_value=self.fixture["image"]
-        ):
-            app._on_fetch_civitai_image()
+        app._on_fetch_civitai_image()
         app.update_idletasks()
 
     def _convert(self) -> None:
@@ -222,6 +240,11 @@ class ImportTabCivitaiImage(unittest.TestCase):
             if node.get("class_type") == "LoraLoader"
         ]
         self.assertEqual(len(loras), 2, f"both LoRAs must be loaders: {loras}")
+        for name in loras:
+            self.assertTrue(
+                str(name or "").lower().startswith(("http://", "https://")),
+                f"a loader kept a local filename: {name!r}",
+            )
         self.assertIn("SamplerCustomAdvanced", classes)
         self.assertNotIn("SeedVR2VideoUpscaler", classes)
         self.assertIn("imported Civitai paste", app.log_text.get("1.0", "end"))

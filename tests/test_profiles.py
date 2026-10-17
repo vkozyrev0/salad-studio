@@ -2,10 +2,30 @@
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 import unittest
 from dataclasses import fields
 from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+PKG = HERE.parent / "salad_studio"
+for _p in (PKG, HERE.parent):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
+
+
+def setUpModule() -> None:
+    """This module builds a window, so its queue must not touch the real ledger."""
+    from tests import _stores
+
+    _stores.keep_queue_ledger_off_the_user_store()
+
+
+def tearDownModule() -> None:
+    from tests import _stores
+
+    _stores.restore_queue_ledger()
 
 from profiles import (
     add_checkpoint,
@@ -17,13 +37,11 @@ from profiles import (
     profile_for_gateway,
     profiles_for_checkpoint,
     remove_checkpoint,
-    route_payload,
     same_gateway,
     seed_checkpoints,
     seeded_policy,
     serving_family,
     unet_family,
-    SNOFS_UNET,
     DEFAULT_KEY_PATH,
     KLEIN_5090_GATEWAY,
     KLEIN_GATEWAY,
@@ -40,10 +58,12 @@ from profiles import (
 )
 
 import studio_meta
+from request_json import UNET_SNOFS as SNOFS_UNET  # noqa: E402
 
 EXPECTED_FIELDS = (
     "name",
     "gateway",
+    "mode",
     "key_path",
     "graph",
     "width",
@@ -105,6 +125,7 @@ class ProfilesTest(unittest.TestCase):
         named = default_profile("studio")
         self.assertEqual(named.name, "studio")
         self.assertEqual(named.graph, "klein")
+        self.assertEqual(profile.mode, "salad")
 
     def test_ensure_builtin_adds_klein5090_without_clobber(self) -> None:
         import profiles as pr
@@ -159,6 +180,7 @@ class ProfilesTest(unittest.TestCase):
         self.assertEqual(got.gateway, first.gateway)
         self.assertEqual(got.key_path, first.key_path)
         self.assertEqual(got.graph, "klein")
+        self.assertEqual(got.mode, "salad")
         self.assertEqual(got.width, 1024)
         self.assertEqual(got.height, 768)
         self.assertEqual(got.steps, 12)
@@ -210,6 +232,27 @@ class ProfilesTest(unittest.TestCase):
         doc = json.loads(self.path.read_text(encoding="utf-8"))
         self.assertEqual(doc["active"], "flux1")
         self.assertEqual(set(doc["profiles"]), {"klein", "flux1"})
+
+    def test_mode_round_trips(self) -> None:
+        upsert(self._sample("klein", mode="vast"), self.path)
+        got = load_all(self.path)["klein"]
+        self.assertEqual(got.mode, "vast")
+        doc = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(doc["profiles"]["klein"]["mode"], "vast")
+
+    def test_a_record_without_mode_loads_as_salad(self) -> None:
+        upsert(self._sample("klein"), self.path)
+        doc = json.loads(self.path.read_text(encoding="utf-8"))
+        doc["profiles"]["klein"].pop("mode", None)
+        self.path.write_text(json.dumps(doc), encoding="utf-8")
+        self.assertEqual(load_all(self.path)["klein"].mode, "salad")
+
+    def test_an_unknown_mode_coerces_to_salad(self) -> None:
+        upsert(self._sample("klein"), self.path)
+        doc = json.loads(self.path.read_text(encoding="utf-8"))
+        doc["profiles"]["klein"]["mode"] = "runpod"
+        self.path.write_text(json.dumps(doc), encoding="utf-8")
+        self.assertEqual(load_all(self.path)["klein"].mode, "salad")
 
     def test_old_profile_use_loras_true_fills_klein_pair(self) -> None:
         doc = {
@@ -335,33 +378,12 @@ class LiveCorruptProfilesFile(unittest.TestCase):
         except tk.TclError as e:
             raise unittest.SkipTest(f"Tk cannot initialize: {e}") from e
 
-        from salad_studio import lora_store, prompt_history, tokens as tok, ui_state
         from salad_studio import profiles as sp
         from salad_studio.app import SaladStudio
+        from tests.test_launch import _TempPaths
 
-        old = {
-            "profiles": sp.PROFILES_PATH,
-            "gw_klein": sp.GATEWAY_KLEIN_PATH,
-            "gw_5090": sp.GATEWAY_KLEIN_5090_PATH,
-            "extras": lora_store.EXTRAS_PATH,
-            "hist": prompt_history.HISTORY_PATH,
-            "thumbs": prompt_history.THUMBS_DIR,
-            "local": tok.LOCAL_PATH,
-            "cfg": tok.CONFIG_HOME,
-            "state": ui_state.STATE_PATH,
-        }
         with tempfile.TemporaryDirectory() as td:
-            tmp = Path(td)
-            sp.PROFILES_PATH = tmp / "studio-profiles.json"
-            sp.GATEWAY_KLEIN_PATH = tmp / "gateway-klein"
-            sp.GATEWAY_KLEIN_5090_PATH = tmp / "gateway-klein-5090"
-            lora_store.EXTRAS_PATH = tmp / "studio-loras.json"
-            prompt_history.HISTORY_PATH = tmp / "studio-prompt-history.json"
-            prompt_history.THUMBS_DIR = tmp / "thumbs"
-            tok.LOCAL_PATH = tmp / "studio-tokens.json"
-            tok.CONFIG_HOME = tmp / "defaults"
-            ui_state.STATE_PATH = tmp / "studio-ui.json"
-            try:
+            with _TempPaths(Path(td)):
                 sp.PROFILES_PATH.write_text(
                     json.dumps(
                         {
@@ -379,8 +401,7 @@ class LiveCorruptProfilesFile(unittest.TestCase):
                     ),
                     encoding="utf-8",
                 )
-                app = SaladStudio()
-                app.withdraw()
+                app = SaladStudio(show=False)
                 try:
                     app.update_idletasks()
                     self.assertIn("klein", app.profile_combo["values"])
@@ -392,16 +413,6 @@ class LiveCorruptProfilesFile(unittest.TestCase):
                     )
                 finally:
                     app.destroy()
-            finally:
-                sp.PROFILES_PATH = old["profiles"]
-                sp.GATEWAY_KLEIN_PATH = old["gw_klein"]
-                sp.GATEWAY_KLEIN_5090_PATH = old["gw_5090"]
-                lora_store.EXTRAS_PATH = old["extras"]
-                prompt_history.HISTORY_PATH = old["hist"]
-                prompt_history.THUMBS_DIR = old["thumbs"]
-                tok.LOCAL_PATH = old["local"]
-                tok.CONFIG_HOME = old["cfg"]
-                ui_state.STATE_PATH = old["state"]
 
 
 class UnetRoutingTest(unittest.TestCase):
@@ -460,19 +471,34 @@ class RoutingTest(unittest.TestCase):
         self.assertEqual(checkpoint_family(allp["klein5090"].primary_checkpoint), "snofs")
 
     def test_each_family_routes_to_its_own_group(self) -> None:
+        """The shipped decision: from the other family's profile, each graph routes home."""
         allp = self._all()
-        self.assertEqual(route_payload(self._graph("flux-2-klein-base-9b-fp8.safetensors"), allp)[0], "klein")
-        self.assertEqual(route_payload(self._graph("flux-2-klein-9b-fp8.safetensors"), allp)[0], "klein")
-        self.assertEqual(
-            route_payload(self._graph("snofsSexNudesAndOther_distilledV12KleinFp8.safetensors"), allp)[0],
-            "klein5090",
+        cases = (
+            ("flux-2-klein-base-9b-fp8.safetensors", "klein5090", "klein"),
+            ("flux-2-klein-9b-fp8.safetensors", "klein5090", "klein"),
+            ("snofsSexNudesAndOther_distilledV12KleinFp8.safetensors", "klein", "klein5090"),
         )
+        for unet, form, want in cases:
+            with self.subTest(unet=unet):
+                route, refusal = plan_route(self._graph(unet), allp[form], allp)
+                self.assertEqual(refusal, "")
+                self.assertIsNotNone(route)
+                self.assertIsNot(route, None)
+                self.assertEqual(route.name, want)
 
-    def test_a_family_no_group_serves_routes_to_nothing(self) -> None:
-        self.assertIsNone(route_payload(self._graph("snofs_x.safetensors"), {"klein": default_profile("klein")}))
+    def test_a_checkpoint_no_profile_lists_is_refused(self) -> None:
+        allp = self._all()
+        route, refusal = plan_route(self._graph("snofs_x.safetensors"), allp["klein"], allp)
+        self.assertIsNone(route)
+        self.assertIn("No profile lists", refusal)
 
-    def test_a_graph_with_no_unet_routes_to_nothing(self) -> None:
-        self.assertIsNone(route_payload({"prompt": {"1": {"class_type": "SaveImage", "inputs": {}}}}, self._all()))
+    def test_a_graph_with_no_unet_is_sent_where_the_form_points(self) -> None:
+        allp = self._all()
+        route, refusal = plan_route(
+            {"prompt": {"1": {"class_type": "SaveImage", "inputs": {}}}}, allp["klein"], allp
+        )
+        self.assertIsNone(route)
+        self.assertEqual(refusal, "")
 
     def test_serving_family_reads_the_profiles_own_unet(self) -> None:
         self.assertEqual(serving_family(default_profile("klein")), "klein")
@@ -533,12 +559,20 @@ class CheckpointListTest(unittest.TestCase):
             load_all(self.path)["klein"].checkpoints, ["flux-2-klein-9b-fp8.safetensors"]
         )
 
-    def test_adding_a_checkpoint_of_another_family_is_refused(self) -> None:
+    def test_adding_a_checkpoint_of_another_family_is_allowed(self) -> None:
         profile = SaladProfile(name="snofs-group", checkpoints=[SNOFS_UNET])
-        reason = add_checkpoint(profile, "flux-2-klein-base-9b-fp8.safetensors")
-        self.assertIn("one unet family", reason)
-        self.assertEqual(profile.checkpoints, [SNOFS_UNET])
-        self.assertEqual(add_checkpoint(profile, SNOFS_UNET), f"{SNOFS_UNET} is already in 'snofs-group'.")
+        self.assertEqual(
+            add_checkpoint(profile, "flux-2-klein-base-9b-fp8.safetensors"), ""
+        )
+        self.assertEqual(
+            profile.checkpoints,
+            [SNOFS_UNET, "flux-2-klein-base-9b-fp8.safetensors"],
+        )
+        self.assertIn("2 unet families", mixed_family_reason(profile))
+        self.assertEqual(
+            add_checkpoint(profile, SNOFS_UNET),
+            f"{SNOFS_UNET} is already in 'snofs-group'.",
+        )
 
     def test_a_legacy_single_checkpoint_record_loads_as_a_one_entry_list(self) -> None:
         legacy = {
@@ -751,10 +785,25 @@ class ProfilePolicyTest(unittest.TestCase):
                 self.assertEqual(load_all(self.path)["klein"].policy, {})
 
     def test_a_new_builtin_profile_starts_with_the_documents_image(self) -> None:
+        doc = studio_meta.default()
         klein = default_profile("klein")
         snofs = default_profile("klein5090")
-        self.assertEqual(klein.policy, seeded_policy(klein))
-        self.assertEqual(snofs.policy, seeded_policy(snofs))
+        # Pinned by value: the document's image and the probes it documents for
+        # the family, not whatever default_profile just assigned.
+        self.assertEqual(
+            klein.policy,
+            {
+                "image": studio_meta.image_for_family("klein", doc),
+                **studio_meta.probe_settings_for_family("klein", doc),
+            },
+        )
+        self.assertEqual(
+            snofs.policy,
+            {
+                "image": studio_meta.image_for_family("snofs", doc),
+                **studio_meta.probe_settings_for_family("snofs", doc),
+            },
+        )
         self.assertEqual(
             klein.policy["image"],
             studio_meta.image_for_family("klein", studio_meta.default()),
@@ -921,18 +970,20 @@ class RoutingByCheckpointListTest(unittest.TestCase):
         return {"prompt": {"94": {"class_type": "UNETLoader", "inputs": {"unet_name": unet}}}}
 
     def test_three_profiles_each_route_their_own_checkpoint(self) -> None:
+        """From another profile's form, each checkpoint routes to the profile that lists it."""
         allp = self._all()
-        for name, unet in (
-            ("klein", self.KLEIN_DISTILLED),
-            ("snofs", SNOFS_UNET),
-            ("third", self.KLEIN_THIRD),
+        for name, unet, form in (
+            ("klein", self.KLEIN_DISTILLED, "snofs"),
+            ("snofs", SNOFS_UNET, "klein"),
+            ("third", self.KLEIN_THIRD, "klein"),
         ):
             with self.subTest(profile=name):
-                got = route_payload(self._graph(unet), allp)
-                self.assertIsNotNone(got)
-                assert got is not None
-                self.assertEqual(got[0], name)
-                self.assertEqual(got[1].gateway, allp[name].gateway)
+                route, refusal = plan_route(self._graph(unet), allp[form], allp)
+                self.assertEqual(refusal, "")
+                self.assertIsNotNone(route)
+                self.assertIsNot(route, None)
+                self.assertEqual(route.name, name)
+                self.assertEqual(route.profile.gateway, allp[name].gateway)
 
     def test_a_checkpoint_in_no_list_is_refused_with_a_reason(self) -> None:
         allp = self._all()
@@ -940,16 +991,21 @@ class RoutingByCheckpointListTest(unittest.TestCase):
         self.assertIsNone(route)
         self.assertIn("mystery.safetensors", refusal)
         self.assertIn("No profile lists", refusal)
-        self.assertIsNone(route_payload(self._graph("mystery.safetensors"), allp))
 
     def test_changing_only_a_profiles_list_changes_the_target(self) -> None:
         allp = self._all()
         moved = "flux-2-klein-4b-fp8.safetensors"
         allp["klein"].checkpoints.append(moved)
-        self.assertEqual(route_payload(self._graph(moved), allp)[0], "klein")
+        route, refusal = plan_route(self._graph(moved), allp["snofs"], allp)
+        self.assertEqual(refusal, "")
+        self.assertIsNot(route, None)
+        self.assertEqual(route.name, "klein")
         self.assertTrue(remove_checkpoint(allp["klein"], moved))
         allp["third"].checkpoints.append(moved)
-        self.assertEqual(route_payload(self._graph(moved), allp)[0], "third")
+        route, refusal = plan_route(self._graph(moved), allp["snofs"], allp)
+        self.assertEqual(refusal, "")
+        self.assertIsNot(route, None)
+        self.assertEqual(route.name, "third")
 
     def test_a_checkpoint_two_profiles_list_is_refused_as_ambiguous(self) -> None:
         allp = self._all()
@@ -961,16 +1017,16 @@ class RoutingByCheckpointListTest(unittest.TestCase):
         self.assertIsNone(route)
         self.assertIn("ambiguous", refusal)
 
-    def test_a_profile_that_mixes_families_is_refused(self) -> None:
+    def test_a_profile_that_mixes_families_routes_with_a_warning(self) -> None:
         allp = self._all()
         # SNOFS on one profile only, which also lists a klein cut.
         allp["snofs"].checkpoints = []
         allp["third"].checkpoints = [self.KLEIN_THIRD, SNOFS_UNET]
         self.assertIn("2 unet families", mixed_family_reason(allp["third"]))
         route, refusal = plan_route(self._graph(SNOFS_UNET), allp["klein"], allp)
-        self.assertIsNone(route)
-        self.assertIn("unet families", refusal)
-        self.assertIsNone(route_payload(self._graph(SNOFS_UNET), allp))
+        self.assertEqual(refusal, "")
+        self.assertIsNot(route, None)
+        self.assertEqual(route.name, "third")
 
     def test_the_profile_that_lists_it_is_left_alone(self) -> None:
         allp = self._all()
@@ -980,6 +1036,38 @@ class RoutingByCheckpointListTest(unittest.TestCase):
         route, refusal = plan_route(self._graph(SNOFS_UNET), allp["snofs"], allp)
         self.assertIsNone(route)
         self.assertEqual(refusal, "")
+
+
+class TruncatedStoreDegrades(unittest.TestCase):
+    """C2: a half-written studio-profiles.json must not abort load_all.
+
+    ``_save_doc`` writes in place, so a crash mid-write leaves truncated JSON.
+    The loader has to read that as "no profiles" — an app that raises there does
+    not start at all — and the store has to be writable again afterwards.
+    """
+
+    def setUp(self) -> None:
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.path = Path(self._td.name) / "studio-profiles.json"
+
+    def test_a_truncated_file_reads_as_no_profiles(self) -> None:
+        self.path.write_text(
+            '{"profiles": {"klein": {"name": "kle', encoding="utf-8"
+        )
+        self.assertEqual(load_all(self.path), {})
+
+    def test_empty_non_json_and_wrong_shaped_files_read_as_no_profiles(self) -> None:
+        for blob in ("", "   ", "not json at all", '["a", "list"]', '{"profiles": "nope"}'):
+            with self.subTest(blob=blob):
+                self.path.write_text(blob, encoding="utf-8")
+                self.assertEqual(load_all(self.path), {})
+
+    def test_the_store_is_writable_again_after_a_truncated_read(self) -> None:
+        self.path.write_text('{"profiles": {"klein": ', encoding="utf-8")
+        self.assertEqual(load_all(self.path), {}, "the broken file reads as empty")
+        save_all({"klein": default_profile()}, self.path)
+        self.assertEqual(sorted(load_all(self.path)), ["klein"], "and it saves again")
 
 
 if __name__ == "__main__":

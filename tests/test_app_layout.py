@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import http.server
+import inspect
 import json
 import os
 import socket
 import sys
 import tempfile
+import textwrap
 import threading
 import time
 import unittest
@@ -21,6 +23,7 @@ sys.path.insert(0, str(TOOLS))
 
 import request_json as rj  # noqa: E402
 from lora_store import DEFAULT_KLEIN_LORA_IDS  # noqa: E402
+from tests.test_launch import _TempPaths  # noqa: E402
 
 # Every app construction in this module builds a queue that writes its container
 # ledger. Redirect it here, once, for both copies of salad_queue (the app imports
@@ -32,13 +35,35 @@ from salad_studio import image_deploy as _image_deploy  # noqa: E402
 from salad_studio import salad_queue as _pkg_queue  # noqa: E402
 from salad_studio import vast as _vast  # noqa: E402
 
-_top_queue.LEDGER_PATH = Path(_LEDGER_DIR.name) / "studio-queue.json"
-_pkg_queue.LEDGER_PATH = _top_queue.LEDGER_PATH
 # Same reason for the Vast.ai page: its engine choice decides where a Generate
 # press goes, so a window built here must not read the user's own file. The
-# Images page's store is read at construction for the same reason.
-_vast.INSTANCES_PATH = Path(_LEDGER_DIR.name) / "studio-vast.json"
-_image_deploy.SETTINGS_PATH = Path(_LEDGER_DIR.name) / "studio-images.json"
+# Images page's store is read at construction for the same reason. Both are put
+# back by tearDownModule, so no later module inherits this redirect.
+_STORES = (
+    (_top_queue, "LEDGER_PATH"),
+    (_pkg_queue, "LEDGER_PATH"),
+    (_vast, "INSTANCES_PATH"),
+    (_image_deploy, "SETTINGS_PATH"),
+)
+_STORES_SAVED: list[tuple[object, str, Path]] = []
+
+
+def setUpModule() -> None:
+    """Redirect the stores a window built in this module reads and writes."""
+    for module, name in _STORES:
+        _STORES_SAVED.append((module, name, getattr(module, name)))
+    ledger = Path(_LEDGER_DIR.name) / "studio-queue.json"
+    _top_queue.LEDGER_PATH = ledger
+    _pkg_queue.LEDGER_PATH = ledger
+    _vast.INSTANCES_PATH = Path(_LEDGER_DIR.name) / "studio-vast.json"
+    _image_deploy.SETTINGS_PATH = Path(_LEDGER_DIR.name) / "studio-images.json"
+
+
+def tearDownModule() -> None:
+    """Put the shipped stores back: a later module must see them, not this redirect."""
+    for module, name, saved in reversed(_STORES_SAVED):
+        setattr(module, name, saved)
+    _STORES_SAVED.clear()
 
 
 class AppTabs(unittest.TestCase):
@@ -77,7 +102,7 @@ class AppTabs(unittest.TestCase):
             extras = Path(td) / "studio-loras.json"
             klein = find_lora("civitai:2334190@2625692", extras)
             ultra = find_lora("civitai:796382@1026423", extras)
-        assert klein is not None and ultra is not None
+        self.assertTrue(klein is not None and ultra is not None)
         self.assertIn("Flux.2 Klein", config_label(klein))
         self.assertIn("Flux.1 Dev", config_label(ultra))
         self.assertEqual(family_label(klein), "Flux.2 Klein")
@@ -94,126 +119,182 @@ else:
     _TK_IMPORT_ERROR = None
 
 
+def _old_form(func, edits: list[tuple[str, str]]):
+    """The shipped function with a pass's edits undone: the old handler, rebuilt.
+
+    ``edits`` are (shipped text, the text it replaced) pairs, applied to the
+    source ``inspect.getsource`` returns. The old behaviour is therefore rebuilt
+    from the shipped file rather than copied into a literal that could drift
+    away from it, and a test can drive it to show what the fix changed.
+    """
+    source = textwrap.dedent(inspect.getsource(func))
+    for new, old in edits:
+        assert new in source, f"{func.__name__} no longer holds {new!r}"
+        source = source.replace(new, old, 1)
+    namespace: dict = {}
+    exec(compile(source, f"<old {func.__name__}>", "exec"), func.__globals__, namespace)
+    return namespace[func.__name__]
+
+
+def _redirect_store(module, name: str, value) -> tuple:
+    """Point a module-level store at ``value``; return the undo for ``addCleanup``.
+
+    Every window class here redirects the stores the app reads and writes, and
+    Tk windows are built in many of them. Without the undo the redirect outlives
+    the class, and a later ``_TempPaths`` then saves the redirect as though it
+    were the shipped path, so the leak outlives the whole run.
+    """
+    saved = (module, name, getattr(module, name))
+    setattr(module, name, value)
+    return saved
+
+
+def _put_stores_back(saved: list) -> None:
+    """Undo what ``_redirect_store`` did, newest first."""
+    for module, name, value in reversed(saved):
+        setattr(module, name, value)
+
+
+def _layout_window(app, size: str) -> None:
+    """Lay ``app`` out at ``size`` and keep it there while the test measures.
+
+    A window holds the size it opened with and re-applies it on a few startup
+    timers (``SaladStudio._hold_opened_size``), shrinking a window that grew by
+    more than 48 px; one of those landing mid-measurement would resize the
+    window under the test. Telling the window that this is the size it opened at
+    makes those re-applies no-ops.
+    """
+    want_w, want_h = (int(part) for part in size.split("x"))
+    app.geometry(size)
+    app.deiconify()
+    deadline = time.time() + 10.0
+    while time.time() < deadline:
+        app.update()
+        if app.winfo_width() > 100 and app.winfo_height() > 100:
+            break
+        time.sleep(0.02)
+    app._opened_width, app._opened_height = want_w, want_h
+    app.geometry(size)
+    for _ in range(5):
+        app.update()
+        time.sleep(0.02)
+    app.update_idletasks()
+    assert (int(app.winfo_width()), int(app.winfo_height())) == (want_w, want_h), (
+        f"the window must be laid out at {size} for this measurement, not "
+        f"{app.winfo_width()}x{app.winfo_height()}"
+    )
+
+
 @unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
 class ConfigCheckboxCompat(unittest.TestCase):
-    def test_mismatched_checkboxes_disabled_for_graph(self) -> None:
+    def setUp(self) -> None:
         try:
             probe = tk.Tk()
             probe.withdraw()
             probe.destroy()
         except tk.TclError as e:
-            raise unittest.SkipTest(f"Tk cannot initialize: {e}") from e
-
+            self.skipTest(f"Tk cannot initialize: {e}")
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        tmp = Path(self._td.name)
         from salad_studio.app import SaladStudio
         from salad_studio import lora_store, profiles
 
+        saved = [
+            _redirect_store(profiles, "PROFILES_PATH", tmp / "studio-profiles.json"),
+            _redirect_store(lora_store, "EXTRAS_PATH", tmp / "studio-loras.json"),
+        ]
+        self.addCleanup(_put_stores_back, saved)
+        self.app = SaladStudio(show=False)
+        self.app.withdraw()
+        self.app.update_idletasks()
+        self.addCleanup(self.app.destroy)
+
+    def test_mismatched_checkboxes_disabled_for_graph(self) -> None:
+        from salad_studio import lora_store
+
+        app = self.app
         klein_id = "civitai:2334190@2625692"
         ultra_id = "civitai:796382@1026423"
-        with tempfile.TemporaryDirectory() as td:
-            tmp = Path(td)
-            profiles.PROFILES_PATH = tmp / "studio-profiles.json"
-            lora_store.EXTRAS_PATH = tmp / "studio-loras.json"
-            app = SaladStudio(show=False)
-            app.withdraw()
-            try:
-                app.update_idletasks()
-                cols = tuple(app.lora_tree.cget("columns"))
-                self.assertIn("model", cols)
-                self.assertIn("verified", cols)
-                self.assertIn("version", cols)
-                self.assertEqual(app.lora_tree.heading("model", "text"), "Model")
-                self.assertEqual(app.lora_tree.heading("verified", "text"), "Verified")
-                app.var_graph.set(lora_store.graph_label("klein"))
-                app.update_idletasks()
-                self.assertEqual(
-                    str(app._lora_checks[ultra_id].cget("state")), "disabled"
-                )
-                self.assertIn("Flux.1 Dev", str(app._lora_checks[ultra_id].cget("text")))
-                klein_state = str(app._lora_checks[klein_id].cget("state"))
-                self.assertIn(klein_state, ("normal", "active"))
-                self.assertIn("Flux.2 Klein", str(app._lora_checks[klein_id].cget("text")))
-                app.var_graph.set(lora_store.graph_label("flux1"))
-                app.update_idletasks()
-                self.assertEqual(
-                    str(app._lora_checks[klein_id].cget("state")), "disabled"
-                )
-                ultra_state = str(app._lora_checks[ultra_id].cget("state"))
-                self.assertIn(ultra_state, ("normal", "active"))
-            finally:
-                app.destroy()
+        cols = tuple(app.lora_tree.cget("columns"))
+        self.assertIn("model", cols)
+        self.assertIn("verified", cols)
+        self.assertIn("version", cols)
+        self.assertEqual(app.lora_tree.heading("model", "text"), "Model")
+        self.assertEqual(app.lora_tree.heading("verified", "text"), "Verified")
+        app.var_graph.set(lora_store.graph_label("klein"))
+        app.update_idletasks()
+        self.assertEqual(
+            str(app._lora_checks[ultra_id].cget("state")), "disabled"
+        )
+        self.assertIn("Flux.1 Dev", str(app._lora_checks[ultra_id].cget("text")))
+        klein_state = str(app._lora_checks[klein_id].cget("state"))
+        self.assertIn(klein_state, ("normal", "active"))
+        self.assertIn("Flux.2 Klein", str(app._lora_checks[klein_id].cget("text")))
+        app.var_graph.set(lora_store.graph_label("flux1"))
+        app.update_idletasks()
+        self.assertEqual(
+            str(app._lora_checks[klein_id].cget("state")), "disabled"
+        )
+        ultra_state = str(app._lora_checks[ultra_id].cget("state"))
+        self.assertIn(ultra_state, ("normal", "active"))
 
     def test_graph_combo_uses_family_labels_and_loras_do_not_vscroll(self) -> None:
-        try:
-            probe = tk.Tk()
-            probe.withdraw()
-            probe.destroy()
-        except tk.TclError as e:
-            raise unittest.SkipTest(f"Tk cannot initialize: {e}") from e
+        from salad_studio.app import LORA_CHECK_COLUMNS
+        from salad_studio import lora_store, theme
 
-        from salad_studio.app import LORA_CHECK_COLUMNS, SaladStudio
-        from salad_studio import lora_store, profiles, theme
-
+        app = self.app
         klein_id = "civitai:2334190@2625692"
         ultra_id = "civitai:796382@1026423"
-        with tempfile.TemporaryDirectory() as td:
-            tmp = Path(td)
-            profiles.PROFILES_PATH = tmp / "studio-profiles.json"
-            lora_store.EXTRAS_PATH = tmp / "studio-loras.json"
-            app = SaladStudio(show=False)
-            app.withdraw()
-            try:
-                app.update_idletasks()
-                shown = tuple(app.graph_combo.cget("values"))
-                self.assertIn("Flux.1 Dev", shown)
-                self.assertIn("Flux.2 Klein", shown)
-                self.assertEqual(shown, lora_store.GRAPH_CHOICES)
-                self.assertEqual(app.var_graph.get(), "Flux.2 Klein")
-                for cb in app._lora_checks.values():
-                    text = str(cb.cget("text"))
-                    self.assertRegex(
-                        text,
-                        r"\[(Flux\.1|Flux\.2|Pony|SDXL|Krea|Illustrious|unknown)",
-                        text,
-                    )
-                app.var_graph.set("Flux.2 Klein")
-                app.update_idletasks()
-                self.assertEqual(
-                    str(app._lora_checks[ultra_id].cget("state")), "disabled"
-                )
-                self.assertIn(
-                    str(app._lora_checks[klein_id].cget("state")),
-                    ("normal", "active"),
-                )
-                app.var_graph.set("Flux.1 Dev")
-                app.update_idletasks()
-                self.assertEqual(
-                    str(app._lora_checks[klein_id].cget("state")), "disabled"
-                )
-                self.assertIn(
-                    str(app._lora_checks[ultra_id].cget("state")),
-                    ("normal", "active"),
-                )
-                self.assertFalse(hasattr(app, "_lora_canvas"))
-                self.assertFalse(hasattr(app, "_lora_vscroll"))
-                for child in app._config.winfo_children():
-                    if isinstance(child, ttk.Scrollbar):
-                        self.assertNotEqual(str(child.cget("orient")), "vertical")
-                cols = {
-                    int(cb.grid_info()["column"])
-                    for cb in app._lora_checks.values()
-                }
-                self.assertGreaterEqual(len(cols), 2)
-                self.assertLessEqual(max(cols), LORA_CHECK_COLUMNS - 1)
-                style = ttk.Style(app)
-                expand = style.map("TNotebook.Tab", "expand")
-                joined = str(expand)
-                self.assertIn("selected", joined)
-                sel = theme.NOTEBOOK_TAB_EXPAND_SELECTED
-                unsel = theme.NOTEBOOK_TAB_EXPAND_UNSELECTED
-                self.assertEqual(sel[3], 0)
-                self.assertGreater(unsel[3], 0)
-            finally:
-                app.destroy()
+        shown = tuple(app.graph_combo.cget("values"))
+        self.assertIn("Flux.1 Dev", shown)
+        self.assertIn("Flux.2 Klein", shown)
+        self.assertEqual(shown, lora_store.GRAPH_CHOICES)
+        self.assertEqual(app.var_graph.get(), "Flux.2 Klein")
+        for cb in app._lora_checks.values():
+            text = str(cb.cget("text"))
+            self.assertRegex(
+                text,
+                r"\[(Flux\.1|Flux\.2|Pony|SDXL|Krea|Illustrious|unknown)",
+                text,
+            )
+        app.var_graph.set("Flux.2 Klein")
+        app.update_idletasks()
+        self.assertEqual(
+            str(app._lora_checks[ultra_id].cget("state")), "disabled"
+        )
+        self.assertIn(
+            str(app._lora_checks[klein_id].cget("state")),
+            ("normal", "active"),
+        )
+        app.var_graph.set("Flux.1 Dev")
+        app.update_idletasks()
+        self.assertEqual(
+            str(app._lora_checks[klein_id].cget("state")), "disabled"
+        )
+        self.assertIn(
+            str(app._lora_checks[ultra_id].cget("state")),
+            ("normal", "active"),
+        )
+        self.assertFalse(hasattr(app, "_lora_canvas"))
+        self.assertFalse(hasattr(app, "_lora_vscroll"))
+        for child in app._config.winfo_children():
+            if isinstance(child, ttk.Scrollbar):
+                self.assertNotEqual(str(child.cget("orient")), "vertical")
+        cols = {
+            int(cb.grid_info()["column"])
+            for cb in app._lora_checks.values()
+        }
+        self.assertGreaterEqual(len(cols), 2)
+        self.assertLessEqual(max(cols), LORA_CHECK_COLUMNS - 1)
+        style = ttk.Style(app)
+        expand = style.map("TNotebook.Tab", "expand")
+        joined = str(expand)
+        self.assertIn("selected", joined)
+        sel = theme.NOTEBOOK_TAB_EXPAND_SELECTED
+        unsel = theme.NOTEBOOK_TAB_EXPAND_UNSELECTED
+        self.assertEqual(sel[3], 0)
+        self.assertGreater(unsel[3], 0)
 
 
 def _editor_body(app) -> dict:
@@ -251,16 +332,20 @@ class LiveFieldSync(unittest.TestCase):
         self.tokens = tokens
         self.prompt_catalog = prompt_catalog
         self.prompt_history = prompt_history
-        profiles.PROFILES_PATH = tmp / "studio-profiles.json"
-        lora_store.EXTRAS_PATH = tmp / "studio-loras.json"
-        # The app's own log() reads the token store; keep it off the real files.
-        tokens.LOCAL_PATH = tmp / "studio-tokens.json"
-        tokens.CONFIG_HOME = tmp / "defaults"
-        prompt_catalog.CATALOG_PATH = tmp / "studio-prompt-catalog.json"
-        prompt_history.HISTORY_PATH = tmp / "studio-prompt-history.json"
-        prompt_history.THUMBS_DIR = tmp / "studio-prompt-thumbs"
+        saved = [
+            _redirect_store(profiles, "PROFILES_PATH", tmp / "studio-profiles.json"),
+            _redirect_store(lora_store, "EXTRAS_PATH", tmp / "studio-loras.json"),
+            # The app's own log() reads the token store; keep it off the real files.
+            _redirect_store(tokens, "LOCAL_PATH", tmp / "studio-tokens.json"),
+            _redirect_store(tokens, "CONFIG_HOME", tmp / "defaults"),
+            _redirect_store(prompt_catalog, "CATALOG_PATH", tmp / "studio-prompt-catalog.json"),
+            _redirect_store(prompt_history, "HISTORY_PATH", tmp / "studio-prompt-history.json"),
+            _redirect_store(prompt_history, "THUMBS_DIR", tmp / "studio-prompt-thumbs"),
+        ]
         from salad_studio import ui_state
-        ui_state.STATE_PATH = tmp / "studio-ui.json"
+
+        saved.append(_redirect_store(ui_state, "STATE_PATH", tmp / "studio-ui.json"))
+        self.addCleanup(_put_stores_back, saved)
         self.app = SaladStudio(show=False)
         self.app.withdraw()
         self.app.update_idletasks()
@@ -323,7 +408,7 @@ class LiveFieldSync(unittest.TestCase):
         app.lora_tree.event_generate("<<TreeviewSelect>>")
         app.update_idletasks()
         item0 = self.lora_store.find_lora(first)
-        assert item0 is not None
+        self.assertIsNot(item0, None)
         self.assertEqual(app.var_lora_name.get(), str(item0.get("name") or ""))
         self.assertEqual(app.var_lora_family.get(), self.lora_store.family_label(item0))
         sm0, sc0 = self.lora_store.strengths_for(item0)
@@ -339,7 +424,7 @@ class LiveFieldSync(unittest.TestCase):
         app.lora_tree.event_generate("<<TreeviewSelect>>")
         app.update_idletasks()
         item1 = self.lora_store.find_lora(second)
-        assert item1 is not None
+        self.assertIsNot(item1, None)
         self.assertEqual(app.var_lora_name.get(), str(item1.get("name") or ""))
         self.assertEqual(app.var_lora_family.get(), self.lora_store.family_label(item1))
         sm1, sc1 = self.lora_store.strengths_for(item1)
@@ -350,8 +435,6 @@ class LiveFieldSync(unittest.TestCase):
             app.var_lora_file.get(),
             str(src1.get("filename") or "") or self.lora_store.comfy_lora_name(item1),
         )
-        if (item0.get("name") or "") != (item1.get("name") or ""):
-            self.assertNotEqual(str(item0.get("name") or ""), app.var_lora_name.get())
 
     @staticmethod
     def _button_texts(widget) -> set[str]:
@@ -556,7 +639,7 @@ class LiveFieldSync(unittest.TestCase):
 
         # Re-read through a FRESH call on the real store the app wrote to.
         stored = self.lora_store.find_lora(want_id, self.lora_store.EXTRAS_PATH)
-        assert stored is not None, "Add did not persist the row to the extras store"
+        self.assertIsNot(stored, None, "Add did not persist the row to the extras store")
         self.assertEqual(str(stored["source"]["filename"]), "added_from_the_ui.safetensors")
         self.assertEqual(str(stored["name"]), "Added From UI")
         self.assertAlmostEqual(float(stored["strength_model"]), 0.75)
@@ -690,7 +773,7 @@ class LiveFieldSync(unittest.TestCase):
         app.catalog_tree.selection_set(entry_id)
         app._on_catalog_update_json()
         stored = self.prompt_catalog.get_entry(entry_id)
-        assert stored is not None
+        self.assertIsNot(stored, None)
         self.assertEqual(
             stored["request"]["prompt"]["74"]["inputs"]["text"], "v2"
         )
@@ -700,7 +783,7 @@ class LiveFieldSync(unittest.TestCase):
         app.var_cat_desc.set("second pass")
         app._on_catalog_save_meta()
         stored = self.prompt_catalog.get_entry(entry_id)
-        assert stored is not None
+        self.assertIsNot(stored, None)
         self.assertEqual(stored["name"], "Cover scene v2")
         self.assertEqual(stored["description"], "second pass")
         self.assertEqual(
@@ -1194,51 +1277,121 @@ class LiveFieldSync(unittest.TestCase):
                     )
 
     def test_the_config_page_holds_all_of_its_content(self) -> None:
-        """The merged page is taller than a window, and the canvas holds all of it."""
+        """The Config page itself does not scroll; each section tab holds its own."""
+        from salad_studio import app as app_mod
+
         app = self.app
         app.update_idletasks()
-        canvas = app._config_canvas
-        bbox = canvas.bbox("all")
-        self.assertIsNotNone(bbox, "the page's content must be in the scrollable canvas")
-        assert bbox is not None
-        self.assertGreaterEqual(
-            int(bbox[3]),
-            app._config_body.winfo_reqheight(),
-            "the scroll region must cover the whole page",
+        self.assertNotIn(
+            app._config,
+            app._scroll_canvases,
+            "the Config page itself does not scroll",
         )
-        self.assertGreater(
-            int(bbox[3]), 720, "the merged page is taller than a window, so it scrolls"
+        self.assertEqual(
+            tuple(key for key, _label, _builder in app_mod.CONFIG_SECTIONS),
+            ("profile", "images", "policy", "vast"),
         )
+        for key, _label, _builder in app_mod.CONFIG_SECTIONS:
+            with self.subTest(section=key):
+                page = app._config_section_pages[key]
+                body = app._config_section_bodies[key]
+                canvas = app._scroll_canvases[page]
+                app._config_tabs.select(page)
+                app.update_idletasks()
+                bbox = canvas.bbox("all")
+                self.assertIsNotNone(
+                    bbox, f"{key}'s content must be in that section's scrollable canvas"
+                )
+                self.assertGreaterEqual(
+                    int(bbox[3]),
+                    body.winfo_reqheight(),
+                    f"{key}'s scroll region must cover the whole section",
+                )
         for name in ("checkpoint_tree", "image_env_tree", "image_script", "vast_tree"):
             with self.subTest(widget=name):
                 self.assertIn(
                     app._config,
                     self._ancestors(getattr(app, name)),
-                    f"{name} must be inside the config page's scrollable area",
+                    f"{name} must still live on the Config page",
                 )
 
     def test_the_wheel_scrolls_the_config_page(self) -> None:
+        """T2: the real canvas moves, not a mocked method.
+
+        Each Config section scrolls on its own. ``yscrollincrement`` is set so a
+        wheel unit is a known number of pixels: an unmapped window is one pixel
+        tall, and "units" would otherwise move the view by a tenth of that.
+        """
         app = self.app
-        canvas = app._config_canvas
-        with mock.patch.object(canvas, "yview_scroll") as scroll:
-            app._on_config_wheel(type("E", (), {"delta": -120})())
-            scroll.assert_called_once_with(1, "units")
-            scroll.reset_mock()
-            app._on_config_wheel(type("E", (), {"delta": 240})())
-            scroll.assert_called_once_with(-2, "units")
-            scroll.reset_mock()
-            app._on_config_wheel(type("E", (), {"delta": 0})())
-            scroll.assert_not_called()
+        page = app._config_section_pages["images"]
+        canvas = app._scroll_canvases[page]
+        body_height = 4000
+        canvas.configure(yscrollincrement=40, scrollregion=(0, 0, 900, body_height))
+        app._claim_wheel(page)
+        app.update_idletasks()
+
+        def wheel(delta: int) -> None:
+            app._on_page_wheel(type("E", (), {"delta": delta})())
+
+        before = canvas.yview()[0]
+        self.assertEqual(before, 0.0, "the page starts at the top")
+        wheel(-120)
+        app.update_idletasks()
+        after = canvas.yview()[0]
+        self.assertGreater(after, before, "one wheel notch must scroll the page down")
+        self.assertAlmostEqual(
+            after - before,
+            40 / body_height,
+            places=4,
+            msg="one notch is one unit, and a unit is the canvas's increment",
+        )
+
+        wheel(240)
+        app.update_idletasks()
+        self.assertAlmostEqual(
+            canvas.yview()[0],
+            0.0,
+            places=4,
+            msg="two notches up come back to the top",
+        )
+        wheel(0)
+        app.update_idletasks()
+        self.assertEqual(canvas.yview()[0], 0.0, "a wheel event with no delta moves nothing")
 
     def test_the_wheel_is_claimed_only_while_the_pointer_is_on_the_page(self) -> None:
-        """The other pages and the history strip keep their own scrolling."""
+        """The other pages and the history strip keep their own scrolling.
+
+        The handler is bound once for the life of the window and gates itself on
+        the pointer, so leaving the page never removes another page's binding.
+        """
         app = self.app
-        app._on_config_enter()
-        self.assertTrue(app.bind_all("<MouseWheel>"), "the page must claim the wheel")
-        app._on_config_leave()
-        self.assertFalse(
-            app.bind_all("<MouseWheel>"), "and hand it back when the pointer leaves"
+        page = app._config_section_pages["images"]
+        canvas = app._scroll_canvases[page]
+        canvas.configure(yscrollincrement=40, scrollregion=(0, 0, 900, 4000))
+        app.update_idletasks()
+
+        app._release_wheel(page)
+        app._on_page_wheel(type("E", (), {"delta": -120})())
+        app.update_idletasks()
+        self.assertEqual(
+            canvas.yview()[0], 0.0, "the wheel must not scroll a page it has not claimed"
         )
+        self.assertTrue(
+            app.bind_all("<MouseWheel>"),
+            "and the binding stays installed, so no other page loses its own",
+        )
+
+        app._claim_wheel(page)
+        app._on_page_wheel(type("E", (), {"delta": -120})())
+        app.update_idletasks()
+        self.assertGreater(canvas.yview()[0], 0.0, "with the pointer on it, it scrolls")
+
+        # A binding another page installed survives this page's whole cycle.
+        other = mock.Mock()
+        app.bind_all("<MouseWheel>", other, add="+")
+        app._claim_wheel(page)
+        app._release_wheel(page)
+        self.assertTrue(app.bind_all("<MouseWheel>"), "the other page's binding is intact")
 
     def test_log_does_not_reread_tokens_once_the_cache_is_warm(self) -> None:
         """M9: log() redaction must not hit the token files per line."""
@@ -1419,13 +1572,20 @@ class NewPagesAndPlacement(unittest.TestCase):
 
         self.tokens = tokens
         self.lora_store = lora_store
-        profiles.PROFILES_PATH = self.tmp / "studio-profiles.json"
-        lora_store.EXTRAS_PATH = self.tmp / "studio-loras.json"
-        tokens.LOCAL_PATH = self.tmp / "studio-tokens.json"
-        tokens.CONFIG_HOME = self.tmp / "defaults"
-        prompt_catalog.CATALOG_PATH = self.tmp / "studio-prompt-catalog.json"
-        prompt_history.HISTORY_PATH = self.tmp / "studio-prompt-history.json"
-        ui_state.STATE_PATH = self.tmp / "studio-ui.json"
+        saved = [
+            _redirect_store(profiles, "PROFILES_PATH", self.tmp / "studio-profiles.json"),
+            _redirect_store(lora_store, "EXTRAS_PATH", self.tmp / "studio-loras.json"),
+            _redirect_store(tokens, "LOCAL_PATH", self.tmp / "studio-tokens.json"),
+            _redirect_store(tokens, "CONFIG_HOME", self.tmp / "defaults"),
+            _redirect_store(
+                prompt_catalog, "CATALOG_PATH", self.tmp / "studio-prompt-catalog.json"
+            ),
+            _redirect_store(
+                prompt_history, "HISTORY_PATH", self.tmp / "studio-prompt-history.json"
+            ),
+            _redirect_store(ui_state, "STATE_PATH", self.tmp / "studio-ui.json"),
+        ]
+        self.addCleanup(_put_stores_back, saved)
         from salad_studio.app import SaladStudio
 
         self.app = SaladStudio(show=False)
@@ -1615,6 +1775,145 @@ class NewPagesAndPlacement(unittest.TestCase):
             rj.config_from_payload(json.loads(dumped))["prompt_text"], "REBUILT POSITIVE"
         )
         self.assertIn("rebuilt", app.status.get())
+
+    def test_commit_says_rebuilt_for_a_graph_the_patch_cannot_touch(self) -> None:
+        """A parseable graph without the CFG wiring is rebuilt, not patched.
+
+        ``patchable`` used to be decided by ``parse_request_json`` alone, so this
+        graph took the "committed to the JSON" branch while the editor was
+        silently replaced from Prompt Settings.
+        """
+        app = self.app
+        app.editor_text.delete("1.0", "end")
+        app.editor_text.insert(
+            "1.0",
+            json.dumps(
+                {
+                    "prompt": {
+                        "1": {
+                            "class_type": "Note",
+                            "inputs": {"text": "KEEP-ME-MARKER"},
+                        },
+                        "9": {"class_type": "SaveImage", "inputs": {}},
+                    }
+                }
+            ),
+        )
+        app.helper_adj_pos.delete("1.0", "end")
+        app.helper_adj_pos.insert("1.0", "UNPATCHABLE POSITIVE")
+        app._on_prompt_commit()
+        app.update_idletasks()
+        self.assertIn("rebuilt", app.status.get())
+        self.assertNotIn("committed to the prompts and the JSON", app.status.get())
+
+    def test_rebuilding_from_json_does_not_verify_a_lora_on_the_main_thread(self) -> None:
+        """Loading a graph must not run one live Civitai check per LoRA."""
+        from salad_studio import app as app_mod
+
+        app = self.app
+        app.editor_text.delete("1.0", "end")
+        app.editor_text.insert("1.0", json.dumps({"prompt": {}}))
+        cfg = {
+            "selected_ids": [],
+            "unmatched_loras": [
+                {"lora_name": "https://civitai.com/api/download/models/2795018"}
+            ],
+        }
+        seen: dict = {}
+
+        def fake_add(name, **kwargs):
+            seen.update(kwargs)
+            return {"id": "civitai:1@2795018"}
+
+        with mock.patch.object(
+            app_mod.request_json, "config_from_payload", return_value=cfg
+        ), mock.patch.object(app_mod.lora_store, "add_lora", side_effect=fake_add):
+            app._rebuild_from_json()
+        self.assertFalse(
+            seen.get("verify", True), "the main-thread path must not go live"
+        )
+
+    def test_switching_to_vast_does_not_keep_a_salad_gateway(self) -> None:
+        """A Salad URL in vast mode POSTs the graph to the wrong host."""
+        app = self.app
+        app.var_profile_mode.set("salad")
+        app.var_gateway.set("https://apple-gadogado-5d0vs4l8x0j51hwy.salad.cloud")
+        app._on_profile_mode()
+        self.assertIn("salad.cloud", app.var_gateway.get())
+        app.var_profile_mode.set("vast")
+        app._on_profile_mode()
+        self.assertNotIn("salad.cloud", app.var_gateway.get())
+
+    def test_selecting_a_vast_row_points_the_target_box_at_it(self) -> None:
+        app = self.app
+        app._vast_doc = {
+            "active": "",
+            "instances": [
+                {"endpoint": "http://203.0.113.9:31234"},
+                {"endpoint": "http://198.51.100.7:40111"},
+            ],
+        }
+        app._refresh_vast_page()
+        rows = app.vast_tree.get_children()
+        app.vast_tree.selection_set(rows[1])
+        app.var_profile_mode.set("vast")
+        app._on_vast_select()
+        self.assertEqual(app.var_gateway.get(), "http://198.51.100.7:40111")
+
+    def test_removing_an_image_asks_first_and_honours_a_no(self) -> None:
+        from salad_studio import app as app_mod
+
+        app = self.app
+        entry = {"key": "mine", "source": app_mod.image_deploy.SOURCE_SETTINGS}
+        with mock.patch.object(app, "_image_entry", return_value=entry), mock.patch.object(
+            app_mod.image_deploy, "remove_image"
+        ) as remove, mock.patch.object(
+            app_mod.messagebox, "askyesno", return_value=False
+        ) as ask:
+            app._on_image_remove_image()
+        self.assertTrue(ask.called, "removing a stored image must ask first")
+        self.assertFalse(remove.called, "a No leaves the image and its env alone")
+        self.assertIn("Kept", app.status.get())
+
+    def test_removing_a_vast_instance_asks_first_and_honours_a_no(self) -> None:
+        from salad_studio import app as app_mod
+
+        app = self.app
+        app._vast_doc = {
+            "active": "",
+            "instances": [{"endpoint": "http://203.0.113.9:31234"}],
+        }
+        app._refresh_vast_page()
+        rows = app.vast_tree.get_children()
+        app.vast_tree.selection_set(rows[0])
+        with mock.patch.object(
+            app_mod.vast, "remove_instance"
+        ) as remove, mock.patch.object(
+            app_mod.messagebox, "askyesno", return_value=False
+        ) as ask:
+            app._on_vast_remove()
+        self.assertTrue(ask.called)
+        self.assertFalse(remove.called)
+        self.assertIn("Kept", app.status.get())
+
+    def test_a_vast_press_with_a_salad_gateway_refuses_before_dispatch(self) -> None:
+        from salad_studio import app as app_mod
+        from salad_studio.profiles import SaladProfile
+
+        app = self.app
+        p = SaladProfile(
+            name="klein",
+            gateway="https://apple-gadogado-5d0vs4l8x0j51hwy.salad.cloud",
+            mode="vast",
+        )
+        payload = {"prompt": {"9": {"class_type": "SaveImage"}}}
+        with mock.patch.object(
+            app_mod.generator, "generate_from_vast"
+        ) as dispatch, mock.patch.object(app_mod.messagebox, "showerror"):
+            app._on_generate_vast(payload, p)
+        self.assertFalse(dispatch.called, "a Salad URL must not reach vast dispatch")
+        self.assertIn("Refused", app.status.get())
+        self.assertIn("Salad gateway", app.status.get())
 
     def _plate(self, name: str = "studio_test.jpg", size: tuple[int, int] = (64, 64)) -> Path:
         """A real JPEG in a temp plate dir, so the image option is hermetic."""
@@ -2326,19 +2625,19 @@ class NewPagesAndPlacement(unittest.TestCase):
         return lambda _gw, _key: {"error": "offline"}
 
     def test_generate_dispatches_when_the_status_word_is_not_ready(self) -> None:
-        """L11, updated: a not-Ready badge no longer refuses Generate.
+        """A booting or unprobed replica is dispatched, and the wait covers the boot.
 
-        A stopped (or unprobed) container is dispatchable now: the queue starts
-        the container the request routes to and the generator waits for its
-        /ready. Only a replica that is gone is refused, which the test below
-        pins.
+        The press refuses only what cannot render at all (a gone replica, and a
+        group the badge says is stopped — the test below pins both). A container
+        that is still coming up is dispatched: the queue reads the group's state
+        again and the generator waits for its /ready.
         """
         from salad_studio import profiles
 
         app = self.app
         self.tokens.write_token("salad", "salad-test-key-1234")
         klein = profiles.load_all()["klein"]
-        for word in ("", "Stopped", "Starting", "Allocating"):
+        for word in ("", "Starting", "Allocating", "Creating", "Downloading 33%"):
             with self.subTest(word=word):
                 app.log_text.delete("1.0", "end")
                 used = self._generate_gateway(
@@ -2348,11 +2647,65 @@ class NewPagesAndPlacement(unittest.TestCase):
                 )
                 self.assertEqual(used, klein.gateway, "the request must reach the queue")
                 self.assertNotIn(
-                    "Generate blocked",
+                    "Generate refused",
                     app.log_text.get("1.0", "end"),
                     f"a {word!r} badge must not be refused",
                 )
         self.assertFalse(app._busy)
+
+    def test_generate_refuses_a_stopped_group_at_the_press(self) -> None:
+        """C1: the press is the gate for a group the badge says is stopped.
+
+        The queue would refuse it a moment later (this app never starts a
+        container), so the press refuses it before anything is queued, and the
+        Logs line, the status line and the dialog carry the same sentence.
+        """
+        from salad_studio import app as app_mod
+        from salad_studio import profiles
+
+        app = self.app
+        self.tokens.write_token("salad", "salad-test-key-1234")
+        klein = profiles.load_all()["klein"]
+        app.editor_text.delete("1.0", "end")
+        app.editor_text.insert(
+            "1.0", json.dumps(self._graph_with_unet(klein.primary_checkpoint))
+        )
+        app._rebuild_from_json()
+        app.var_gateway.set(klein.gateway)
+        app.var_salad_status.set("Stopped")
+        app._last_snaps = {
+            "klein": {"word": "Stopped", "group": {"status": "stopped"}}
+        }
+        app.log_text.delete("1.0", "end")
+        before = len(app.gen_queue.jobs())
+        seen: dict = {}
+
+        def fake_generate(**kwargs):
+            seen.update(kwargs)
+            raise RuntimeError("the press must not have dispatched")
+
+        with mock.patch.object(
+            app_mod.generator, "generate_from_payload", side_effect=fake_generate
+        ), mock.patch.object(app_mod.messagebox, "showinfo") as info, mock.patch(
+            "salad_studio.app.threading.Thread", self._inline_thread()
+        ):
+            app._on_generate()
+            self.assertTrue(self._pump(lambda: not app._busy))
+
+        self.assertFalse(seen, "a stopped group must not be dispatched")
+        self.assertEqual(len(app.gen_queue.jobs()), before, "nothing may be queued")
+        self.assertTrue(info.called, "the press must say why")
+        reason = str(info.call_args[0][1])
+        self.assertIn("klein", reason, "the refusal names the profile")
+        self.assertIn("is down", reason, "and says the container is down")
+        log = app.log_text.get("1.0", "end")
+        self.assertIn("Generate refused", log)
+        self.assertEqual(
+            log.count("is down"),
+            1,
+            f"the refusal must be logged once, not repeated: {log[-400:]}",
+        )
+        self.assertIn("Refused:", app.status.get(), "the status line says refused")
 
     def test_generate_refuses_a_replica_that_is_gone(self) -> None:
         """A down or failed replica is not something a start can fix."""
@@ -2393,7 +2746,7 @@ class NewPagesAndPlacement(unittest.TestCase):
                     self.assertTrue(self._pump(lambda: not app._busy))
                 self.assertFalse(seen, "a gone replica must not be dispatched")
                 self.assertTrue(info.called, "and must say why")
-                self.assertIn("Generate blocked", app.log_text.get("1.0", "end"))
+                self.assertIn("Generate refused", app.log_text.get("1.0", "end"))
 
     def test_generate_routes_a_snofs_graph_off_the_klein_group(self) -> None:
         """Routing must read the GATEWAY's family, not the form's unet.
@@ -2412,7 +2765,7 @@ class NewPagesAndPlacement(unittest.TestCase):
         self.assertEqual(profiles.checkpoint_family(snofs.primary_checkpoint), "snofs")
 
         used = self._generate_gateway(
-            self._graph_with_unet(profiles.SNOFS_UNET), klein.gateway
+            self._graph_with_unet(rj.UNET_SNOFS), klein.gateway
         )
         self.assertEqual(used, snofs.gateway)
 
@@ -2501,7 +2854,7 @@ class NewPagesAndPlacement(unittest.TestCase):
         self.assertEqual(seen.get("gateway"), klein.gateway, "the press must dispatch")
         self.assertEqual(len(app.gen_queue.jobs()), 2, "it queues behind the first")
         self.assertEqual(str(app.gen_btn.cget("state")), "normal", "still live afterwards")
-        self.assertNotIn("Generate blocked", app.log_text.get("1.0", "end"))
+        self.assertNotIn("Generate refused", app.log_text.get("1.0", "end"))
 
     def test_a_repeat_of_the_heads_request_is_not_queued(self) -> None:
         """A repeat of the queue's head adds nothing; behind another it is allowed."""
@@ -2540,7 +2893,7 @@ class NewPagesAndPlacement(unittest.TestCase):
 
         custom = "https://custom.example.test/gateway"
         used = self._generate_gateway(
-            self._graph_with_unet(profiles.SNOFS_UNET), custom
+            self._graph_with_unet(rj.UNET_SNOFS), custom
         )
         self.assertEqual(used, custom)
 
@@ -2556,7 +2909,7 @@ class NewPagesAndPlacement(unittest.TestCase):
         app = self.app
         self.tokens.write_token("salad", "salad-test-key-1234")
         app.editor_text.delete("1.0", "end")
-        app.editor_text.insert("1.0", json.dumps(self._graph_with_unet(profiles.SNOFS_UNET)))
+        app.editor_text.insert("1.0", json.dumps(self._graph_with_unet(rj.UNET_SNOFS)))
         app._rebuild_from_json()
         app.var_salad_status.set("Ready")
 
@@ -2780,6 +3133,1506 @@ class NewPagesAndPlacement(unittest.TestCase):
         self.assertEqual(
             str(app._token_valid_dot["salad"].cget("fg")), theme.PALETTE["unknown"]
         )
+
+
+@unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
+class ListSurfacesSayWhenTheyAreEmpty(unittest.TestCase):
+    """U1: a list surface says it is empty instead of showing a bare tree.
+
+    The Queue page already did; Prompt History, Prompt Catalog and the history
+    strip showed an empty tree or two arrows with nothing to explain them.
+    """
+
+    def setUp(self) -> None:
+        try:
+            probe = tk.Tk()
+            probe.withdraw()
+            probe.destroy()
+        except tk.TclError as e:
+            self.skipTest(f"Tk cannot initialize: {e}")
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.tmp = Path(self._td.name)
+        from salad_studio import (
+            image_deploy,
+            lora_store,
+            profiles,
+            prompt_catalog,
+            prompt_history,
+            tokens,
+            ui_state,
+            vast,
+        )
+
+        saved = [
+            _redirect_store(profiles, "PROFILES_PATH", self.tmp / "studio-profiles.json"),
+            _redirect_store(lora_store, "EXTRAS_PATH", self.tmp / "studio-loras.json"),
+            _redirect_store(tokens, "LOCAL_PATH", self.tmp / "studio-tokens.json"),
+            _redirect_store(tokens, "CONFIG_HOME", self.tmp / "defaults"),
+            _redirect_store(
+                prompt_catalog, "CATALOG_PATH", self.tmp / "studio-prompt-catalog.json"
+            ),
+            _redirect_store(
+                prompt_history, "HISTORY_PATH", self.tmp / "studio-prompt-history.json"
+            ),
+            _redirect_store(prompt_history, "THUMBS_DIR", self.tmp / "thumbs"),
+            _redirect_store(ui_state, "STATE_PATH", self.tmp / "studio-ui.json"),
+            _redirect_store(vast, "INSTANCES_PATH", self.tmp / "studio-vast.json"),
+            _redirect_store(
+                image_deploy, "SETTINGS_PATH", self.tmp / "studio-images.json"
+            ),
+        ]
+        self.addCleanup(_put_stores_back, saved)
+        from salad_studio import app as app_mod
+
+        # The gallery reads the real art tree by default, and this test is about
+        # what the surfaces say when they are empty.
+        self._old_out = app_mod.OUT_DIR
+        self._old_art = app_mod.ART
+        app_mod.OUT_DIR = self.tmp / "gallery"
+        app_mod.ART = self.tmp / "art"
+        app_mod.OUT_DIR.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(setattr, app_mod, "OUT_DIR", self._old_out)
+        self.addCleanup(setattr, app_mod, "ART", self._old_art)
+        self.app_mod = app_mod
+        self.app = app_mod.SaladStudio(show=False)
+        self.app.withdraw()
+        self.addCleanup(self.app.destroy)
+        self.app.update_idletasks()
+
+    def _strip_empty_text(self) -> str:
+        canvas = self.app.strip.canvas
+        items = canvas.find_withtag("empty")
+        self.assertEqual(len(items), 1, "the strip must carry exactly one empty-state line")
+        return str(canvas.itemcget(items[0], "text")).strip()
+
+    def test_every_list_surface_states_that_it_is_empty(self) -> None:
+        app = self.app
+        for name, widget in (
+            ("Queue", app.queue_empty_lbl),
+            ("Prompt History", app.prompt_hist_empty_lbl),
+            ("Prompt Catalog", app.catalog_empty_lbl),
+        ):
+            with self.subTest(surface=name):
+                self.assertTrue(
+                    str(widget.cget("text")).strip(), f"{name} says nothing about being empty"
+                )
+                self.assertEqual(
+                    widget.winfo_manager(), "grid", f"{name}'s empty state is not shown"
+                )
+        self.assertTrue(self._strip_empty_text(), "the strip says nothing about being empty")
+
+    def test_rows_hide_the_state_and_emptying_brings_it_back(self) -> None:
+        """The state follows the rows, on every surface that has one."""
+        app = self.app
+        from salad_studio import prompt_catalog, prompt_history
+
+        self.assertEqual(app.prompt_hist_empty_lbl.winfo_manager(), "grid")
+        prompt_history.add_prompt("a probe prompt")
+        app._refresh_prompt_history()
+        self.assertEqual(app.prompt_hist_empty_lbl.winfo_manager(), "", "history state must go")
+        prompt_history.remove_at(0)
+        app._refresh_prompt_history()
+        self.assertEqual(app.prompt_hist_empty_lbl.winfo_manager(), "grid", "and come back")
+
+        self.assertEqual(app.catalog_empty_lbl.winfo_manager(), "grid")
+        entry = prompt_catalog.add_entry("probe", "a description", {"prompt": {}})
+        app._refresh_prompt_catalog()
+        self.assertEqual(app.catalog_empty_lbl.winfo_manager(), "", "catalog state must go")
+        prompt_catalog.remove_entry(str(entry["id"]))
+        app._refresh_prompt_catalog()
+        self.assertEqual(app.catalog_empty_lbl.winfo_manager(), "grid", "and come back")
+
+        plate = self.tmp / "studio_1.jpg"
+        plate.write_bytes(b"not really a jpeg")
+        app.strip.set_paths([plate])
+        self.assertEqual(
+            len(app.strip.canvas.find_withtag("empty")), 0, "the strip's state must go"
+        )
+        app.strip.set_paths([])
+        self.assertTrue(self._strip_empty_text(), "and come back")
+
+
+@unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
+class ClosingReportsWhatTkWouldNotTake(unittest.TestCase):
+    """C6: `_dropped_afters` has a reader, so a handoff that never ran is visible."""
+
+    def setUp(self) -> None:
+        try:
+            probe = tk.Tk()
+            probe.withdraw()
+            probe.destroy()
+        except tk.TclError as e:
+            self.skipTest(f"Tk cannot initialize: {e}")
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.tmp = Path(self._td.name)
+        from salad_studio import (
+            image_deploy,
+            lora_store,
+            profiles,
+            prompt_catalog,
+            prompt_history,
+            tokens,
+            ui_state,
+            vast,
+        )
+
+        saved = [
+            _redirect_store(profiles, "PROFILES_PATH", self.tmp / "studio-profiles.json"),
+            _redirect_store(lora_store, "EXTRAS_PATH", self.tmp / "studio-loras.json"),
+            _redirect_store(tokens, "LOCAL_PATH", self.tmp / "studio-tokens.json"),
+            _redirect_store(tokens, "CONFIG_HOME", self.tmp / "defaults"),
+            _redirect_store(
+                prompt_catalog, "CATALOG_PATH", self.tmp / "studio-prompt-catalog.json"
+            ),
+            _redirect_store(
+                prompt_history, "HISTORY_PATH", self.tmp / "studio-prompt-history.json"
+            ),
+            _redirect_store(prompt_history, "THUMBS_DIR", self.tmp / "thumbs"),
+            _redirect_store(ui_state, "STATE_PATH", self.tmp / "studio-ui.json"),
+            _redirect_store(vast, "INSTANCES_PATH", self.tmp / "studio-vast.json"),
+            _redirect_store(
+                image_deploy, "SETTINGS_PATH", self.tmp / "studio-images.json"
+            ),
+        ]
+        self.addCleanup(_put_stores_back, saved)
+        from salad_studio import app as app_mod
+
+        self.app_mod = app_mod
+        self.app = app_mod.SaladStudio(show=False)
+        self.app.withdraw()
+        self.addCleanup(self.app.destroy)
+        self.app.update_idletasks()
+
+    def _close_and_read(self) -> str:
+        """Run the real close handler, holding the window open to read the log."""
+        app = self.app
+        app.log_text.delete("1.0", "end")
+        with mock.patch.object(app, "destroy"):
+            app._on_close()
+        return app.log_text.get("1.0", "end")
+
+    def test_a_dropped_callback_is_reported_when_the_window_closes(self) -> None:
+        self.app._dropped_afters.append("after(0): the main thread is not in the Tk loop")
+        log = self._close_and_read()
+        self.assertIn("dropped", log, f"the drop must be reported: {log[-300:]}")
+        self.assertIn("not in the Tk loop", log)
+
+    def test_the_recorder_records_a_drop_the_loop_would_not_take(self) -> None:
+        """Issue 4: the shipped recorder is driven, not an entry a test invents.
+
+        Tk refuses a callback scheduled from a worker thread while the main
+        thread is not in the loop ("main thread is not in main loop"), which is
+        exactly the RuntimeError ``_later``/``_later_idle`` catch. Scheduling
+        from a real thread therefore drives the shipped recorder: with the
+        recording removed, ``_dropped_afters`` stays empty and the report the
+        user's log would have carried is never written.
+        """
+        app = self.app
+        self.assertEqual(app._dropped_afters, [], "this drive starts with a clean record")
+        results: list = []
+
+        def worker() -> None:
+            # The main thread is blocked in join() below, so it is not in the
+            # Tk loop and Tk will not take either of these.
+            results.append(app._later(0, lambda: None))
+            results.append(app._later_idle(lambda: None))
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        thread.join(timeout=30)
+        self.assertFalse(thread.is_alive(), "the worker never came back")
+        self.assertEqual(results, [None, None], "a refused schedule hands back no id")
+        self.assertEqual(
+            len(app._dropped_afters),
+            2,
+            f"both refused callbacks must be recorded: {app._dropped_afters}",
+        )
+        self.assertTrue(
+            all(entry.startswith("after") for entry in app._dropped_afters),
+            f"each entry names the schedule that was dropped: {app._dropped_afters}",
+        )
+        self.assertIn("main thread is not in main loop", app._dropped_afters[0])
+
+        log = self._close_and_read()
+        self.assertIn("2 scheduled callback(s) were dropped", log)
+        self.assertIn("after_idle", log, "the report carries the last one recorded")
+
+    def test_a_clean_session_reports_nothing(self) -> None:
+        self.assertEqual(self.app._dropped_afters, [])
+        self.assertNotIn("dropped", self._close_and_read())
+
+
+@unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
+class BothLogPanesMaskSecrets(unittest.TestCase):
+    """Issue 1: the container pane and the Studio pane mask the same values."""
+
+    def setUp(self) -> None:
+        try:
+            probe = tk.Tk()
+            probe.withdraw()
+            probe.destroy()
+        except tk.TclError as e:
+            self.skipTest(f"Tk cannot initialize: {e}")
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.tmp = Path(self._td.name)
+        from salad_studio import (
+            image_deploy,
+            lora_store,
+            profiles,
+            prompt_catalog,
+            prompt_history,
+            tokens,
+            ui_state,
+            vast,
+        )
+
+        self.tokens = tokens
+        saved = [
+            _redirect_store(profiles, "PROFILES_PATH", self.tmp / "studio-profiles.json"),
+            _redirect_store(lora_store, "EXTRAS_PATH", self.tmp / "studio-loras.json"),
+            _redirect_store(tokens, "LOCAL_PATH", self.tmp / "studio-tokens.json"),
+            _redirect_store(tokens, "CONFIG_HOME", self.tmp / "defaults"),
+            _redirect_store(
+                prompt_catalog, "CATALOG_PATH", self.tmp / "studio-prompt-catalog.json"
+            ),
+            _redirect_store(
+                prompt_history, "HISTORY_PATH", self.tmp / "studio-prompt-history.json"
+            ),
+            _redirect_store(prompt_history, "THUMBS_DIR", self.tmp / "thumbs"),
+            _redirect_store(ui_state, "STATE_PATH", self.tmp / "studio-ui.json"),
+            _redirect_store(vast, "INSTANCES_PATH", self.tmp / "studio-vast.json"),
+            _redirect_store(
+                image_deploy, "SETTINGS_PATH", self.tmp / "studio-images.json"
+            ),
+        ]
+        self.addCleanup(_put_stores_back, saved)
+        from salad_studio.app import SaladStudio
+
+        self.app = SaladStudio(show=False)
+        self.app.withdraw()
+        self.addCleanup(self.app.destroy)
+        self.app.update_idletasks()
+
+    def _pane(self, widget) -> str:
+        return widget.get("1.0", "end")
+
+    def _container_line(self, text: str) -> None:
+        """A container log line: what ``_check_salad_status`` puts in the Salad pane."""
+        self.app._set_salad_logs(text)
+
+    def test_a_container_log_line_is_masked_in_both_panes(self) -> None:
+        """The same value must not be masked in one pane and clear in the other."""
+        secret = "hf_FIRSTSECRETVALUE1234"
+        self.tokens.write_token("huggingface", secret)
+        line = f"container stdout:\nHF_TOKEN={secret}\nready"
+        self._container_line(line)
+        self.app.log("info", line)
+        self.app.update_idletasks()
+
+        salad = self._pane(self.app.salad_log_text)
+        studio = self._pane(self.app.log_text)
+        self.assertNotIn(secret, salad, f"the Salad pane leaked the token: {salad!r}")
+        self.assertIn("…", salad, "the token is masked, not dropped")
+        self.assertNotIn(secret, studio, f"the Studio pane leaked the token: {studio!r}")
+        self.assertIn("…", studio)
+        self.assertIn("ready", salad, "the rest of the container output is still shown")
+
+    def test_a_token_written_after_the_cache_is_warm_is_masked_too(self) -> None:
+        """A token that arrives any other way must not be logged in clear.
+
+        The redaction list is cached, so a write that is not this window's own
+        save used to leave the new value out of it: both panes then showed it.
+        """
+        first = "hf_FIRSTSECRETVALUE1234"
+        second = "civitai_SECONDT0KENvalue"
+        self.tokens.write_token("huggingface", first)
+        self._container_line(f"HF_TOKEN={first}")
+        self.app.log("info", f"HF_TOKEN={first}")
+        self.app.update_idletasks()
+
+        # A second token, after the list above was read and cached.
+        self.tokens.write_token("civitai", second)
+        self._container_line(f"civitai token {second}")
+        self.app.log("info", f"civitai token {second}")
+        self.app.update_idletasks()
+
+        salad = self._pane(self.app.salad_log_text)
+        studio = self._pane(self.app.log_text)
+        self.assertNotIn(second, salad, f"the Salad pane leaked the new token: {salad!r}")
+        self.assertNotIn(second, studio, f"the Studio pane leaked the new token: {studio!r}")
+        self.assertIn("…", salad)
+        self.assertIn("…", studio)
+
+
+@unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
+class ContentBelowTheFoldIsReachable(unittest.TestCase):
+    """Issue 3: at 1366x728 every page fits or scrolls, by wheel and by keyboard."""
+
+    # The pages the issue measured as taller than the notebook with no scrollbar.
+    OVER_THE_FOLD = (
+        "Prompt Settings",
+        "Tokens",
+        "LoRAs",
+        "Prompt Editor",
+        "Prompt Assist",
+        "Import",
+        "Logs",
+    )
+    # The controls the issue names as hidden on the Tokens page, which is also
+    # where the Vast.ai section tells the user to save that key.
+    CONTROL_TYPES = (
+        ttk.Button,
+        ttk.Entry,
+        ttk.Combobox,
+        ttk.Label,
+        ttk.Checkbutton,
+        ttk.Radiobutton,
+        ttk.Treeview,
+        tk.Text,
+        tk.Label,
+    )
+
+    def setUp(self) -> None:
+        try:
+            probe = tk.Tk()
+            probe.withdraw()
+            probe.destroy()
+        except tk.TclError as e:
+            self.skipTest(f"Tk cannot initialize: {e}")
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.tmp = Path(self._td.name)
+        self._ctx = _TempPaths(self.tmp)
+        self._ctx.__enter__()
+        self.addCleanup(lambda: self._ctx.__exit__(None, None, None))
+        from salad_studio import app as app_mod
+
+        self.app_mod = app_mod
+        self.app = app_mod.SaladStudio(show=False)
+        self.app.withdraw()
+        self.addCleanup(self._destroy)
+        self.app.update_idletasks()
+
+    def _destroy(self) -> None:
+        try:
+            self.app.destroy()
+        except tk.TclError:
+            pass
+
+    def _pages(self) -> dict:
+        """Each notebook page by the label the notebook shows for it."""
+        return {
+            str(self.app.nb.tab(tab, "text")): self.app.nb.nametowidget(tab)
+            for tab in self.app.nb.tabs()
+        }
+
+    def _controls(self, page) -> list:
+        out: list = []
+
+        def walk(widget) -> None:
+            for child in widget.winfo_children():
+                if isinstance(child, self.CONTROL_TYPES):
+                    out.append(child)
+                walk(child)
+
+        walk(page)
+        return out
+
+    def _bottom_in_page(self, widget, page) -> int:
+        return int(widget.winfo_rooty()) - int(page.winfo_rooty()) + int(widget.winfo_height())
+
+    def _page_scroller(self, widget, page):
+        """The page's own scroll canvas above ``widget``, or None."""
+        canvases = set(self.app._scroll_canvases.values())
+        node = getattr(widget, "master", None)
+        while node is not None and node is not page:
+            if node in canvases:
+                return node
+            node = getattr(node, "master", None)
+        return None
+
+    def _map_at_1366x728(self) -> None:
+        app = self.app
+        app.geometry("1366x728")
+        app.deiconify()
+        deadline = time.time() + 10.0
+        while time.time() < deadline:
+            app.update()
+            if app.winfo_width() > 100 and app.winfo_height() > 100:
+                break
+            time.sleep(0.02)
+        app.update_idletasks()
+
+    def test_every_page_fits_or_scrolls_at_1366x728(self) -> None:
+        """The measured page set: nothing may sit below the fold unreachable.
+
+        The window is laid out at 1366x728, the size the issue measured, and the
+        notebook it leaves is the height every page has to live in. A control
+        that lands past the page's bottom edge is only allowed when the page's
+        own scroll canvas can bring it into view.
+        """
+        app = self.app
+        self._map_at_1366x728()
+        notebook_height = int(app.nb.winfo_height())
+        self.assertGreater(notebook_height, 1, "the window must be laid out to measure it")
+        pages = self._pages()
+        self.assertEqual(
+            tuple(pages),
+            self.app_mod.TAB_ORDER,
+            "every page the notebook shows is measured, in the order it shows them",
+        )
+        for name, page in pages.items():
+            app._goto_tab(name)
+            app.update()
+            scroller = app._scroll_canvases.get(page)
+            content = app._scroll_bodies.get(page, page)
+            if scroller is not None:
+                bbox = scroller.bbox("all")
+                self.assertIsNotNone(bbox, f"{name} scrolls but has no scroll region")
+                self.assertGreaterEqual(
+                    int(bbox[3]),
+                    content.winfo_reqheight(),
+                    f"{name}'s scroll region must cover all of its content",
+                )
+            for control in self._controls(page):
+                if self._bottom_in_page(control, page) <= int(page.winfo_height()) + 1:
+                    continue
+                self.assertIsNotNone(
+                    self._page_scroller(control, page),
+                    f"{name} needs {content.winfo_reqheight()} px in a "
+                    f"{notebook_height} px notebook, and {control} is below the fold "
+                    "with nothing to scroll it",
+                )
+        for name in self.OVER_THE_FOLD:
+            with self.subTest(page=name):
+                self.assertIn(name, pages, "the page set changed")
+                self.assertIn(
+                    pages[name],
+                    app._scroll_canvases,
+                    f"{name} holds more than a window and must scroll",
+                )
+
+    def test_the_tokens_page_reaches_the_vast_key_box_and_check_keys_bar(self) -> None:
+        """The two controls the issue names: hidden, and the section says to use them."""
+        app = self.app
+        self._map_at_1366x728()
+        pages = self._pages()
+        tokens_page = pages["Tokens"]
+        app._goto_tab("Tokens")
+        app.update()
+        canvas = app._scroll_canvases[tokens_page]
+        canvas.yview_moveto(1.0)
+        app.update()
+        self.assertEqual(
+            round(canvas.yview()[1], 3), 1.0, "the page must scroll all the way down"
+        )
+        key_box = app._token_widgets["vast"]
+        check_keys = next(
+            w
+            for w in self._controls(tokens_page)
+            if isinstance(w, ttk.Button) and str(w.cget("text")) == "Check keys"
+        )
+        for control in (key_box, check_keys):
+            with self.subTest(control=str(control)):
+                self.assertLessEqual(
+                    self._bottom_in_page(control, tokens_page),
+                    int(tokens_page.winfo_height()) + 1,
+                    "scrolled to the bottom, this control is on screen",
+                )
+
+    def test_the_wheel_scrolls_the_page_the_pointer_is_on(self) -> None:
+        """One handler serves every page, and a page scrolls only while claimed."""
+        app = self.app
+        pages = self._pages()
+        tokens_page = pages["Tokens"]
+        canvas = app._scroll_canvases[tokens_page]
+        canvas.configure(yscrollincrement=40, scrollregion=(0, 0, 900, 4000))
+        app.update_idletasks()
+
+        app._on_page_wheel(type("E", (), {"delta": -120})())
+        app.update_idletasks()
+        self.assertEqual(
+            canvas.yview()[0], 0.0, "no page has claimed the wheel, so nothing moves"
+        )
+
+        app._claim_wheel(tokens_page)
+        app._on_page_wheel(type("E", (), {"delta": -120})())
+        app.update_idletasks()
+        self.assertAlmostEqual(
+            canvas.yview()[0], 40 / 4000, places=4, msg="one notch is one unit"
+        )
+        self.assertEqual(
+            app._scroll_canvases[app._config_section_pages["images"]].yview()[0],
+            0.0,
+            "and the Config Images section, which the pointer is not on, stays put",
+        )
+
+        app._release_wheel(tokens_page)
+        app._on_page_wheel(type("E", (), {"delta": -120})())
+        app.update_idletasks()
+        self.assertAlmostEqual(
+            canvas.yview()[0], 40 / 4000, places=4, msg="handing the wheel back stops it"
+        )
+
+    def test_a_control_that_takes_focus_scrolls_its_page_into_view(self) -> None:
+        """The keyboard must reach what the wheel can: focus scrolls the page."""
+        app = self.app
+        pages = self._pages()
+        tokens_page = pages["Tokens"]
+        canvas = app._scroll_canvases[tokens_page]
+        canvas.configure(scrollregion=(0, 0, 900, 800))
+        app.update_idletasks()
+        key_box = app._token_widgets["vast"]
+        # A real viewport and a control below the fold, without mapping the
+        # window: an unmapped window is one pixel tall, so the geometry the
+        # reveal maths reads is supplied.
+        with mock.patch.object(canvas, "winfo_height", return_value=476), mock.patch.object(
+            canvas, "winfo_rooty", return_value=100
+        ), mock.patch.object(key_box, "winfo_rooty", return_value=100 + 520), mock.patch.object(
+            key_box, "winfo_height", return_value=30
+        ):
+            app._on_page_focus(type("E", (), {"widget": key_box})())
+        app.update_idletasks()
+        self.assertGreater(
+            canvas.yview()[0], 0.0, "the page must scroll to the control that took focus"
+        )
+        self.assertLessEqual(
+            canvas.yview()[1], 1.0, "and never scroll past the end of the page"
+        )
+
+        # A control on a page that does not scroll is left alone.
+        before = canvas.yview()[0]
+        with mock.patch.object(canvas, "winfo_height", return_value=476), mock.patch.object(
+            canvas, "winfo_rooty", return_value=100
+        ), mock.patch.object(key_box, "winfo_rooty", return_value=100 + 10), mock.patch.object(
+            key_box, "winfo_height", return_value=30
+        ):
+            app._on_page_focus(type("E", (), {"widget": key_box})())
+        app.update_idletasks()
+        self.assertLessEqual(
+            canvas.yview()[0], before, "a control already in view moves nothing"
+        )
+
+    # -- the sideways scroll -----------------
+    # The lines that pass added, as (shipped text, what it replaced) pairs, so
+    # the old vertical-only helper and reveal can be rebuilt from this file.
+    PAGE_HELPER_EDITS = (
+        (
+            "    canvas.configure(yscrollcommand=vscroll.set, xscrollcommand=hscroll.set)\n",
+            "    canvas.configure(yscrollcommand=vscroll.set)\n",
+        ),
+        (
+            '    hscroll = ttk.Scrollbar(holder, orient="horizontal", command=canvas.xview)\n',
+            "",
+        ),
+        ('    hscroll.grid(row=1, column=0, sticky="ew")\n', ""),
+        (
+            "            width=max(body.winfo_reqwidth(), e.width),\n",
+            "            width=e.width,\n",
+        ),
+    )
+    REVEAL_EDITS = (
+        (
+            (
+                "        width = int(canvas.winfo_width())\n"
+                "        total_w = int(bbox[2])\n"
+                "        left = int(canvas.xview()[0] * total_w)\n"
+                "        x = int(widget.winfo_rootx()) - int(canvas.winfo_rootx()) + left\n"
+                "        right = x + int(widget.winfo_width())\n"
+            ),
+            "",
+        ),
+        (
+            (
+                "    else:\n"
+                "        target = None\n"
+                "    if target is not None:\n"
+                "        target = max(0, min(target, max(0, total - height)))\n"
+                '        canvas.yview_moveto(target / total if total else 0.0)\n'
+                "    if right > left + width:\n"
+                "        target_w = right - width\n"
+                "    elif x < left:\n"
+                "        target_w = x\n"
+                "    else:\n"
+                "        target_w = None\n"
+                "    if target_w is not None:\n"
+                "        target_w = max(0, min(target_w, max(0, total_w - width)))\n"
+                "        canvas.xview_moveto(target_w / total_w if total_w else 0.0)\n"
+            ),
+            (
+                "    else:\n"
+                "        return\n"
+                "    target = max(0, min(target, max(0, total - height)))\n"
+                '    canvas.yview_moveto(target / total if total else 0.0)\n'
+            ),
+        ),
+    )
+
+    def _layout_at(self, app, size: str) -> None:
+        """Lay ``app`` out at a requested size and let Tk settle the geometry."""
+        app.geometry(size)
+        app.deiconify()
+        deadline = time.time() + 10.0
+        while time.time() < deadline:
+            app.update()
+            if app.winfo_width() > 100 and app.winfo_height() > 100:
+                break
+            time.sleep(0.02)
+        # The Map handler re-applies the size the window opened with, so ask for
+        # the measured size once more before reading any geometry.
+        app.geometry(size)
+        for _ in range(5):
+            app.update()
+            time.sleep(0.02)
+        app.update_idletasks()
+        want_w, want_h = (int(part) for part in size.split("x"))
+        self.assertEqual(
+            (int(app.winfo_width()), int(app.winfo_height())),
+            (want_w, want_h),
+            f"the window must be laid out at {size} for this measurement",
+        )
+
+    @staticmethod
+    def _edges(widget, body) -> tuple[int, int]:
+        """A widget's right and bottom edges in the content frame's own pixels."""
+        return (
+            int(widget.winfo_rootx())
+            - int(body.winfo_rootx())
+            + int(widget.winfo_width()),
+            int(widget.winfo_rooty())
+            - int(body.winfo_rooty())
+            + int(widget.winfo_height()),
+        )
+
+    def _outside_the_region(self, app, size: str) -> list[str]:
+        """Every control a scrolling page's canvas cannot bring into view.
+
+        The canvas's scroll region has to cover the content on both axes: a
+        control past its right edge is off-screen, and a canvas that only scrolls
+        vertically has no way to reach it.
+        """
+        self._layout_at(app, size)
+        out: list[str] = []
+        pages = {
+            str(app.nb.tab(tab, "text")): app.nb.nametowidget(tab) for tab in app.nb.tabs()
+        }
+        for name, page in pages.items():
+            scroller = app._scroll_canvases.get(page)
+            if scroller is None:
+                continue
+            app._goto_tab(name)
+            app.update()
+            body = app._scroll_bodies.get(page, page)
+            bbox = scroller.bbox("all")
+            if bbox is None:
+                out.append(f"{name}: no scroll region")
+                continue
+            if int(bbox[2]) < int(body.winfo_reqwidth()):
+                out.append(
+                    f"{name}: the region is {int(bbox[2])} px wide and the content "
+                    f"wants {body.winfo_reqwidth()} px"
+                )
+            for control in self._controls(page):
+                right, bottom = self._edges(control, body)
+                if right > int(bbox[2]) + 1:
+                    out.append(
+                        f"{name}: {control} is {right - int(bbox[2])} px past the "
+                        "right edge of the scroll region"
+                    )
+                if bottom > int(bbox[3]) + 1:
+                    out.append(
+                        f"{name}: {control} is {bottom - int(bbox[3])} px past the "
+                        "bottom of the scroll region"
+                    )
+        return out
+
+    def _old_window(self):
+        """A window whose pages were built by the old, vertical-only helper."""
+        old_helper = _old_form(
+            self.app_mod.SaladStudio._scrollable_page, self.PAGE_HELPER_EDITS
+        )
+        with mock.patch.object(
+            self.app_mod.SaladStudio, "_scrollable_page", old_helper
+        ):
+            old = self.app_mod.SaladStudio(show=False)
+        old.withdraw()
+        return old
+
+    def _import_height_knob(self):
+        """The Import page's Height entry, found by the variable it writes."""
+        want = str(self.app.var_imp_height)
+        for control in self._controls(self._pages()["Import"]):
+            if isinstance(control, ttk.Entry) and str(control.cget("textvariable")) == want:
+                return control
+        self.fail("the Import page has no Height knob")
+
+    def test_every_page_is_inside_its_scroll_region_on_both_axes(self) -> None:
+        """Issue 3: at 1024 px the Import page is wider than its canvas.
+
+        Nothing scrolled sideways, so the right-hand controls of a page wider
+        than its canvas could not be reached by any means. The old helper's
+        region is narrower than its content, which is what this measures.
+        """
+        for size in ("1024x720", "900x700"):
+            with self.subTest(size=size):
+                outside = self._outside_the_region(self.app, size)
+                self.assertEqual(outside, [], f"at {size}: " + "; ".join(outside))
+
+        old = self._old_window()
+        try:
+            outside = self._outside_the_region(old, "1024x720")
+        finally:
+            try:
+                old.destroy()
+            except tk.TclError:
+                pass
+        self.assertTrue(
+            outside,
+            "the old vertical-only helper must leave a control past the region",
+        )
+
+    def test_focusing_the_import_height_knob_scrolls_it_into_view(self) -> None:
+        """The knob the issue names sits past the right edge at 1024 px.
+
+        Focus has to bring it in on the horizontal axis too, or the keyboard
+        cannot reach a control the mouse cannot either.
+        """
+        app = self.app
+        self._layout_at(app, "1024x720")
+        pages = self._pages()
+        import_page = pages["Import"]
+        app._goto_tab("Import")
+        app.update()
+        canvas = app._scroll_canvases[import_page]
+        body = app._scroll_bodies[import_page]
+        knob = self._import_height_knob()
+        self.assertEqual(canvas.xview()[0], 0.0, "the page starts at its left edge")
+        right, _bottom = self._edges(knob, body)
+        self.assertGreater(
+            right,
+            int(canvas.winfo_width()),
+            "the Height knob must start past the right edge for this to be a drive",
+        )
+
+        app._on_page_focus(type("E", (), {"widget": knob})())
+        app.update()
+        self.assertGreater(canvas.xview()[0], 0.0, "focus must scroll the page sideways")
+        # Where the knob now sits inside the canvas's own viewport.
+        left = int(knob.winfo_rootx()) - int(canvas.winfo_rootx())
+        self.assertGreaterEqual(left, -1, "the knob's left edge must be in view")
+        self.assertLessEqual(
+            left + int(knob.winfo_width()),
+            int(canvas.winfo_width()) + 1,
+            "the knob's right edge must be in view",
+        )
+
+        # The old reveal moves on Y only, so the same drive leaves it off-screen.
+        old_reveal = _old_form(self.app_mod.SaladStudio._reveal, self.REVEAL_EDITS)
+        canvas.xview_moveto(0.0)
+        app.update_idletasks()
+        with mock.patch.object(self.app_mod.SaladStudio, "_reveal", old_reveal):
+            app._on_page_focus(type("E", (), {"widget": knob})())
+            app.update()
+        self.assertEqual(
+            canvas.xview()[0],
+            0.0,
+            "the old Y-only reveal must leave the Height knob off-screen",
+        )
+
+
+@unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
+class ThePromptGridsScrollSideways(unittest.TestCase):
+    """Issue 1 of `docs/issue-sweep-2026-10-16.md`, driven on the real window.
+
+    The Prompt Catalog and Prompt History pages are plain frames that never went
+    through `_scrollable_page`, and each gave its tree a vertical scrollbar and
+    none horizontal. At 1024x720 the Catalog's Graph column is entirely
+    off-screen and nothing could bring it back. This measures both trees' xview
+    span at 1366x728 and 1024x720, then drives each tree's own horizontal
+    scrollbar to the end and requires the last column to be on screen. The old
+    builders, rebuilt from this file with the fix's lines taken out, leave the
+    trees with no such scrollbar, so the same columns stay unreachable.
+    """
+
+    # The columns each grid shows, with the widths the page sets. The fix adds a
+    # bar and must not touch either: a drag of the heading edge is the user's.
+    CATALOG_COLUMNS = (
+        ("when", 130),
+        ("name", 180),
+        ("description", 260),
+        ("preview", 380),
+        ("stats", 300),
+    )
+    HISTORY_COLUMNS = (
+        ("when", 140),
+        ("profile", 100),
+        ("preview", 480),
+        ("stats", 380),
+    )
+    # The tree column each grid shows; the Catalog is headings-only, so it has none.
+    TREE_COLUMN = {"Prompt Catalog": 0, "Prompt History": 56}
+    # The lines this pass added to each builder, as (shipped text, replaced).
+    # `_old_form` dedents the source, so a method body starts at four spaces.
+    CATALOG_EDITS = (
+        (
+            (
+                "    # The columns total more than a narrow window, so the right-hand ones\n"
+                "    # (the Graph column among them) are off-screen without a bar to reach\n"
+                "    # them; the vertical bar alone leaves them unreachable.\n"
+                "    hscroll = ttk.Scrollbar(\n"
+                '        self._catalog, orient="horizontal", command=self.catalog_tree.xview\n'
+                "    )\n"
+            ),
+            "",
+        ),
+        (
+            (
+                "    self.catalog_tree.configure(\n"
+                "        yscrollcommand=yscroll.set, xscrollcommand=hscroll.set\n"
+                "    )\n"
+            ),
+            "    self.catalog_tree.configure(yscrollcommand=yscroll.set)\n",
+        ),
+        (
+            '    hscroll.grid(row=2, column=0, sticky="ew")\n',
+            "",
+        ),
+        (
+            '    bar.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(8, 0))\n',
+            '    bar.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))\n',
+        ),
+        (
+            '    self.catalog_empty_lbl.grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))\n',
+            '    self.catalog_empty_lbl.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))\n',
+        ),
+        (
+            (
+                "    ttk.Label(self._catalog, textvariable=self.catalog_status).grid(\n"
+                '        row=5, column=0, columnspan=2, sticky="w", pady=(6, 0)\n'
+            ),
+            (
+                "    ttk.Label(self._catalog, textvariable=self.catalog_status).grid(\n"
+                '        row=4, column=0, columnspan=2, sticky="w", pady=(6, 0)\n'
+            ),
+        ),
+    )
+    HISTORY_EDITS = (
+        (
+            (
+                "    # The same rule the Catalog grid follows: the columns are wider than a\n"
+                "    # narrow window, so the right-hand ones need a horizontal bar to reach.\n"
+                "    hscroll = ttk.Scrollbar(\n"
+                '        self._prompt_hist, orient="horizontal", command=self.prompt_hist_tree.xview\n'
+                "    )\n"
+            ),
+            "",
+        ),
+        (
+            (
+                "    self.prompt_hist_tree.configure(\n"
+                "        yscrollcommand=yscroll.set, xscrollcommand=hscroll.set\n"
+                "    )\n"
+            ),
+            "    self.prompt_hist_tree.configure(yscrollcommand=yscroll.set)\n",
+        ),
+        (
+            '    hscroll.grid(row=1, column=0, sticky="ew")\n',
+            "",
+        ),
+        (
+            '    bar.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))\n',
+            '    bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))\n',
+        ),
+        (
+            '    self.prompt_hist_empty_lbl.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))\n',
+            '    self.prompt_hist_empty_lbl.grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))\n',
+        ),
+    )
+
+    def setUp(self) -> None:
+        try:
+            probe = tk.Tk()
+            probe.withdraw()
+            probe.destroy()
+        except tk.TclError as e:
+            self.skipTest(f"Tk cannot initialize: {e}")
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.tmp = Path(self._td.name)
+        self._ctx = _TempPaths(self.tmp)
+        self._ctx.__enter__()
+        self.addCleanup(lambda: self._ctx.__exit__(None, None, None))
+        from salad_studio import app as app_mod
+
+        self.app_mod = app_mod
+        self.app = app_mod.SaladStudio(show=False)
+        self.app.withdraw()
+        self.addCleanup(self._destroy, self.app)
+        self.app.update_idletasks()
+
+    @staticmethod
+    def _destroy(app) -> None:
+        try:
+            app.destroy()
+        except tk.TclError:
+            pass
+
+    def _layout_at(self, app, size: str) -> None:
+        """Lay ``app`` out at a requested size and let Tk settle the geometry."""
+        app.geometry(size)
+        app.deiconify()
+        deadline = time.time() + 10.0
+        while time.time() < deadline:
+            app.update()
+            if app.winfo_width() > 100 and app.winfo_height() > 100:
+                break
+            time.sleep(0.02)
+        # The Map handler re-applies the size the window opened with.
+        app.geometry(size)
+        for _ in range(5):
+            app.update()
+            time.sleep(0.02)
+        app.update_idletasks()
+        want_w, want_h = (int(part) for part in size.split("x"))
+        self.assertEqual(
+            (int(app.winfo_width()), int(app.winfo_height())),
+            (want_w, want_h),
+            f"the window must be laid out at {size} for this measurement",
+        )
+
+    def _grids(self, app) -> tuple:
+        """Each grid with the page it lives on, by the notebook's own label."""
+        return (
+            ("Prompt Catalog", app.catalog_tree),
+            ("Prompt History", app.prompt_hist_tree),
+        )
+
+    @staticmethod
+    def _horizontal_scrollbars(widget) -> list:
+        out: list = []
+
+        def walk(node) -> None:
+            for child in node.winfo_children():
+                if isinstance(child, ttk.Scrollbar) and str(child.cget("orient")) == "horizontal":
+                    out.append(child)
+                walk(child)
+
+        walk(widget)
+        return out
+
+    def _drive(self, tree, bar, fraction: float) -> None:
+        """Move the bar the way a drag does, through the bar's own command."""
+        tree.tk.call(str(bar.cget("command")), "moveto", fraction)
+        tree.update_idletasks()
+
+    def _xscrollbar(self, tree):
+        """The horizontal scrollbar whose command moves ``tree`` sideways, or None.
+
+        A tree can be told to ``xview_moveto`` without any scrollbar, so the bar
+        is proved by driving it: the tree has to move with it.
+        """
+        for bar in self._horizontal_scrollbars(tree.master):
+            tree.xview_moveto(0.0)
+            tree.update_idletasks()
+            start = float(tree.xview()[0])
+            self._drive(tree, bar, 1.0)
+            end = tree.xview()
+            tree.xview_moveto(0.0)
+            tree.update_idletasks()
+            if float(end[1]) >= 1.0 and float(end[0]) > start:
+                return bar
+        return None
+
+    def _old_window(self):
+        """A window whose two grids were built by the old, vertical-only builders."""
+        old_catalog = _old_form(
+            self.app_mod.SaladStudio._build_prompt_catalog_tab, self.CATALOG_EDITS
+        )
+        old_history = _old_form(
+            self.app_mod.SaladStudio._build_prompt_history_tab, self.HISTORY_EDITS
+        )
+        with mock.patch.object(
+            self.app_mod.SaladStudio, "_build_prompt_catalog_tab", old_catalog
+        ), mock.patch.object(
+            self.app_mod.SaladStudio, "_build_prompt_history_tab", old_history
+        ):
+            old = self.app_mod.SaladStudio(show=False)
+        old.withdraw()
+        return old
+
+    def test_each_grid_reaches_its_right_hand_columns_at_both_sizes(self) -> None:
+        """At 1366x728 and 1024x720 the whole column set must be reachable.
+
+        The span is measured first (a grid that fits needs no drive), then the
+        tree's own bar is driven to both ends: the left edge and the right-hand
+        columns have to come into view, at the widths the page sets.
+        """
+        app = self.app
+        columns = {
+            "Prompt Catalog": self.CATALOG_COLUMNS,
+            "Prompt History": self.HISTORY_COLUMNS,
+        }
+        for size in ("1366x728", "1024x720"):
+            self._layout_at(app, size)
+            for name, tree in self._grids(app):
+                with self.subTest(size=size, grid=name):
+                    app._goto_tab(name)
+                    app.update()
+                    self.assertEqual(
+                        tuple(
+                            (col, int(tree.column(col, "width")))
+                            for col in tree["columns"]
+                        ),
+                        tuple(columns[name]),
+                        f"{name}'s columns and their widths must be what the page sets",
+                    )
+                    if self.TREE_COLUMN[name]:
+                        self.assertEqual(
+                            int(tree.column("#0", "width")),
+                            self.TREE_COLUMN[name],
+                            f"{name}'s tree column must keep the width the page sets",
+                        )
+                    view = tree.xview()
+                    span = float(view[1]) - float(view[0])
+                    self.assertLess(
+                        span,
+                        1.0,
+                        f"this drive needs {name} to be wider than its viewport at {size}",
+                    )
+                    bar = self._xscrollbar(tree)
+                    self.assertIsNotNone(
+                        bar,
+                        f"{name} clips {int((1 - span) * tree.winfo_width() / span)} px of "
+                        f"columns at {size} and nothing scrolls them sideways",
+                    )
+                    self._drive(tree, bar, 1.0)
+                    self.assertAlmostEqual(
+                        float(tree.xview()[1]),
+                        1.0,
+                        places=3,
+                        msg=f"{name}'s last column must be reachable at {size}",
+                    )
+                    self._drive(tree, bar, 0.0)
+                    self.assertAlmostEqual(
+                        float(tree.xview()[0]),
+                        0.0,
+                        places=3,
+                        msg=f"{name}'s first column must be reachable at {size}",
+                    )
+
+        # The old builders, rebuilt from the shipped source with the fix's lines
+        # out, leave each tree with no horizontal bar at all.
+        old = self._old_window()
+        try:
+            self._layout_at(old, "1024x720")
+            for name, tree in self._grids(old):
+                with self.subTest(size="1024x720", grid=name, layout="old"):
+                    old._goto_tab(name)
+                    old.update()
+                    view = tree.xview()
+                    self.assertLess(
+                        float(view[1]) - float(view[0]),
+                        1.0,
+                        f"the old {name} grid is wider than its viewport too",
+                    )
+                    self.assertIsNone(
+                        self._xscrollbar(tree),
+                        f"the old layout gave {name} no way to reach its right-hand columns",
+                    )
+        finally:
+            self._destroy(old)
+
+
+class _StubWindow:
+    """Just enough of the window for a setUp that is not about the window."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    def withdraw(self) -> None:
+        pass
+
+    def update_idletasks(self) -> None:
+        pass
+
+    def destroy(self) -> None:
+        pass
+
+
+@unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
+class WindowClassesPutTheStoresBack(unittest.TestCase):
+    """Every window class here must undo the store paths it redirects.
+
+    The redirects are module-level, so a class that does not put them back
+    outlives its own test: a later ``_TempPaths`` then saves the redirect as if
+    it were the shipped path, and the leak outlives the whole run. This drives
+    each class's own ``setUp`` and cleanups, which is where the undo lives.
+    """
+
+    # The classes that build a window and redirect the stores by hand.
+    CLASSES = (
+        "LiveFieldSync",
+        "NewPagesAndPlacement",
+        "ListSurfacesSayWhenTheyAreEmpty",
+        "ClosingReportsWhatTkWouldNotTake",
+        "BothLogPanesMaskSecrets",
+        "ConfigCheckboxCompat",
+    )
+    # What each class redirects, as (module, attribute).
+    STORES = (
+        ("profiles", "PROFILES_PATH"),
+        ("lora_store", "EXTRAS_PATH"),
+        ("tokens", "LOCAL_PATH"),
+        ("tokens", "CONFIG_HOME"),
+        ("prompt_catalog", "CATALOG_PATH"),
+        ("prompt_history", "HISTORY_PATH"),
+        ("ui_state", "STATE_PATH"),
+    )
+
+    def _stores(self) -> dict:
+        from salad_studio import (
+            lora_store,
+            profiles,
+            prompt_catalog,
+            prompt_history,
+            tokens,
+            ui_state,
+        )
+
+        modules = {
+            "profiles": profiles,
+            "lora_store": lora_store,
+            "tokens": tokens,
+            "prompt_catalog": prompt_catalog,
+            "prompt_history": prompt_history,
+            "ui_state": ui_state,
+        }
+        return {
+            f"{name}.{attr}": getattr(modules[name], attr) for name, attr in self.STORES
+        }
+
+    def test_each_class_puts_the_store_paths_back(self) -> None:
+        """The window itself is stubbed: what is under test is the redirect."""
+        from salad_studio import app as app_mod
+
+        for name in self.CLASSES:
+            with self.subTest(window_class=name):
+                case_cls = globals()[name]
+                method = next(
+                    m for m in dir(case_cls) if m.startswith("test_") and m != "test_"
+                )
+                before = self._stores()
+                case = case_cls(method)
+                with mock.patch.object(app_mod, "SaladStudio", _StubWindow):
+                    try:
+                        case.setUp()
+                    except unittest.SkipTest as exc:
+                        self.skipTest(f"Tk cannot initialize: {exc}")
+                    try:
+                        self.assertNotEqual(
+                            self._stores(),
+                            before,
+                            f"{name} must redirect the stores its window reads",
+                        )
+                    finally:
+                        case.doCleanups()
+                self.assertEqual(
+                    self._stores(),
+                    before,
+                    f"{name} left the stores redirected; the leak outlives the run",
+                )
+
+
+@unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
+class AGridFillsAPageWiderThanIt(unittest.TestCase):
+    """The follow-up to issue 1: the grids must still grow on a wide window.
+
+    Declaring every column ``stretch=False`` is what lets a page *narrower* than
+    the grid keep the widths its table declares and scroll to the rest. It also
+    stopped the columns growing on a page *wider* than the grid, which they did
+    before: at 1600x900 the Catalog tree is 1366 px wide and its columns still
+    totalled the 1250 they declare, leaving 116 px of dead room to the right of
+    the Graph column. This measures the room the table's own columns take at a
+    wide size, and the old form (the shipped re-fit with its body taken out)
+    leaves that room unfilled.
+    """
+
+    # The columns each grid shows, with the widths the page sets, and the ones
+    # the table marks as taking the room a wider page leaves.
+    @staticmethod
+    def _table(name: str):
+        from salad_studio import app as app_mod
+
+        return {
+            "Prompt Catalog": app_mod.CATALOG_GRID_COLUMNS,
+            "Prompt History": app_mod.HISTORY_GRID_COLUMNS,
+            "Queue": app_mod.QUEUE_GRID_COLUMNS,
+        }[name]
+
+    def setUp(self) -> None:
+        try:
+            probe = tk.Tk()
+            probe.withdraw()
+            probe.destroy()
+        except tk.TclError as e:
+            self.skipTest(f"Tk cannot initialize: {e}")
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.tmp = Path(self._td.name)
+        self._ctx = _TempPaths(self.tmp)
+        self._ctx.__enter__()
+        self.addCleanup(lambda: self._ctx.__exit__(None, None, None))
+        from salad_studio import app as app_mod
+
+        self.app_mod = app_mod
+        self.app = app_mod.SaladStudio(show=False)
+        self.addCleanup(self._destroy, self.app)
+
+    @staticmethod
+    def _destroy(app) -> None:
+        try:
+            app.destroy()
+        except tk.TclError:
+            pass
+
+    def _layout_at(self, app, size: str) -> None:
+        _layout_window(app, size)
+
+    def _grids(self, app) -> tuple:
+        return (
+            ("Prompt Catalog", app.catalog_tree),
+            ("Prompt History", app.prompt_hist_tree),
+            ("Queue", app.queue_tree),
+        )
+
+    def _widths(self, tree) -> dict:
+        return {col: int(tree.column(col, "width")) for col in tree["columns"]}
+
+    def test_a_wider_page_hands_the_extra_room_to_the_tables_fill_columns(self) -> None:
+        app = self.app
+        for size in ("1600x900", "1920x1080"):
+            self._layout_at(app, size)
+            for name, tree in self._grids(app):
+                with self.subTest(size=size, grid=name):
+                    app._goto_tab(name)
+                    for _ in range(10):
+                        app.update()
+                        time.sleep(0.01)
+                    table = self._table(name)
+                    declared = {col: width for col, _h, width, _f in table}
+                    got = self._widths(tree)
+                    room = int(tree.winfo_width()) - sum(declared.values())
+                    if "tree" in str(tree.cget("show")):
+                        room -= int(tree.column("#0", "width"))
+                    self.assertGreater(
+                        room, 0, f"this drive needs {name} to be narrower than its page"
+                    )
+                    for col, width, fill in (
+                        (c, w, f) for c, _h, w, f in table
+                    ):
+                        if fill:
+                            self.assertGreater(
+                                got[col],
+                                width,
+                                f"{name}.{col} must take some of the {room} px a "
+                                f"{size} page leaves",
+                            )
+                        else:
+                            self.assertEqual(
+                                got[col],
+                                width,
+                                f"{name}.{col} takes no extra room; the page sets it",
+                            )
+                    # Every px of the room is handed out, not just most of it.
+                    self.assertLessEqual(
+                        abs(sum(got.values()) - sum(declared.values()) - room),
+                        4,
+                        f"{name} left {sum(got.values())} of its page's room unfilled",
+                    )
+
+    def test_a_narrower_page_gets_the_declared_widths_back(self) -> None:
+        """The growth is recomputed, not kept: a narrowed window scrolls again."""
+        app = self.app
+        declared = {
+            name: {col: width for col, _h, width, _f in self._table(name)}
+            for name, _tree in self._grids(app)
+        }
+        self._layout_at(app, "1600x900")
+        for name, tree in self._grids(app):
+            with self.subTest(size="1600x900", grid=name):
+                app._goto_tab(name)
+                for _ in range(10):
+                    app.update()
+                    time.sleep(0.01)
+                self.assertNotEqual(
+                    self._widths(tree),
+                    declared[name],
+                    "the wide page must have grown it",
+                )
+        self._layout_at(app, "1024x720")
+        for name, tree in self._grids(app):
+            with self.subTest(size="1024x720", grid=name):
+                app._goto_tab(name)
+                for _ in range(10):
+                    app.update()
+                    time.sleep(0.01)
+                self.assertEqual(
+                    self._widths(tree),
+                    declared[name],
+                    f"{name} kept the widths a wider window gave it; the page sets "
+                    f"them and the tree's own bar reaches the rest",
+                )
+
+    def test_the_old_form_leaves_the_room_unfilled(self) -> None:
+        """The re-fit taken out of the shipped source leaves the dead room."""
+        old_fit = _old_form(self.app_mod.SaladStudio._keep_grid_filling, self.FIT_EDITS)
+        with mock.patch.object(self.app_mod.SaladStudio, "_keep_grid_filling", old_fit):
+            old = self.app_mod.SaladStudio(show=False)
+        self.addCleanup(self._destroy, old)
+        self._layout_at(old, "1600x900")
+        for name, tree in self._grids(old):
+            with self.subTest(grid=name):
+                old._goto_tab(name)
+                for _ in range(10):
+                    old.update()
+                    time.sleep(0.01)
+                table = self._table(name)
+                declared = {col: width for col, _h, width, _f in table}
+                self.assertEqual(
+                    self._widths(tree),
+                    declared,
+                    f"without the re-fit {name} keeps the widths the page declares, "
+                    f"which is the dead room this pass removed",
+                )
+
+    # The shipped re-fit, with its body taken out: what the page did before it.
+    # `_old_form` dedents the source, so a method body starts at four spaces.
+    FIT_EDITS = (
+        (
+            (
+                "    def refit(_event=None) -> None:\n"
+                "        width = int(tree.winfo_width())\n"
+                "        if width <= 1 or width == fitted[\"width\"]:\n"
+                "            # Not laid out yet, or the same width the last pass fitted.\n"
+                "            return\n"
+                "        fitted[\"width\"] = width\n"
+                "        viewport = int(canvas.winfo_width())\n"
+                "        if viewport > 1:\n"
+                "            # The room a wider page leaves can never be more than the page\n"
+                "            # itself: a tree that somehow reports more is not grown past it.\n"
+                "            width = min(width, viewport)\n"
+                "        room = width - span\n"
+                "        if room <= 0:\n"
+                "            for col, base in declared.items():\n"
+                "                tree.column(col, width=base)\n"
+                "            return\n"
+                "        share, rest = divmod(room, len(fills))\n"
+                "        for index, col in enumerate(fills):\n"
+                "            tree.column(col, width=declared[col] + share + (1 if index < rest else 0))\n"
+            ),
+            "    def refit(_event=None) -> None:\n        return\n",
+        ),
+    )
+
+
+@unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
+class TheStatusLineWrapsInTheWindow(unittest.TestCase):
+    """The status line must wrap, not run off a 1024 px window's right edge.
+
+    A refusal is a whole sentence: the container-down refusal is 215 characters
+    and names the action at its tail ("Start it in the Salad console, then
+    Generate again."). The label had no ``wraplength``, so at 1024 px the tail
+    was clipped and the action was never read. The old form (the shipped
+    ``_wrap_status`` with its body taken out) leaves the label unwrapped.
+    """
+
+    def setUp(self) -> None:
+        try:
+            probe = tk.Tk()
+            probe.withdraw()
+            probe.destroy()
+        except tk.TclError as e:
+            self.skipTest(f"Tk cannot initialize: {e}")
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self._ctx = _TempPaths(Path(self._td.name))
+        self._ctx.__enter__()
+        self.addCleanup(lambda: self._ctx.__exit__(None, None, None))
+        from salad_studio import app as app_mod
+
+        self.app_mod = app_mod
+        self.app = app_mod.SaladStudio(show=False)
+        self.addCleanup(self._destroy, self.app)
+
+    @staticmethod
+    def _destroy(app) -> None:
+        try:
+            app.destroy()
+        except tk.TclError:
+            pass
+
+    def _lay_out_at(self, app, size: str) -> None:
+        _layout_window(app, size)
+
+    def test_a_long_refusal_wraps_inside_a_narrow_window(self) -> None:
+        app = self.app
+        self._lay_out_at(app, "1024x720")
+        sentence = (
+            "Refused: the container for profile 'klein5090' (https://example.invalid/"
+            "gateway) is down: its group is stopped. Start it in the Salad console, "
+            "then Generate again."
+        )
+        app.status.set(sentence)
+        for _ in range(5):
+            app.update()
+            time.sleep(0.02)
+        wrap = int(app.status_lbl.cget("wraplength"))
+        self.assertEqual(
+            wrap,
+            int(app.winfo_width()) - 16,
+            "the status line must wrap to the room the window gives it",
+        )
+
+    def test_the_old_form_leaves_the_status_line_unwrapped(self) -> None:
+        """A label with no ``wraplength`` draws the sentence as one clipped line."""
+        old_wrap = _old_form(self.app_mod.SaladStudio._wrap_status, self.WRAP_EDITS)
+        with mock.patch.object(self.app_mod.SaladStudio, "_wrap_status", old_wrap):
+            old = self.app_mod.SaladStudio(show=False)
+        self.addCleanup(self._destroy, old)
+        self._lay_out_at(old, "1024x720")
+        old.status.set("Refused: " + "a sentence that will not fit. " * 12)
+        for _ in range(5):
+            old.update()
+            time.sleep(0.02)
+        self.assertEqual(
+            int(old.status_lbl.cget("wraplength") or 0),
+            0,
+            "without the wrap the label asks for the whole sentence's width",
+        )
+        self.assertGreater(
+            int(old.status_lbl.winfo_reqwidth()),
+            0,
+            "the old form still lays the sentence out; it just never wraps it",
+        )
+
+    # The shipped wrap, with its body taken out.
+    WRAP_EDITS = (
+        (
+            (
+                "    width = int(self.winfo_width())\n"
+                "    if width <= 1:\n"
+                "        return\n"
+                "    want = max(_STATUS_MIN_WRAP, width - 16)\n"
+                "    if want != self._status_wrap:\n"
+                "        self._status_wrap = want\n"
+                "        self.status_lbl.configure(wraplength=want)\n"
+            ),
+            "",
+        ),
+    )
 
 
 if __name__ == "__main__":

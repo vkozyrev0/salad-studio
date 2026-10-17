@@ -163,7 +163,7 @@ class BuildRequest(unittest.TestCase):
             items = []
             for lora_id, url in overrides.items():
                 row = ls.find_lora(lora_id, absent)
-                assert row is not None
+                self.assertIsNot(row, None)
                 src = dict(row["source"])
                 src["download"] = url
                 items.append(
@@ -572,6 +572,52 @@ class BuildRequest(unittest.TestCase):
         self.assertIn("/models/2795018", out)
         again = rj.with_civitai_token(out, "other")
         self.assertEqual(again, out)
+
+    def test_only_a_civitai_host_gets_the_token(self) -> None:
+        """A host that merely contains ``civitai.com`` is not Civitai.
+
+        The substring test sent the token to ``attacker.example/civitai.com``,
+        ``notcivitai.com`` and ``civitai.com.evil.example``, both on the POST
+        and on Studio's own HEAD probe.
+        """
+        hostile = [
+            "https://attacker.example/civitai.com/download/models/1",
+            "https://notcivitai.com/download/models/1",
+            "https://civitai.com.evil.example/download/models/1",
+            "http://civitai.com/api/download/models/1",
+            "https://civitai.com:8443/api/download/models/1",
+        ]
+        for url in hostile:
+            with self.subTest(url=url):
+                self.assertFalse(rj.is_civitai_url(url))
+                self.assertEqual(rj.with_civitai_token(url, "secret"), url)
+        for url in (
+            "https://civitai.com/api/download/models/1",
+            "https://image.civitai.com/x/y",
+            "https://CIVITAI.COM/api/download/models/1",
+            "https://civitai.com:443/api/download/models/1",
+        ):
+            with self.subTest(url=url):
+                self.assertTrue(rj.is_civitai_url(url))
+                self.assertIn("token=secret", rj.with_civitai_token(url, "secret"))
+
+    def test_a_lookalike_host_is_not_authorized_or_probed(self) -> None:
+        body = {
+            "prompt": {
+                "80": {
+                    "class_type": "LoraLoader",
+                    "inputs": {
+                        "lora_name": "https://attacker.example/civitai.com/download/models/1"
+                    },
+                }
+            }
+        }
+        self.assertFalse(rj.payload_has_civitai_download(body))
+        self.assertEqual(rj.civitai_lora_urls(body["prompt"]), [])
+        out = rj.authorize_civitai_urls(body, "secret")
+        self.assertNotIn(
+            "token=", out["prompt"]["80"]["inputs"]["lora_name"]
+        )
 
     def test_authorize_does_not_mutate_input(self) -> None:
         body = {

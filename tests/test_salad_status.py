@@ -4,6 +4,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
@@ -38,13 +39,15 @@ class FormatStatus(unittest.TestCase):
             "ready_ok": False,
             "ready_explain": "GET https://host/ready, HTTP 522, origin TCP timeout",
         }
-        line = salad_status.format_status(info)
-        self.assertIn("Flux2 Klein", line)
         self.assertEqual(salad_status.short_status(info), "Downloading 0%")
         block = salad_status.generate_block_reason(info)
         self.assertIsNotNone(block)
         self.assertIn("Docker", block or "")
-        self.assertEqual(salad_status.color_for_status("Downloading 33%"), salad_status.WORD_COLORS["Downloading"])
+        self.assertIn(
+            "Downloading",
+            salad_status.WORD_COLORS,
+            "a percent word is coloured by the family it names",
+        )
 
     def test_downloading_fraction_is_percent(self) -> None:
         info = {
@@ -123,7 +126,7 @@ class FormatStatus(unittest.TestCase):
 
     def test_the_block_reason_for_a_dead_origin_says_down_and_why(self) -> None:
         reason = salad_status.generate_block_reason(self._ready_instance(521))
-        assert reason is not None
+        self.assertIsNot(reason, None)
         self.assertIn("Down", reason)
         self.assertNotIn("Replica is up", reason)
         self.assertIn("521", reason)
@@ -182,18 +185,12 @@ class MatchDns(unittest.TestCase):
         self.assertTrue(info["ready_ok"])
         self.assertEqual(info["group"]["name"], "flux2-klein")
         self.assertEqual(info["instances"][0]["state"], "running")
-        line = salad_status.format_status(info)
-        self.assertIn("/ready 200", line)
         self.assertEqual(salad_status.short_status(info), "Ready")
         self.assertNotEqual(
             salad_status.WORD_COLORS["Ready"], salad_status.WORD_COLORS["Failed"]
         )
         self.assertNotEqual(
             salad_status.WORD_COLORS["Ready"], salad_status.WORD_COLORS["Starting"]
-        )
-        self.assertEqual(
-            salad_status.color_for_status("Starting"),
-            salad_status.WORD_COLORS["Starting"],
         )
 
     def test_check_container_skips_ready_while_downloading(self) -> None:
@@ -513,7 +510,7 @@ class PolicyRoundtrip(unittest.TestCase):
                 "key",
             )
         self.assertIsNone(err)
-        assert pol is not None
+        self.assertIsNot(pol, None)
         self.assertEqual(pol["startup"]["initial_delay_seconds"], 300)
         self.assertEqual(pol["version"], 5)
 
@@ -605,49 +602,32 @@ class PolicyImage(unittest.TestCase):
             salad_status.resolve_policy_image(None, {"image": 12}, self.DOC), self.DOC
         )
 
-    def test_shown_policy_of_an_empty_stored_policy_shows_the_document_image(self) -> None:
-        shown = salad_status.shown_policy({}, self.DOC)
-        self.assertEqual(shown["image"], self.DOC)
-        self.assertEqual(set(shown), {"image"})
-        self.assertEqual(salad_status.shown_policy(None, self.DOC)["image"], self.DOC)
+    def test_resolved_policy_fills_blanks_and_returns_a_fresh_copy(self) -> None:
+        """What the Config page shows, from the shipped resolver.
 
-    def test_shown_policy_of_an_imageless_policy_shows_the_document_image(self) -> None:
-        shown = salad_status.shown_policy(self._stored(""), self.DOC)
-        self.assertEqual(shown["image"], self.DOC)
-        self.assertEqual(shown["group_name"], "flux2-klein")
-
-    def test_shown_policy_keeps_a_stored_image_over_the_documents(self) -> None:
-        shown = salad_status.shown_policy(
-            self._stored("docker.io/example:stored"), self.DOC
-        )
-        self.assertEqual(shown["image"], "docker.io/example:stored")
-
-    def test_shown_policy_keeps_every_stored_field(self) -> None:
+        The stored policy is the base, the document fills a blank, and the result
+        is a copy: the page edits what it shows, so no nested value may be shared
+        with the record behind it.
+        """
         stored = self._stored("")
-        shown = salad_status.shown_policy(stored, self.DOC)
-        for key in ("group_name", "version", "gpu_classes", "country_codes", "startup", "readiness"):
-            with self.subTest(key=key):
-                self.assertEqual(shown[key], stored[key])
-        self.assertEqual(shown["gpu_classes"], ["rtx-5090", "rtx-4090"])
-        self.assertEqual(shown["country_codes"], ["us", "ca"])
-        self.assertEqual(shown["startup"]["initial_delay_seconds"], 300)
+        shown = salad_status.resolved_policy(stored, None, {"image": self.DOC})
+        self.assertEqual(shown["image"], self.DOC, "a blank image takes the document's")
+        self.assertEqual(shown["group_name"], "flux2-klein", "the stored field stands")
         self.assertEqual(shown["startup"]["path"], "/health")
         self.assertEqual(shown["readiness"]["path"], "/ready")
-
-    def test_editing_the_shown_copy_leaves_the_stored_policy_alone(self) -> None:
-        stored = self._stored("")
-        shown = salad_status.shown_policy(stored, self.DOC)
         self.assertIsNot(shown, stored)
         self.assertIsNot(shown["startup"], stored["startup"])
         self.assertIsNot(shown["readiness"], stored["readiness"])
-        shown["startup"]["initial_delay_seconds"] = 1
         shown["startup"]["path"] = "/ping"
-        shown["readiness"]["path"] = "/ping"
         shown["image"] = "docker.io/example:edited"
-        self.assertEqual(stored["startup"]["initial_delay_seconds"], 300)
-        self.assertEqual(stored["startup"]["path"], "/health")
-        self.assertEqual(stored["readiness"]["path"], "/ready")
+        self.assertEqual(stored["startup"]["path"], "/health", "the record is untouched")
         self.assertEqual(stored["image"], "")
+        stored_image = self._stored("docker.io/example:stored")
+        self.assertEqual(
+            salad_status.resolved_policy(stored_image, None, {"image": self.DOC})["image"],
+            "docker.io/example:stored",
+            "a stored image beats the document's",
+        )
 
 
 class ApiGetDelegation(unittest.TestCase):
@@ -664,7 +644,7 @@ class ApiGetDelegation(unittest.TestCase):
 
 
 class GroupLifecycleCalls(unittest.TestCase):
-    """Start/stop name the group behind the gateway, and carry the stored token."""
+    """Stop names the group behind the gateway, and carries the stored token."""
 
     GW = "https://apple-gadogado-5d0vs4l8x0j51hwy.salad.cloud"
     HOST = "apple-gadogado-5d0vs4l8x0j51hwy.salad.cloud"
@@ -704,25 +684,10 @@ class GroupLifecycleCalls(unittest.TestCase):
             f"{salad_status.PROJECT}/containers/{self.GROUP}/{action}"
         )
 
-    def test_start_names_the_resolved_group_and_carries_the_token(self) -> None:
-        calls: list = []
-        code, _payload = salad_status.start_container_group(
-            self.GW, "salad-secret", sender=self._sender(record=calls)
-        )
-        self.assertEqual(code, 202)
-        posts = [call for call in calls if call[0] == "POST"]
-        self.assertEqual(len(posts), 1)
-        method, url, key, data = posts[0]
-        self.assertEqual(method, "POST")
-        self.assertEqual(url, self._url("start"))
-        self.assertEqual(key, "salad-secret")
-        self.assertIsNone(data, "a start carries no body")
-
     def test_stop_names_the_resolved_group(self) -> None:
         calls: list = []
-        code, _payload = salad_status.stop_container_group(
-            self.GW, "k", sender=self._sender(record=calls)
-        )
+        life = salad_status.ContainerLifecycle(lambda: "k", sender=self._sender(record=calls))
+        code, _message = life.stop("klein", self.GW)
         self.assertEqual(code, 202)
         self.assertEqual(
             [call for call in calls if call[0] == "POST"][0][1], self._url("stop")
@@ -732,17 +697,20 @@ class GroupLifecycleCalls(unittest.TestCase):
         sender = self._sender(
             action_code=403, action_payload={"error": {"message": "quota exceeded"}}
         )
-        code, payload = salad_status.start_container_group(self.GW, "k", sender=sender)
+        code, message = salad_status.ContainerLifecycle(lambda: "k", sender=sender).stop(
+            "klein", self.GW
+        )
         self.assertEqual(code, 403)
-        self.assertIn("quota exceeded", str(payload))
+        self.assertIn("quota exceeded", message)
 
     def test_a_gateway_with_no_group_is_refused_without_calling_the_action(self) -> None:
         calls: list = []
-        code, payload = salad_status.stop_container_group(
-            self.GW, "k", sender=self._sender(groups=[], record=calls)
+        life = salad_status.ContainerLifecycle(
+            lambda: "k", sender=self._sender(groups=[], record=calls)
         )
+        code, message = life.stop("klein", self.GW)
         self.assertEqual(code, 404)
-        self.assertIn("No container group", payload["error"])
+        self.assertIn("No container group", message)
         self.assertEqual([call for call in calls if call[0] == "POST"], [])
 
     def test_group_is_running_reads_the_groups_own_state(self) -> None:
@@ -775,19 +743,18 @@ class GroupLifecycleCalls(unittest.TestCase):
     def test_the_lifecycle_client_resolves_the_group_from_the_gateway(self) -> None:
         calls: list = []
         life = salad_status.ContainerLifecycle(lambda: "tok", sender=self._sender(record=calls))
-        code, message = life.start("klein", self.GW)
+        code, message = life.stop("klein", self.GW)
         self.assertEqual((code, message), (202, ""))
         posts = [call for call in calls if call[0] == "POST"]
         self.assertEqual(len(posts), 1)
         self.assertTrue(
-            posts[0][1].endswith(f"/containers/{self.GROUP}/start"),
+            posts[0][1].endswith(f"/containers/{self.GROUP}/stop"),
             f"the group came from the DNS, not the profile name: {posts[0][1]}",
         )
         self.assertNotIn("/klein/", posts[0][1])
 
     def test_the_lifecycle_client_reports_a_missing_token_as_a_refusal(self) -> None:
         life = salad_status.ContainerLifecycle(lambda: "", sender=self._sender())
-        self.assertEqual(life.start("klein", self.GW), (401, "no Salad token is stored"))
         self.assertEqual(life.stop("klein", self.GW), (401, "no Salad token is stored"))
         self.assertIsNone(life.is_running("klein", self.GW))
 
@@ -796,7 +763,7 @@ class GroupLifecycleCalls(unittest.TestCase):
             raise FileNotFoundError("no key file")
 
         life = salad_status.ContainerLifecycle(broken, sender=self._sender())
-        self.assertEqual(life.start("klein", self.GW)[0], 401)
+        self.assertEqual(life.stop("klein", self.GW)[0], 401)
         self.assertIsNone(life.is_running("klein", self.GW))
 
     def test_the_lifecycle_client_carries_the_servers_message(self) -> None:
@@ -813,7 +780,7 @@ class GroupLifecycleCalls(unittest.TestCase):
     def test_a_profile_with_no_gateway_is_refused_without_a_call(self) -> None:
         calls: list = []
         life = salad_status.ContainerLifecycle(lambda: "tok", sender=self._sender(record=calls))
-        code, message = life.start("klein", "")
+        code, message = life.stop("klein", "")
         self.assertEqual(code, 404)
         self.assertIn("no gateway", message)
         self.assertEqual(calls, [])

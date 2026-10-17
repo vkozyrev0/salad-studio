@@ -201,7 +201,7 @@ class OnlineLookup(unittest.TestCase):
                 "https://civitai.com/api/download/models/2625692?fileId=1", "lora"
             )
         self.assertEqual(seen, ["version:2625692"])
-        assert hit is not None
+        self.assertIsNot(hit, None)
         self.assertEqual(hit["source"], "civitai-version")
         self.assertEqual(hit["version_name"], "Klein 9B")
         self.assertEqual(hit["base"], "Flux.2 Klein 9B")
@@ -235,7 +235,7 @@ class OnlineLookup(unittest.TestCase):
         self.assertIn("civitai.com/api/v1/models", urls[0])
         self.assertIn("query=some_style_v2", urls[0])
         self.assertIn("types=LORA", urls[0])
-        assert hit is not None
+        self.assertIsNot(hit, None)
         self.assertEqual(hit["model_name"], "Some Style")
         self.assertEqual(hit["version_name"], "v2")
 

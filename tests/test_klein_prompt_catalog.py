@@ -18,7 +18,7 @@ sides and enforces the three invariants the catalog rests on:
 
 Run from the repo root::
 
-    python -m unittest salad_studio.test_klein_prompt_catalog
+    python -m unittest tests.test_klein_prompt_catalog
 
 The check is meant to have teeth: mutating a character inside a catalogued prompt
 or pointing an entry at a recipe that lacks that text must fail it.

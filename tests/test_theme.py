@@ -22,6 +22,9 @@ if str(TOOLS) not in sys.path:
 
 APP = PKG / "app.py"
 
+from tests import _stores  # noqa: E402
+from tests.test_launch import _TempPaths  # noqa: E402
+
 try:
     import tkinter as tk
     from tkinter import ttk
@@ -38,7 +41,12 @@ _TK_ERROR: object = _TK_IMPORT_ERROR
 
 
 def setUpModule() -> None:
-    """Snapshot unthemed ttk lookups before any test calls apply_theme."""
+    """Snapshot unthemed ttk lookups before any test calls apply_theme.
+
+    A window built here also builds a queue, and the queue writes its ledger, so
+    that is moved off the user's own store for as long as this module runs.
+    """
+    _stores.keep_queue_ledger_off_the_user_store()
     global _TK_OK, _TK_ERROR
     if tk is None:
         return
@@ -57,6 +65,11 @@ def setUpModule() -> None:
             _DEFAULTS[(cls_name, option)] = style.lookup(cls_name, option) or ""
     finally:
         root.destroy()
+
+
+def tearDownModule() -> None:
+    """Put the shipped ledger path back: a later module must see it, not this."""
+    _stores.restore_queue_ledger()
 
 
 def _hex(root: tk.Misc, color: str) -> str:
@@ -130,6 +143,9 @@ class ThemeOnBareRoot(unittest.TestCase):
 
     def test_lookups_match_palette_and_differ_from_defaults(self) -> None:
         palette = self.PALETTE
+        self.assertGreater(
+            len(self.STYLE_LOOKUPS), 0, "the styled-widget table must not be empty"
+        )
         for cls_name, option, key in self.STYLE_LOOKUPS:
             raw = self.style.lookup(cls_name, option) or ""
             self.assertTrue(
@@ -180,31 +196,6 @@ class ThemeOnBareRoot(unittest.TestCase):
         self.assertEqual(_hex(self.root, str(self.text.cget("insertbackground"))), accent)
 
 
-def _isolate_studio_io(tmp: Path) -> None:
-    from salad_studio import (
-        image_deploy,
-        lora_store,
-        profiles,
-        prompt_history,
-        tokens,
-        ui_state,
-        vast,
-    )
-
-    profiles.PROFILES_PATH = tmp / "studio-profiles.json"
-    lora_store.EXTRAS_PATH = tmp / "studio-loras.json"
-    # Constructing the window reads the token store (log redaction), the
-    # prompt history, the saved UI state, the Vast.ai page's instance list and
-    # the Images page's store. Keep all five off the real files.
-    tokens.LOCAL_PATH = tmp / "studio-tokens.json"
-    tokens.CONFIG_HOME = tmp / "defaults"
-    prompt_history.HISTORY_PATH = tmp / "studio-prompt-history.json"
-    prompt_history.THUMBS_DIR = tmp / "studio-prompt-thumbs"
-    ui_state.STATE_PATH = tmp / "studio-ui.json"
-    vast.INSTANCES_PATH = tmp / "studio-vast.json"
-    image_deploy.SETTINGS_PATH = tmp / "studio-images.json"
-
-
 def _tab_texts(nb: ttk.Notebook) -> list[str]:
     return [nb.tab(tab_id, "text") for tab_id in nb.tabs()]
 
@@ -231,8 +222,7 @@ class LiveSaladStudioWindow(unittest.TestCase):
     def test_window_title_tabs_and_style_lookups(self) -> None:
         from salad_studio.theme import PALETTE
 
-        with tempfile.TemporaryDirectory() as td:
-            _isolate_studio_io(Path(td))
+        with tempfile.TemporaryDirectory() as td, _TempPaths(Path(td)):
             if not _TK_OK:
                 raise unittest.SkipTest(f"Tk cannot initialize: {_TK_ERROR}")
             app, palette, lookups = self._make_app()
@@ -274,8 +264,7 @@ class LiveSaladStudioWindow(unittest.TestCase):
                 app.destroy()
 
     def test_second_construct_still_themed(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            _isolate_studio_io(Path(td))
+        with tempfile.TemporaryDirectory() as td, _TempPaths(Path(td)):
             app, palette, lookups = self._make_app()
             try:
                 self.assertEqual(app.title(), "Salad Studio")
@@ -329,25 +318,26 @@ class WindowVisibility(unittest.TestCase):
     def test_show_false_builds_but_never_maps(self) -> None:
         if not _TK_OK:
             raise unittest.SkipTest(f"Tk cannot initialize: {_TK_ERROR}")
-        with tempfile.TemporaryDirectory() as td:
-            _isolate_studio_io(Path(td))
+        with tempfile.TemporaryDirectory() as td, _TempPaths(Path(td)):
             app, deiconify = self._build(env={"SALAD_STUDIO_HIDDEN": ""}, show=False)
             try:
                 app.update_idletasks()
                 self.assertFalse(deiconify.called, "show=False still mapped the window")
                 self.assertEqual(app.state(), "withdrawn")
                 self.assertEqual(int(app.winfo_ismapped()), 0)
-                # The window is still fully built and usable while hidden.
+                # The window is still fully built and usable while hidden: the
+                # shipped page set is there, in its order.
+                from salad_studio import app as app_mod
+
                 self.assertEqual(app.title(), "Salad Studio")
-                self.assertEqual(len(app.nb.tabs()), len(_tab_texts(app.nb)))
+                self.assertEqual(_tab_texts(app.nb), list(app_mod.TAB_ORDER))
             finally:
                 app.destroy()
 
     def test_env_var_hides_the_default_window(self) -> None:
         if not _TK_OK:
             raise unittest.SkipTest(f"Tk cannot initialize: {_TK_ERROR}")
-        with tempfile.TemporaryDirectory() as td:
-            _isolate_studio_io(Path(td))
+        with tempfile.TemporaryDirectory() as td, _TempPaths(Path(td)):
             app, deiconify = self._build(env={"SALAD_STUDIO_HIDDEN": "1"})
             try:
                 app.update_idletasks()
@@ -359,8 +349,7 @@ class WindowVisibility(unittest.TestCase):
     def test_default_still_shows_the_window(self) -> None:
         if not _TK_OK:
             raise unittest.SkipTest(f"Tk cannot initialize: {_TK_ERROR}")
-        with tempfile.TemporaryDirectory() as td:
-            _isolate_studio_io(Path(td))
+        with tempfile.TemporaryDirectory() as td, _TempPaths(Path(td)):
             app, deiconify = self._build(env={"SALAD_STUDIO_HIDDEN": ""})
             try:
                 self.assertTrue(deiconify.called, "the default build no longer shows the window")

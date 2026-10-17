@@ -15,6 +15,16 @@ for p in (str(TOOLS), str(PKG)):
         sys.path.insert(0, p)
 
 from salad_studio import prompt_history as ph  # noqa: E402
+from tests import _stores  # noqa: E402
+
+
+def setUpModule() -> None:
+    """A window built here builds a queue, and the queue writes its ledger."""
+    _stores.keep_queue_ledger_off_the_user_store()
+
+
+def tearDownModule() -> None:
+    _stores.restore_queue_ledger()
 
 
 class PromptHistoryStore(unittest.TestCase):
@@ -32,7 +42,7 @@ class PromptHistoryStore(unittest.TestCase):
         self.assertEqual(ph.list_prompts(), [])
         self.assertIsNone(ph.add_prompt("  "))
         a = ph.add_prompt("first prompt")
-        assert a is not None
+        self.assertIsNot(a, None)
         self.assertEqual(ph.add_prompt("first prompt"), a)
         ph.add_prompt("second prompt")
         rows = ph.list_prompts()
@@ -82,13 +92,13 @@ class PromptHistoryStore(unittest.TestCase):
             }
         }
         a = ph.add_request(body)
-        assert a is not None
+        self.assertIsNot(a, None)
         self.assertEqual(a["text"], "stallion on a hillside")
         lora = a["request"]["prompt"]["115"]["inputs"]["lora_name"]
         self.assertNotIn("SECRET", lora)
         self.assertIn("2795018", lora)
         again = ph.add_request(body)
-        assert again is not None
+        self.assertIsNot(again, None)
         self.assertEqual(again["ts"], a["ts"])
         self.assertEqual(again["request"], a["request"])
         self.assertEqual(len(ph.list_prompts()), 1)
@@ -105,12 +115,81 @@ class PromptHistoryStore(unittest.TestCase):
         body2 = json.loads(json.dumps(body))
         body2["prompt"]["86"]["inputs"]["cfg"] = 1
         b = ph.add_request(body2)
-        assert b is not None
+        self.assertIsNot(b, None)
         self.assertIsNot(b, a)
         self.assertEqual([r["text"] for r in ph.list_prompts()], [
             "stallion on a hillside",
             "stallion on a hillside",
         ])
+
+    def test_add_request_strips_credentials_and_every_token(self) -> None:
+        """The stored request must not keep a Bearer block or any ``?token=``.
+
+        Only ``lora_name`` was scrubbed, so the documented Salad shape's
+        ``credentials`` block landed in the history in clear.
+        """
+        body = {
+            "credentials": {
+                "https://civitai.com": {
+                    "header": {"key": "Authorization", "value": "Bearer SECRET"}
+                }
+            },
+            "prompt": {
+                "1": {
+                    "class_type": "LoadImage",
+                    "inputs": {"image": "https://example.test/plate.png?token=SECRET2"},
+                },
+                "2": {
+                    "class_type": "CLIPTextEncode",
+                    "inputs": {"text": "keep me"},
+                },
+            },
+        }
+        entry = ph.add_request(body)
+        self.assertIsNotNone(entry)
+        self.assertNotIn("credentials", entry["request"])
+        self.assertNotIn("SECRET", json.dumps(entry["request"]))
+        self.assertEqual(
+            entry["request"]["prompt"]["2"]["inputs"]["text"], "keep me"
+        )
+        self.assertIn("credentials", body, "the caller's body must not be mutated")
+
+    def test_attach_image_with_a_ts_that_matches_no_row_attaches_nothing(self) -> None:
+        """The documented rule: a ``ts`` no row carries returns None.
+
+        Falling back to the newest row would hand this plate to a different
+        render and delete that row's thumbnail, so the miss has to be a miss.
+        """
+        from PIL import Image
+
+        older, newer = 1_700_000_000_000, 1_700_000_001_000
+        ph.HISTORY_PATH.write_text(
+            json.dumps(
+                [
+                    {"text": "the older render", "ts": older},
+                    {"text": "the newer render", "ts": newer},
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        src = Path(self._td.name) / "plate.jpg"
+        Image.new("RGB", (200, 120), (200, 80, 40)).save(src, "JPEG")
+        self.assertIsNone(
+            ph.attach_image(src, ts=newer + 1),
+            "a ts that matches no row must attach to nothing",
+        )
+        self.assertEqual(
+            [row.get("image") or "" for row in ph.list_prompts()],
+            ["", ""],
+            "no row may be given the plate, and no thumbnail may be written",
+        )
+        # The row the ts does name still takes it.
+        thumb = ph.attach_image(src, ts=older)
+        self.assertIsNot(thumb, None)
+        rows = {int(row["ts"]): row for row in ph.list_prompts()}
+        self.assertEqual(rows[older]["image"], str(thumb))
+        self.assertNotIn("image", rows[newer])
 
     def test_legacy_text_only_still_loads(self) -> None:
         ph.HISTORY_PATH.write_text(
@@ -134,11 +213,11 @@ class PromptHistoryStore(unittest.TestCase):
             }
         }
         entry = ph.add_request(body)
-        assert entry is not None
+        self.assertIsNot(entry, None)
         src = Path(self._td.name) / "plate.jpg"
         Image.new("RGB", (200, 120), (200, 80, 40)).save(src, "JPEG")
         thumb = ph.attach_image(src)
-        assert thumb is not None
+        self.assertIsNot(thumb, None)
         self.assertTrue(thumb.is_file())
         self.assertEqual(thumb.parent, ph.THUMBS_DIR)
         with Image.open(thumb) as im:

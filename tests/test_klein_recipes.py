@@ -19,6 +19,7 @@ The tests still drive both files through the same gates Generate uses,
 from __future__ import annotations
 
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -35,6 +36,7 @@ from salad_studio import json_highlight  # noqa: E402
 
 KLEIN_DIR = TOOLS / "salad_klein"
 LEDGER_PATH = KLEIN_DIR / "prompt_ledger.json"
+CATALOG_PATH = KLEIN_DIR / "prompt_catalog.json"
 
 # Superseded: the research-era 4-LoRA stack. Kept on disk as the record of what
 # was tried; no human verdict covers either file (see the ledger's `verdicts`).
@@ -170,6 +172,45 @@ class PromptText(unittest.TestCase):
                 for bad in FORBIDDEN:
                     self.assertNotIn(bad, text, bad)
 
+
+def prompt_graph_files(directory: Path | None = None) -> list[Path]:
+    """``prompt_*.json`` whose ``prompt`` value is a Comfy graph.
+
+    ``prompt_ledger.json`` is not one of these. Its ``replacements[].had`` field
+    names ``REPLACE_THIS_PROMPT`` as the token a judged recipe used to contain.
+    That is a description of the token, not a graph value the model would render.
+    """
+    found = []
+    for path in sorted((directory or KLEIN_DIR).glob("prompt_*.json")):
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        prompt = doc.get("prompt")
+        if not isinstance(prompt, dict):
+            continue
+        if any(isinstance(node, dict) and node.get("class_type") for node in prompt.values()):
+            found.append(path)
+    return found
+
+
+def placeholder_hits(path: Path) -> list[str]:
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    hits = []
+    for node in doc["prompt"].values():
+        if not isinstance(node, dict) or node.get("class_type") != "CLIPTextEncode":
+            continue
+        text = str((node.get("inputs") or {}).get("text") or "")
+        hits.extend(bad for bad in FORBIDDEN if bad in text)
+    return hits
+
+
+class EveryPromptGraph(unittest.TestCase):
+    """The placeholder check covers every shipped graph, not only the verified one."""
+
+    def test_no_graph_still_carries_a_placeholder(self) -> None:
+        graphs = prompt_graph_files()
+        self.assertGreaterEqual(len(graphs), 4, "the klein dir lost its prompt graphs")
+        leaked = [f"{path.name}: {placeholder_hits(path)}" for path in graphs if placeholder_hits(path)]
+        self.assertEqual(leaked, [])
+
     def test_the_negative_stays_short(self) -> None:
         """At CFG 1 the negative is inert; a long defect list only forbids poses."""
         entry = _verified()
@@ -213,6 +254,60 @@ class PayloadGates(unittest.TestCase):
         entry = _verified()
         node = _ledger()["replacements"][0]["node"]
         self.assertEqual(posted[node]["inputs"]["text"], entry["prompt"])
+
+
+# M3/M5. The catalog's note cited `salad_studio/test_prompt_catalog.py`, which is
+# no file in the tree; the module that keeps the catalog honest is
+# `tests/test_prompt_catalog.py`. And the catalog records one verified run twice:
+# the top-level `operating_point` and the entry's `graph` held the same settings
+# except for `clip_type`, which only `graph` carried, so the copies could drift.
+# `clip_type` is dropped from the entry's copy — nothing reads it (the only
+# `clip_type` in any `.py` is a local in `comfy_import.py`), and the recipe's
+# `CLIPLoader` type is pinned by `OperatingPoint` above — leaving one value.
+CATALOG_NOTE_PATH = "tests/test_prompt_catalog.py"
+
+
+def missing_note_paths(note: str, root: Path) -> list[str]:
+    """Paths the note names that no file under ``root`` carries."""
+    return sorted(
+        token for token in re.findall(r"[\w./-]+\.py", note) if not (root / token).is_file()
+    )
+
+
+def divergent_run_settings(doc: dict) -> list[str]:
+    """Entry ids whose copy of the run's settings is not the operating point."""
+    operating_point = doc.get("operating_point")
+    if operating_point is None:
+        return []
+    return [
+        str(entry.get("id"))
+        for entry in doc.get("entries", [])
+        if entry.get("graph") != operating_point
+    ]
+
+
+class TheCatalogMatchesWhatItCites(unittest.TestCase):
+    """M3/M5: the note's path exists, and the run's settings have one value."""
+
+    def setUp(self) -> None:
+        self.doc = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+
+    def test_the_note_names_a_module_that_exists(self) -> None:
+        """The note cited `salad_studio/test_prompt_catalog.py`, which is no file."""
+        note = self.doc["note"]
+        self.assertIn(CATALOG_NOTE_PATH, note)
+        self.assertEqual(
+            missing_note_paths(note, TOOLS), [], "the note names a path no file has"
+        )
+
+    def test_the_run_settings_do_not_diverge(self) -> None:
+        """One copy of the run: the operating point and every entry's graph agree."""
+        self.assertIn("operating_point", self.doc, "the run's operating point")
+        self.assertEqual(
+            divergent_run_settings(self.doc),
+            [],
+            "an entry's graph drifted from the operating point",
+        )
 
 
 if __name__ == "__main__":

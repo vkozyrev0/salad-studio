@@ -34,13 +34,13 @@ class ListKnown(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             extras = Path(td) / "studio-loras.json"
             item = ls.find_lora("civitai:2334190@2625692", extras)
-        assert item is not None
+        self.assertIsNot(item, None)
         self.assertEqual(
             ls.comfy_lora_name(item),
             "https://civitai.com/api/download/models/2625692",
         )
         imp = ls.find_lora("civitai:545264@2763568", extras)
-        assert imp is not None
+        self.assertIsNot(imp, None)
         self.assertEqual(
             ls.comfy_lora_name(imp),
             "https://civitai.com/api/download/models/2763568",
@@ -53,7 +53,7 @@ class ListKnown(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             extras = Path(td) / "studio-loras.json"
             item = ls.find_lora("civitai:637213@2760271", extras)
-        assert item is not None
+        self.assertIsNot(item, None)
         name = ls.comfy_lora_name(item)
         self.assertTrue(name.startswith("https://"), name)
         self.assertIn("2760271", name)
@@ -98,7 +98,7 @@ class CivitaiSearchScore(unittest.TestCase):
         ]
         hit = ls.best_civitai_hit("transparent-watercolor_IL_MIX", items)
         self.assertIsNotNone(hit)
-        assert hit is not None
+        self.assertIsNot(hit, None)
         self.assertEqual(hit["version_id"], 42)
         self.assertEqual(hit["filename"], "transparent-watercolor_IL_MIX.safetensors")
 
@@ -123,7 +123,7 @@ class CivitaiSearchScore(unittest.TestCase):
         ]
         hit = ls.best_civitai_hit("Flux.2 Klein 9B anime", items)
         self.assertIsNotNone(hit)
-        assert hit is not None
+        self.assertIsNot(hit, None)
         self.assertEqual(hit["version_id"], 2825584)
         self.assertEqual(
             hit["filename"], "Flux.2 Klein 9B Anime V3 Refined.safetensors"
@@ -138,7 +138,7 @@ class CivitaiSearchScore(unittest.TestCase):
             }
         ]
         hit2 = ls.best_civitai_hit("Flux.2 Klein 9B anime", v1_first)
-        assert hit2 is not None
+        self.assertIsNot(hit2, None)
         self.assertEqual(hit2["version_id"], 2825584)
 
     def test_prefer_civitai_hit_upgrades_v1_tag_to_v3_suffix(self) -> None:
@@ -185,7 +185,7 @@ class CivitaiSearchScore(unittest.TestCase):
             }
         ]
         hit = ls.best_civitai_hit("Ah! My Goddess_illustriousXL", items)
-        assert hit is not None
+        self.assertIsNot(hit, None)
         self.assertEqual(hit["version_id"], 1810929)
         self.assertNotEqual(hit["version_id"], 3131267)
 
@@ -245,7 +245,7 @@ class CivitaiSearchScore(unittest.TestCase):
             "cass_aruhshuraanima_preview3_1-step00004500", items
         )
         self.assertIsNotNone(hit)
-        assert hit is not None
+        self.assertIsNot(hit, None)
         self.assertEqual(hit["version_id"], 2848936)
         self.assertEqual(
             hit["filename"],
@@ -339,7 +339,7 @@ class AddFromSources(unittest.TestCase):
         self.assertEqual(item["source"]["filename"], "on_disk.safetensors")
         self.assertTrue(item.get("verified"))
         found = ls.find_lora("local:on_disk.safetensors", self.extras)
-        assert found is not None
+        self.assertIsNot(found, None)
         self.assertEqual(found["source"]["filename"], "on_disk.safetensors")
 
     def test_add_bare_safetensors_filename(self) -> None:
@@ -443,7 +443,7 @@ class AddFromSources(unittest.TestCase):
         klein = ls.find_lora("civitai:2334190@2625692", self.extras)
         imp = ls.find_lora("civitai:545264@2763568", self.extras)
         ultra = ls.find_lora("civitai:796382@1026423", self.extras)
-        assert klein is not None and imp is not None and ultra is not None
+        self.assertTrue(klein is not None and imp is not None and ultra is not None)
         self.assertEqual(ls.family_label(klein), "Flux.2 Klein")
         self.assertEqual(ls.family_label(imp), "Flux.2 Klein")
         self.assertEqual(ls.family_label(ultra), "Flux.1 Dev")
@@ -465,19 +465,19 @@ class AddFromSources(unittest.TestCase):
         aged = ls.find_by_loader_name(
             "https://civitai.com/api/download/models/2795018", self.extras
         )
-        assert aged is not None
+        self.assertIsNot(aged, None)
         self.assertEqual(aged["id"], "civitai:1449678@2795018")
         with_tok = ls.find_by_loader_name(
             "https://civitai.com/api/download/models/2795018?token=nope",
             self.extras,
         )
-        assert with_tok is not None
+        self.assertIsNot(with_tok, None)
         self.assertEqual(with_tok["id"], aged["id"])
         baked = ls.find_by_loader_name("klein_slider_detail.safetensors", self.extras)
-        assert baked is not None
+        self.assertIsNot(baked, None)
         self.assertEqual(baked["id"], "civitai:2334190@2625692")
         pony = ls.find_lora("civitai:264290@720004", self.extras)
-        assert pony is not None
+        self.assertIsNot(pony, None)
         self.assertEqual(ls.family_label(pony), "Pony")
         self.assertFalse(ls.compatible_with_graph(pony, "klein"))
         self.assertFalse(ls.compatible_with_graph(pony, "flux1"))
@@ -510,7 +510,7 @@ class AddFromSources(unittest.TestCase):
         self.assertEqual(edited["strength_clip"], 0.7)
         self.assertEqual(edited["base"], "Flux.1 D")
         loaded = ls.find_lora("civitai:111@222", self.extras)
-        assert loaded is not None
+        self.assertIsNot(loaded, None)
         self.assertEqual(loaded["name"], "Flux extra")
         self.assertEqual(loaded["source"]["filename"], "flux_extra.safetensors")
         self.assertEqual(loaded["strength_model"], 0.65)
@@ -532,7 +532,7 @@ class AddFromSources(unittest.TestCase):
             base="Flux.2 Klein",
         )
         loaded = ls.find_lora("civitai:2334190@2625692", self.extras)
-        assert loaded is not None
+        self.assertIsNot(loaded, None)
         self.assertEqual(loaded["name"], "Detail (annotated)")
         self.assertEqual(ls.family_label(loaded), "Flux.2 Klein")
 
@@ -685,7 +685,7 @@ class VerifyWeightRefs(unittest.TestCase):
         self.assertIn("1730326", specs[0]["lora_name"])
         self.assertTrue(specs[0].get("verified"))
         loaded = ls.find_lora("civitai:338702@1730326", extras)
-        assert loaded is not None
+        self.assertIsNot(loaded, None)
         self.assertTrue(loaded.get("verified"))
 
     def test_verify_lora_and_unverified_batch(self) -> None:
@@ -830,7 +830,7 @@ class VariationLabel(unittest.TestCase):
         with patch.object(ls, "fetch_civitai_model", return_value=full):
             hydrated = ls._hydrate_model_versions(query, search_hit)
         hit = ls.best_civitai_hit(query, [hydrated])
-        assert hit is not None
+        self.assertIsNot(hit, None)
         self.assertEqual(hit["version_id"], 2762669)
         self.assertIn("Geometric01_CE_FLUX2_Klein9b_AIT5k", hit["filename"])
 
@@ -990,12 +990,83 @@ class ImageResources(unittest.TestCase):
         ), patch.object(ls, "fetch_civitai_page_resources") as page:
             item = ls.fetch_civitai_image("135440425")
         page.assert_not_called()
-        assert item is not None
+        self.assertIsNot(item, None)
         self.assertEqual(item["modelVersionIds"], [3088444])
         self.assertEqual(
             ls.unwrap_image_generation(item)["resources"][0]["name"],
             "Artificeal",
         )
+
+
+class TruncatedExtrasDegrades(unittest.TestCase):
+    """C3: a half-written studio-loras.json must not abort list_loras.
+
+    This loader is on the path of every LoRA render, so raising here takes LoRA
+    listing and Convert down with it. It degrades to "no extras" like every
+    sibling store.
+    """
+
+    def setUp(self) -> None:
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.extras = Path(self._td.name) / "studio-loras.json"
+
+    def _ids(self) -> list[str]:
+        return [str(row.get("id")) for row in ls.list_loras(self.extras)]
+
+    def test_a_truncated_extras_file_still_lists_the_known_loras(self) -> None:
+        self.extras.write_text('[{"id": "civitai:1@2"', encoding="utf-8")
+        ids = self._ids()
+        self.assertTrue(ids, "the built-in list must still come back")
+        self.assertTrue(all(ids), "and every row must have an id")
+
+    def test_empty_and_non_json_extras_files_read_as_no_extras(self) -> None:
+        self.extras.write_text('{"items": []}', encoding="utf-8")
+        base = self._ids()
+        for blob in ("", "   ", "nope", "{}", '{"items": "nope"}'):
+            with self.subTest(blob=blob):
+                self.extras.write_text(blob, encoding="utf-8")
+                self.assertEqual(self._ids(), base)
+
+    def test_an_extra_saved_after_a_truncated_read_is_listed(self) -> None:
+        self.extras.write_text("[{", encoding="utf-8")
+        base = self._ids()
+        with patch.object(ls, "verify_http_url", return_value=True):
+            item = ls.add_lora(
+                "https://civitai.com/models/957327?modelVersionId=2725918",
+                extras_path=self.extras,
+            )
+        self.assertTrue(item.get("id"))
+        self.assertIn(str(item["id"]), self._ids(), "the rewritten store is read back")
+
+
+class VerifyHttpUrlFallsBackToGet(unittest.TestCase):
+    def test_a_head_refusal_a_cdn_commonly_sends_is_checked_with_a_get(self) -> None:
+        import io
+        import urllib.error
+
+        calls: list[str] = []
+
+        class _Resp:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exc):
+                return False
+
+        def fake(req, timeout=15):
+            calls.append(req.get_method())
+            if len(calls) == 1:
+                raise urllib.error.HTTPError(
+                    req.full_url, 405, "no HEAD", {}, io.BytesIO(b"")
+                )
+            return _Resp()
+
+        with patch("urllib.request.urlopen", side_effect=fake):
+            self.assertTrue(ls.verify_http_url("https://example.test/x.safetensors"))
+        self.assertEqual(calls, ["HEAD", "GET"], "a HEAD-only check would say dead")
 
 
 if __name__ == "__main__":

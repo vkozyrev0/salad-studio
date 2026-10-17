@@ -29,7 +29,7 @@ for _p in (PKG, HERE.parent):
 # Package-qualified on purpose: the app holds salad_studio.profiles, and this
 # repo can load the same module twice (top-level and as a package), so patching
 # the other copy would move paths the app never reads.
-from salad_studio import lora_store, profiles, prompt_catalog, prompt_history, salad_queue, studio_meta  # noqa: E402
+from salad_studio import lora_store, profiles, prompt_catalog, prompt_history, request_json, salad_queue, studio_meta  # noqa: E402
 from salad_studio import image_deploy  # noqa: E402
 from salad_studio import tokens as tok  # noqa: E402
 from salad_studio import ui_state, vast  # noqa: E402
@@ -202,7 +202,7 @@ class LaunchCheck(unittest.TestCase):
             "prompt": {
                 "70": {
                     "class_type": "UNETLoader",
-                    "inputs": {"unet_name": profiles.SNOFS_UNET},
+                    "inputs": {"unet_name": request_json.UNET_SNOFS},
                 }
             }
         }

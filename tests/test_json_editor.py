@@ -18,9 +18,19 @@ for p in (str(TOOLS), str(PKG)):
 
 import json_highlight as jh  # noqa: E402
 from generator import parse_request_json  # noqa: E402
+from tests import _stores  # noqa: E402
 
 APP = PKG / "app.py"
 SAMPLE = '{"hello": "world", "n": 1, "prompt": {"w": 64}}'
+
+
+def setUpModule() -> None:
+    """A window built here builds a queue, and the queue writes its ledger."""
+    _stores.keep_queue_ledger_off_the_user_store()
+
+
+def tearDownModule() -> None:
+    _stores.restore_queue_ledger()
 
 
 def _kind_at(text: str, needle: str) -> str | None:
@@ -138,8 +148,18 @@ class LiveJsonEditor(unittest.TestCase):
         from salad_studio.app import SaladStudio
         from salad_studio import lora_store, profiles
 
+        saved = (
+            (profiles, "PROFILES_PATH", profiles.PROFILES_PATH),
+            (lora_store, "EXTRAS_PATH", lora_store.EXTRAS_PATH),
+        )
         profiles.PROFILES_PATH = tmp / "studio-profiles.json"
         lora_store.EXTRAS_PATH = tmp / "studio-loras.json"
+
+        def _restore_stores() -> None:
+            for module, name, value in reversed(saved):
+                setattr(module, name, value)
+
+        self.addCleanup(_restore_stores)
         self.app = SaladStudio(show=False)
         self.app.withdraw()
         self.app.update_idletasks()

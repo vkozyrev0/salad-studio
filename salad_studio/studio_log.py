@@ -131,11 +131,27 @@ def _problem_title_detail(snippet: str) -> tuple[str, str]:
         title = tm.group(1) if tm else ""
         detail = dm.group(1) if dm else ""
         if not title and not detail and not snippet.lstrip().startswith("{"):
-            detail = snippet.strip()
+            detail = _plain_reason(snippet)
     title, detail = title.strip(), detail.strip()
     if "developers.cloudflare.com" in detail:
         detail = ""
     return title, detail
+
+
+def _plain_reason(snippet: str, n: int = 200) -> str:
+    """The words in a body that is not JSON, or "" when it is only markup.
+
+    Salad's gateway answers a not-ready replica with a full HTML error page.
+    Pasting that into a log line buries the line that matters - the status and
+    the retry - and the page says nothing the status hint does not: it is the
+    platform's own "replica unavailable" page, with a heading that repeats the
+    status code. So markup contributes nothing here, while a plain-text body (a
+    proxy's one-line refusal, an origin's own message) is kept, shortened.
+    """
+    text = snippet.strip()
+    if not text or text.lstrip().startswith("<"):
+        return ""
+    return text[:n]
 
 
 def summarize_payload(body: dict[str, Any]) -> str:

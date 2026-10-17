@@ -9,6 +9,18 @@ One JSON document carries the two things that used to be code literals:
   ``checkpoints`` list (:mod:`profiles`), so growing it is a Config-page edit.
   This section is the seed a new built-in profile starts from and the table that
   tells two checkpoints apart when a list is checked for mixing families.
+- ``routing.families.<family>.startup_probe`` / ``readiness_probe`` — the probe
+  settings that family's container runs: its ``path``, ``port``,
+  ``initial_delay_seconds``, ``period_seconds``, ``timeout_seconds`` and
+  ``failure_threshold``. They are what a config with nothing stored starts from,
+  and what the Config page falls back to when neither its stored policy nor a
+  live group read answers.
+- ``routing.families.<family>.deployment`` — what it takes to run that family's
+  image on a host: the build context, the base image, the build arg, the ports
+  the container answers on, and the environment entries it reads (with the
+  token slot or literal that supplies each one). The Config page's Container images
+section renders this;
+  :mod:`image_deploy` builds the deploy commands from it.
 - ``queue.idle_stop_s`` — how long a container may sit idle before the queue
   stops it, in seconds (one hour by default).
 - ``prompt`` — the instruction the AI layer sends: role, task, house rules and
@@ -36,6 +48,43 @@ DEFAULT_PATH = Path(__file__).resolve().parent / "studio-metadata.json"
 IMAGE = "image"
 UNETS = "unets"
 MARKERS = "markers"
+
+# Per-family deployment settings: where the image is built from and what a host
+# has to be told. ``env`` entries name a Tokens-tab slot (``token``) or carry a
+# literal (``value``), so a page can show a secret masked and a command can use
+# the real one.
+DEPLOYMENT = "deployment"
+CONTEXT = "context"
+BASE_IMAGE = "base_image"
+BUILD_ARG = "build_arg"
+PORTS = "ports"
+PORT_API = "api"
+PORT_COMFY = "comfy"
+ENV = "env"
+ENV_NAME = "name"
+ENV_VALUE = "value"
+ENV_TOKEN = "token"
+ENV_NOTE = "note"
+GPU = "gpu"
+DISK_GB = "disk_gb"
+VCPU = "vcpu"
+MEMORY_GB = "memory_gb"
+
+# Per-family probe settings: the document's names for the two probes, the
+# policy's names for what it carries (``startup`` / ``readiness``), and the six
+# settings each one is made of.
+STARTUP_PROBE = "startup_probe"
+READINESS_PROBE = "readiness_probe"
+STARTUP = "startup"
+READINESS = "readiness"
+PROBE_KEYS = (
+    "path",
+    "port",
+    "initial_delay_seconds",
+    "period_seconds",
+    "timeout_seconds",
+    "failure_threshold",
+)
 
 # The queue's idle-stop timeout, in seconds, when the document does not say.
 DEFAULT_IDLE_STOP_S = 3600
@@ -85,6 +134,99 @@ def _text_list(value: Any) -> list[str]:
     return out
 
 
+def _probe(raw: Any) -> dict[str, Any]:
+    """One probe's documented settings, and only those.
+
+    A hand-edited document can carry a key the policy has never heard of, so
+    only the six named settings pass through; a probe the document does not
+    describe at all reads as ``{}``.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    return {key: raw[key] for key in PROBE_KEYS if key in raw}
+
+
+def _env_entries(raw: Any) -> list[dict[str, str]]:
+    """The documented environment entries, each with a name and what supplies it.
+
+    An entry with neither a token slot nor a literal is dropped: it would only
+    show a name the deploy commands could not fill in.
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        name = _text(item.get(ENV_NAME))
+        if not name:
+            continue
+        entry = {
+            ENV_NAME: name,
+            ENV_VALUE: _text(item.get(ENV_VALUE)),
+            ENV_TOKEN: _text(item.get(ENV_TOKEN)),
+            ENV_NOTE: _text(item.get(ENV_NOTE)),
+        }
+        if entry[ENV_VALUE] or entry[ENV_TOKEN]:
+            out.append(entry)
+    return out
+
+
+def _deployment(raw: Any) -> dict[str, Any]:
+    """One family's deployment settings, and only the keys this app knows.
+
+    A hand-edited document can carry anything, so the ports, the env list and
+    the numbers are coerced here: what reaches a page or a command line is what
+    the app can actually use. A family that documents nothing reads as ``{}``.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, Any] = {
+        CONTEXT: _text(raw.get(CONTEXT)),
+        BASE_IMAGE: _text(raw.get(BASE_IMAGE)),
+        BUILD_ARG: _text(raw.get(BUILD_ARG)),
+        GPU: _text(raw.get(GPU)),
+        ENV: _env_entries(raw.get(ENV)),
+    }
+    ports = raw.get(PORTS) if isinstance(raw.get(PORTS), dict) else {}
+    out[PORTS] = {
+        key: _port(ports.get(key)) for key in (PORT_API, PORT_COMFY)
+    }
+    for key in (DISK_GB, VCPU, MEMORY_GB):
+        out[key] = _positive_int(raw.get(key))
+    if not any(
+        (
+            out[CONTEXT],
+            out[BASE_IMAGE],
+            out[BUILD_ARG],
+            out[GPU],
+            out[ENV],
+            any(out[PORTS].values()),
+            out[DISK_GB],
+            out[VCPU],
+            out[MEMORY_GB],
+        )
+    ):
+        return {}
+    return out
+
+
+def _port(value: Any) -> int:
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return port if 0 < port < 65536 else 0
+
+
+def _positive_int(value: Any) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return number if number > 0 else 0
+
+
 def _families(raw: Any) -> dict[str, dict[str, Any]]:
     if not isinstance(raw, dict):
         return {}
@@ -98,6 +240,9 @@ def _families(raw: Any) -> dict[str, dict[str, Any]]:
             IMAGE: _text(data.get(IMAGE)),
             UNETS: _text_list(data.get(UNETS)),
             MARKERS: _text_list(data.get(MARKERS)),
+            DEPLOYMENT: _deployment(data.get(DEPLOYMENT)),
+            STARTUP_PROBE: _probe(data.get(STARTUP_PROBE)),
+            READINESS_PROBE: _probe(data.get(READINESS_PROBE)),
         }
     return out
 
@@ -174,7 +319,7 @@ def load(path: Path | None = None) -> dict[str, Any]:
 
 
 def families(doc: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
-    """The routing table: family name to its group, image, unets and markers."""
+    """The routing table: family name to its group, image, unets, markers and probes."""
     routing = (doc or {}).get("routing")
     if not isinstance(routing, dict):
         return {}
@@ -241,13 +386,57 @@ def family_for_unet(unet: str, doc: dict[str, Any] | None) -> str:
 
 
 def entry_for_family(family: str, doc: dict[str, Any] | None) -> dict[str, Any]:
-    """The family's entry: its checkpoints, markers and image, or an empty one."""
-    return families(doc).get(family, {IMAGE: "", UNETS: [], MARKERS: []})
+    """The family's entry: its checkpoints, markers, image, deployment and probes."""
+    return families(doc).get(
+        family,
+        {
+            IMAGE: "",
+            UNETS: [],
+            MARKERS: [],
+            DEPLOYMENT: {},
+            STARTUP_PROBE: {},
+            READINESS_PROBE: {},
+        },
+    )
 
 
 def image_for_family(family: str, doc: dict[str, Any] | None) -> str:
     """The container image recorded for ``family``, informational."""
     return _text(entry_for_family(family, doc).get(IMAGE))
+
+
+def deployment_for_family(family: str, doc: dict[str, Any] | None) -> dict[str, Any]:
+    """What it takes to run ``family``'s image on a host, or ``{}``.
+
+    The ports, the build arg, the base image and the environment entries the
+    container reads, with the token slot or literal that supplies each entry.
+    A family the document does not document, or one whose entry carries no
+    deployment block, comes back ``{}`` rather than raising.
+    """
+    entry = entry_for_family(_text(family), doc).get(DEPLOYMENT)
+    return dict(entry) if isinstance(entry, dict) else {}
+
+
+def probe_settings_for_family(
+    family: str, doc: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """The documented probe settings for ``family``: ``startup`` and ``readiness``.
+
+    Each kind carries the six settings the document names and only those, so a
+    stray key in a hand-edited document never reaches a policy. A kind the
+    document does not document is left out, and a family it does not name comes
+    back ``{}``: a broken document must leave the Config page's fields empty, not
+    abort the page reading them.
+    """
+    if not isinstance(doc, dict):
+        return {}
+    entry = entry_for_family(_text(family), doc)
+    out: dict[str, Any] = {}
+    for kind, key in ((STARTUP, STARTUP_PROBE), (READINESS, READINESS_PROBE)):
+        probe = _probe(entry.get(key))
+        if probe:
+            out[kind] = probe
+    return out
 
 
 def idle_stop_seconds(doc: dict[str, Any] | None) -> int:

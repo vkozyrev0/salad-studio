@@ -148,6 +148,10 @@ def flux_payload(
 def wait_ready(base: str, key: str, timeout_s: int) -> None:
     deadline = time.time() + timeout_s
     n = 0
+    # A zero or negative budget skips the loop, and the failure message below
+    # reads this: unset, it raised UnboundLocalError instead of reporting that
+    # the gateway was never asked.
+    code = 0
     while time.time() < deadline:
         n += 1
         code, body = _req(base + "/ready", key, timeout=20)

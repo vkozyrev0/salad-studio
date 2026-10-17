@@ -1,0 +1,607 @@
+"""The Queue page: it renders the queue's own records, and its controls act on them.
+
+The page holds no job state of its own, so every assertion here reads the
+rendered rows back and then compares them with ``app.gen_queue.jobs()``. The
+window is built hidden and never mapped, the way the rest of the Tk suite does
+it; requested geometry stands in for the on-screen size of an unmapped window.
+"""
+from __future__ import annotations
+
+import inspect
+import json
+import sys
+import tempfile
+import textwrap
+import threading
+import time
+import unittest
+from pathlib import Path
+from unittest import mock
+
+HERE = Path(__file__).resolve().parent
+PKG = HERE.parent / "salad_studio"
+for _p in (PKG, HERE.parent):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
+
+import salad_queue as q  # noqa: E402
+from salad_studio import profiles  # noqa: E402
+from tests.test_launch import _TempPaths  # noqa: E402
+
+try:
+    import tkinter as tk
+except ImportError as _tk_err:
+    tk = None  # type: ignore[assignment]
+    _TK_IMPORT_ERROR = _tk_err
+else:
+    _TK_IMPORT_ERROR = None
+
+
+def _pump(app, predicate, seconds: float = 15.0) -> bool:
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        if predicate():
+            return True
+        app.update()
+        time.sleep(0.02)
+    return predicate()
+
+
+def _destroy_quietly(app) -> None:
+    """Destroy a window, tolerating one a test already closed itself."""
+    try:
+        app.destroy()
+    except tk.TclError:
+        pass
+
+
+def _old_form(func, edits: list[tuple[str, str]]):
+    """The shipped function with a pass's edits undone: the old handler, rebuilt.
+
+    ``edits`` are (shipped text, the text it replaced) pairs, applied to the
+    source ``inspect.getsource`` returns. The old behaviour is therefore rebuilt
+    from the shipped file rather than copied into a literal that could drift
+    away from it, and a test can drive it to show what the fix changed.
+    """
+    source = textwrap.dedent(inspect.getsource(func))
+    for new, old in edits:
+        assert new in source, f"{func.__name__} no longer holds {new!r}"
+        source = source.replace(new, old, 1)
+    namespace: dict = {}
+    exec(compile(source, f"<old {func.__name__}>", "exec"), func.__globals__, namespace)
+    return namespace[func.__name__]
+
+
+@unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
+class QueuePage(unittest.TestCase):
+    def setUp(self) -> None:
+        try:
+            probe = tk.Tk()
+            probe.withdraw()
+            probe.destroy()
+        except tk.TclError as e:
+            self.skipTest(f"Tk cannot initialize: {e}")
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.tmp = Path(self._td.name)
+        self._ctx = _TempPaths(self.tmp)
+        self._ctx.__enter__()
+        self.addCleanup(lambda: self._ctx.__exit__(None, None, None))
+        from salad_studio import app as app_mod
+
+        self.app_mod = app_mod
+        self.app = app_mod.SaladStudio(show=False)
+        self.app.withdraw()
+        self.addCleanup(self.app.destroy)
+        self.app.update_idletasks()
+
+    def _accept(self, job_id: int = 1, line: str = ""):
+        return self.app.gen_queue.deliver(
+            {"id": job_id, "url": "https://gw.example/prompt", "bytes": 12, "profile": line},
+            lambda _job: q.Attempt(status=200, accepted=True, result="plate"),
+            line=line,
+        )
+
+    def _fail(self, job_id: int = 2, message: str = "bad graph", line: str = ""):
+        body = json.dumps({"error": {"message": message}}).encode()
+        return self.app.gen_queue.deliver(
+            {"id": job_id, "url": "https://gw.example/prompt", "bytes": 12, "profile": line},
+            lambda _job: q.Attempt(status=400, body=body),
+            line=line,
+        )
+
+    def _row(self, job_id: int) -> tuple[str, ...]:
+        item = str(job_id)
+        self.assertTrue(self.app.queue_tree.exists(item), f"no row for job {job_id}")
+        return tuple(str(v) for v in self.app.queue_tree.item(item, "values"))
+
+    def _row_state(self, job_id: int) -> str:
+        """The state the page is showing for a job, or "" when it has no row yet."""
+        item = str(job_id)
+        if not self.app.queue_tree.exists(item):
+            return ""
+        return str(self.app.queue_tree.item(item, "values")[2])
+
+    def _pump_state(self, job_id: int, want: str, seconds: float = 15.0) -> None:
+        """Refresh the page until it shows ``want`` for that job."""
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            self.app._refresh_queue_page()
+            if self._row_state(job_id) == want:
+                return
+            self.app.update()
+            time.sleep(0.02)
+        self.fail(f"the page never showed {want!r} for request {job_id}")
+
+    def _open_page(self) -> None:
+        """Open the Queue tab the way the nav does, then let it redraw.
+
+        The tab-change event that refreshes the page needs the event loop, which
+        a withdrawn test window only runs when ``update()`` is pumped.
+        """
+        self.app._goto_tab("Queue")
+        self.app.update()
+        self.app._refresh_queue_page()
+        self.app.update_idletasks()
+
+    # -- rendering --------------------------------------------------------
+    def test_the_tab_set_includes_the_queue_page(self) -> None:
+        labels = [self.app.nb.tab(t, "text") for t in self.app.nb.tabs()]
+        self.assertEqual(labels, list(self.app_mod.TAB_ORDER))
+        self.assertIn("Queue", labels)
+        self.assertIn("Queue", self.app._nav_btns)
+
+    def test_a_fresh_queue_shows_the_empty_state(self) -> None:
+        self._open_page()
+        self.assertEqual(self.app.queue_tree.get_children(), ())
+        self.assertEqual(self.app.queue_empty_lbl.winfo_manager(), "grid")
+        self.assertIn("empty", str(self.app.queue_empty_lbl.cget("text")).lower())
+        self.assertIn("0 request", self.app.var_queue_summary.get())
+
+        self._accept()
+        self.app._refresh_queue_page()
+        self.assertEqual(self.app.queue_empty_lbl.winfo_manager(), "", "the empty state must go")
+
+    def test_the_render_tick_puts_a_waiting_request_on_the_page(self) -> None:
+        """Generate's own 2 s tick refreshes the page, not just the 15 s probe.
+
+        The report this pins: a request whose container was still starting left
+        the Queue page empty, so the press looked like it did nothing. The row
+        has to appear while the request waits for its container.
+        """
+        self._open_page()
+        self.assertEqual(self.app.queue_tree.get_children(), ())
+        job = self.app.gen_queue.enqueue(
+            {"id": 7, "url": "https://gw.example/prompt", "bytes": 12, "profile": "klein"},
+            lambda _job: q.Attempt(status=200, accepted=True),
+            line="klein",
+        )
+        self.app._busy = True
+        self.addCleanup(setattr, self.app, "_busy", False)
+        self.app._tick_gen()
+        self.assertEqual(
+            self._row_state(job.id),
+            q.status_word(q.PENDING),
+            "the waiting request must be on the page from the render tick",
+        )
+        self.assertEqual(self.app.queue_empty_lbl.winfo_manager(), "", "the empty state must go")
+
+    def test_the_page_renders_each_job_from_the_queues_records(self) -> None:
+        accepted = self._accept(1, line="klein5090")
+        failed = self._fail(2, message="invalid graph node 94", line="klein")
+        queued = self.app.gen_queue.enqueue(
+            {"id": 3, "url": "https://gw.example/prompt", "bytes": 12}
+        )
+        self._open_page()
+
+        rows = [self._row(job.id) for job in (accepted, failed, queued)]
+        self.assertEqual(rows[0][2], q.status_word(q.ACCEPTED))
+        self.assertEqual(rows[1][2], q.status_word(q.FAILED))
+        self.assertEqual(rows[2][2], q.status_word(q.PENDING))
+        self.assertEqual(rows[1][4], "400", "the last status must be on the row")
+        self.assertIn("invalid graph node 94", rows[1][5])
+        self.assertEqual(rows[1][3], "1", "the attempt count must be on the row")
+        self.assertIn("gw.example", rows[1][6], "the request must be on the row")
+        self.assertIn("12 bytes", rows[1][6])
+        self.assertEqual(rows[0][1], "klein5090", "the row carries the profile it dispatches to")
+        self.assertEqual(rows[1][1], "klein")
+        self.assertEqual(rows[2][1], "(default)")
+
+        # The rows are the queue's own records, not a second copy.
+        recorded = {
+            str(job.id): q.status_word(job.state) for job in self.app.gen_queue.jobs()
+        }
+        self.assertEqual(
+            {str(self.app.queue_tree.item(i, "values")[0]): self.app.queue_tree.item(i, "values")[2]
+             for i in self.app.queue_tree.get_children()},
+            recorded,
+        )
+        self.assertIn("failed: 1", self.app.var_queue_summary.get())
+
+    # -- the words on the rows, and what the page keeps -------------------
+    def _row_item(self, job_id: int | str):
+        """The tree item whose # cell is that request id, or None.
+
+        A row the queue kept from an earlier session carries its own row key, so
+        the id is read off the cell rather than assumed to be the key.
+        """
+        for item in self.app.queue_tree.get_children():
+            if str(self.app.queue_tree.item(item, "values")[0]) == str(job_id):
+                return item
+        return None
+
+    def _row_cell(self, job_id: int | str, column: str) -> str:
+        """One cell of one row, read back off the tree."""
+        item = self._row_item(job_id)
+        if item is None:
+            return ""
+        cols = tuple(self.app.queue_tree.cget("columns"))
+        return str(self.app.queue_tree.item(item, "values")[cols.index(column)])
+
+    def _age_finished(self, finished_at: float) -> None:
+        """Rewrite the kept record's finish time, the way hours passing would."""
+        ledger = Path(q.LEDGER_PATH)
+        doc = json.loads(ledger.read_text(encoding="utf-8"))
+        for row in doc.get("finished") or []:
+            row["finished_at"] = finished_at
+        ledger.write_text(json.dumps(doc), encoding="utf-8")
+
+    def test_the_row_word_follows_the_request_through_its_stages(self) -> None:
+        """The state cell says where the request is: waiting, in progress, done, failed."""
+        app = self.app
+        self._open_page()
+        waiting = app.gen_queue.enqueue(
+            {"id": 9, "url": "https://gw.example/prompt", "bytes": 12, "profile": "klein"},
+            lambda _job: q.Attempt(status=200, accepted=True),
+            line="klein",
+        )
+        app._refresh_queue_page()
+        self.assertEqual(self._row_state(waiting.id), "waiting", "queued, not submitted yet")
+
+        started = threading.Event()
+        held = threading.Event()
+
+        def attempt(_job):
+            started.set()
+            held.wait(20)
+            return q.Attempt(status=200, accepted=True, result="plate")
+
+        def work() -> None:
+            app.gen_queue.deliver(
+                {"id": 10, "url": "https://gw.example/prompt", "bytes": 12, "profile": "klein5090"},
+                attempt,
+                line="klein5090",
+            )
+
+        runner = threading.Thread(target=work, daemon=True)
+        runner.start()
+        self.assertTrue(started.wait(20), "the request never reached its attempt")
+        submitted = app.gen_queue.jobs()[-1]
+        app._refresh_queue_page()
+        self.assertEqual(self._row_state(submitted.id), "in progress", "submitted and running")
+        held.set()
+        runner.join(20)
+        app._refresh_queue_page()
+        self.assertEqual(self._row_state(submitted.id), "done", "accepted")
+
+        failed = self._fail(11)
+        app._refresh_queue_page()
+        self.assertEqual(self._row_state(failed.id), "failed")
+        app.gen_queue.cancel(waiting)
+        app._refresh_queue_page()
+        self.assertEqual(self._row_state(waiting.id), "cancelled")
+
+    def test_a_finished_request_stays_on_the_page_until_the_window_ages_it_out(self) -> None:
+        """A done row survives a reopen, and drops only once it is older than the window."""
+        app = self.app
+        self._accept(1, line="klein")
+        self._open_page()
+        self.assertEqual(self._row_state(1), q.status_word(q.ACCEPTED))
+        kept = app.gen_queue.finished()
+        self.assertEqual([row["id"] for row in kept], [1], "the queue kept the record")
+        finished_at = float(kept[0]["finished_at"])
+
+        # A second window on the same paths is what a restart looks like.
+        other = self.app_mod.SaladStudio(show=False)
+        other.withdraw()
+        self.addCleanup(_destroy_quietly, other)
+        other.update_idletasks()
+        other._goto_tab("Queue")
+        other._refresh_queue_page()
+        rows = [
+            str(other.queue_tree.item(item, "values")[0])
+            for item in other.queue_tree.get_children()
+        ]
+        self.assertEqual(rows, ["1"], "the finished row must survive a reopen")
+        cols = tuple(other.queue_tree.cget("columns"))
+        values = other.queue_tree.item("kept-1", "values")
+        self.assertEqual(str(values[2]), q.status_word(q.ACCEPTED), "still shown as done")
+        self.assertTrue(str(values[cols.index("finished")]), "with the time it finished")
+
+        # Age it past the retention window: a window opening on that record drops it,
+        # and an unfinished request beside it is never dropped.
+        self._age_finished(finished_at - q.FINISHED_RETENTION_S - 60)
+        aged = self.app_mod.SaladStudio(show=False)
+        aged.withdraw()
+        self.addCleanup(_destroy_quietly, aged)
+        aged.update_idletasks()
+        aged._goto_tab("Queue")
+        aged._refresh_queue_page()
+        self.assertEqual(
+            [
+                str(aged.queue_tree.item(item, "values")[0])
+                for item in aged.queue_tree.get_children()
+            ],
+            [],
+            "a row older than the window must drop off",
+        )
+        waiting = aged.gen_queue.enqueue(
+            {"id": 2, "url": "https://gw.example/prompt", "bytes": 12, "profile": "klein"}
+        )
+        aged._refresh_queue_page()
+        self.assertEqual(
+            str(aged.queue_tree.item(str(waiting.id), "values")[2]),
+            q.status_word(q.PENDING),
+            "an unfinished request is never dropped by the window",
+        )
+    def test_cancel_selected_drops_a_request_that_was_never_submitted(self) -> None:
+        calls: list[int] = []
+        queued = self.app.gen_queue.enqueue(
+            {"id": 1, "url": "https://gw.example/prompt", "bytes": 12},
+            lambda _job: calls.append(1) or q.Attempt(status=200),
+        )
+        self._open_page()
+        self.app.queue_tree.selection_set("1")
+        self.app.queue_cancel_btn.invoke()
+
+        self.assertEqual(queued.state, q.CANCELLED)
+        self.assertTrue(queued.terminal)
+        self.assertEqual(queued.attempts, 0)
+        self.assertEqual(calls, [], "the transport must never be called for a cancelled job")
+        self.assertEqual(
+            self._row(1)[2],
+            q.status_word(q.CANCELLED),
+            "the row must follow the queue",
+        )
+
+    def test_retry_selected_runs_off_the_tk_thread(self) -> None:
+        calls: list[int] = []
+        entered = threading.Event()
+        release = threading.Event()
+
+        def transport(_request):
+            calls.append(1)
+            if len(calls) == 1:
+                return q.Attempt(status=400, body=b'{"error": {"message": "first reason"}}')
+            entered.set()
+            release.wait(timeout=15)
+            return q.Attempt(status=200, accepted=True, result="plate")
+
+        failed = self.app.gen_queue.deliver({"id": 1, "url": "https://gw/prompt", "bytes": 3}, transport)
+        self.assertEqual(failed.state, q.FAILED)
+        self._open_page()
+        self.app.queue_tree.selection_set("1")
+        self.app.queue_retry_btn.invoke()
+
+        # invoke() returned while the retry is still inside the transport: the
+        # window stayed live instead of blocking on the render.
+        self.assertTrue(entered.wait(timeout=10), "the retry never reached the transport")
+        self.app.update()
+        self.assertIn("retrying", self.app.status.get())
+        self.app._refresh_queue_page()
+        self.assertEqual(
+            self._row_state(1),
+            q.status_word(q.RUNNING),
+            "the row shows the live retry, not the old failure",
+        )
+
+        release.set()
+        self.assertTrue(_pump(self.app, lambda: failed.terminal), "the retry never ended")
+        self.assertEqual(failed.state, q.ACCEPTED)
+        self.assertEqual(len(calls), 2, "the retry must ask the transport again")
+        self._pump_state(1, q.status_word(q.ACCEPTED))
+
+    def test_clear_finished_drops_the_finished_rows(self) -> None:
+        self._accept(1)
+        self._fail(2)
+        self._open_page()
+        self.assertEqual(len(self.app.queue_tree.get_children()), 2)
+        self.app.queue_clear_btn.invoke()
+        self.assertEqual(self.app.gen_queue.jobs(), [])
+        self.assertEqual(self.app.queue_tree.get_children(), ())
+        self.assertEqual(self.app.queue_empty_lbl.winfo_manager(), "grid")
+        self.assertIn("cleared 2", self.app.status.get())
+
+    def test_a_control_with_nothing_selected_says_so(self) -> None:
+        self._open_page()
+        self.app.queue_cancel_btn.invoke()
+        self.assertIn("select a request", self.app.status.get())
+        self.app.queue_retry_btn.invoke()
+        self.assertIn("select a request", self.app.status.get())
+
+    def test_a_kept_row_is_answered_with_the_earlier_session_fact(self) -> None:
+        """Issue 1 of the 2026-10-15b sweep: a row kept from an earlier session.
+
+        The queue keeps a finished record for four hours, and a window opening on
+        it shows the row under the key ``kept-<id>``. Cancel and Retry read the
+        selection as an integer, so both refused a row the user had visibly
+        selected. The id is read off the row's own first cell instead, and a kept
+        row is answered with the fact that its request finished in an earlier
+        session.
+        """
+        self._accept(1, line="klein")
+        self._open_page()
+        # A second window on the same paths is what a restart looks like.
+        other = self.app_mod.SaladStudio(show=False)
+        other.withdraw()
+        self.addCleanup(_destroy_quietly, other)
+        other.update_idletasks()
+        other._goto_tab("Queue")
+        other._refresh_queue_page()
+        self.assertTrue(
+            other.queue_tree.exists("kept-1"), "the kept row must be on the page"
+        )
+        self.assertEqual(
+            str(other.queue_tree.item("kept-1", "values")[0]),
+            "1",
+            "the row's own first cell carries the id, not the key",
+        )
+        other.queue_tree.selection_set("kept-1")
+        other.update_idletasks()
+
+        other.queue_cancel_btn.invoke()
+        cancel = other.status.get()
+        self.assertIn("earlier session", cancel, f"Cancel must name the fact: {cancel!r}")
+        self.assertNotIn(
+            "select a request", cancel, "a row the user selected must not be refused"
+        )
+
+        other.queue_retry_btn.invoke()
+        retry = other.status.get()
+        self.assertIn("earlier session", retry, f"Retry must name the fact: {retry!r}")
+        self.assertNotIn(
+            "select a request", retry, "a row the user selected must not be refused"
+        )
+        self.assertEqual(other.gen_queue.jobs(), [], "a kept row has no job to retry")
+        self.assertTrue(other.queue_tree.exists("kept-1"), "and it stays on the page")
+
+        # The old handlers, rebuilt from this file, answer both with the false
+        # refusal: that is what the kept-row branch replaced.
+        for name, word in (
+            ("_on_queue_cancel", "cancelled"),
+            ("_on_queue_retry", "retried"),
+        ):
+            with self.subTest(handler=name):
+                edits = [
+                    (
+                        (
+                            f'        note = self._selected_kept_note("{word}")\n'
+                            "        if note:\n"
+                            "            self._queue_status(note)\n"
+                            "            return\n"
+                        ),
+                        "",
+                    )
+                ]
+                old = _old_form(getattr(self.app_mod.SaladStudio, name), edits)
+                with mock.patch.object(self.app_mod.SaladStudio, name, old):
+                    other.queue_tree.selection_set("kept-1")
+                    getattr(other, name)()
+                self.assertEqual(
+                    other.status.get(),
+                    "Queue: select a request first",
+                    f"the old {name} refused the selected kept row",
+                )
+
+    # -- reachability and the UI read -------------------------------------
+    def test_the_page_is_reachable_from_the_sidebar_and_the_tab_lookup(self) -> None:
+        self._open_page()
+        self.assertEqual(self.app.nb.tab(self.app.nb.select(), "text"), "Queue")
+        self.app._goto_tab("Config")
+        self.app.update_idletasks()
+        self.app._nav_btns["Queue"].invoke()
+        self.app.update_idletasks()
+        self.assertEqual(self.app.nb.tab(self.app.nb.select(), "text"), "Queue")
+        self.assertEqual(self.app.queue_tree.winfo_manager(), "grid")
+
+    def test_the_page_geometry_and_row_text(self) -> None:
+        self._accept(1)
+        self._fail(2, message="invalid graph node 94")
+        self._open_page()
+        dump = {
+            "page": str(self.app._queue),
+            "page_req_width": self.app._queue.winfo_reqwidth(),
+            "page_req_height": self.app._queue.winfo_reqheight(),
+            "tree_manager": self.app.queue_tree.winfo_manager(),
+            "tree_columns": [str(c) for c in self.app.queue_tree.cget("columns")],
+            "tree_headings": [str(self.app.queue_tree.heading(c, "text")) for c in self.app.queue_tree.cget("columns")],
+            "empty_state_manager": self.app.queue_empty_lbl.winfo_manager(),
+            "summary": self.app.var_queue_summary.get(),
+            "rows": [list(self._row(1)), list(self._row(2))],
+            "nav_labels": list(self.app._nav_btns),
+        }
+        print(json.dumps(dump, indent=2))
+        self.assertGreater(dump["page_req_width"], 1, "the page frame has no width")
+        self.assertGreater(dump["page_req_height"], 1, "the page frame has no height")
+        self.assertGreaterEqual(dump["page_req_width"], 600)
+        for row in dump["rows"]:
+            self.assertTrue(row[2] and row[3] and row[4], f"a row is unreadable: {row}")
+        self.assertIn("Queue", dump["nav_labels"])
+
+    def test_a_render_in_flight_appears_on_the_page(self) -> None:
+        """The page shows a job the app itself submitted, and its outcome after."""
+        plate = "QUJD"
+        entered = threading.Event()
+        release = threading.Event()
+
+        def _req(url, key=None, data=None, timeout=30):
+            if str(url).endswith("/ready"):
+                return 200, b"ok"
+            entered.set()
+            release.wait(timeout=20)
+            return 200, json.dumps({"images": [plate]}).encode()
+
+        self.app.gen_queue = q.SaladQueue(on_log=self.app._on_queue_log, sleep=lambda _s: None)
+        self.app.var_gateway.set(profiles.load_all()["klein"].gateway)
+        self.app.var_salad_status.set("Ready")
+        self.app.editor_text.delete("1.0", "end")
+        self.app.editor_text.insert(
+            "1.0",
+            json.dumps(
+                {
+                    "prompt": {
+                        "70": {
+                            "class_type": "UNETLoader",
+                            "inputs": {"unet_name": profiles.load_all()["klein"].primary_checkpoint},
+                        }
+                    }
+                }
+            ),
+        )
+        self.app._rebuild_from_json()
+        from salad_studio import tokens as tok
+
+        tok.write_token("salad", "queue-page-key")
+        outcome: list[BaseException] = []
+        with tempfile.TemporaryDirectory() as out_td, mock.patch.object(
+            self.app_mod.generator.salad_gen, "_req", side_effect=_req
+        ), mock.patch.object(self.app_mod, "OUT_DIR", Path(out_td)), mock.patch.object(
+            self.app_mod.messagebox, "showerror"
+        ):
+
+            def body() -> None:
+                # Inside mainloop(), and never blocking in it: the render worker
+                # logs and reports back with after(), and a Tcl call from that
+                # thread while the main thread sits inside a callback deadlocks.
+                try:
+                    self._open_page()
+                    self.app._on_generate()
+                    self.assertTrue(
+                        _pump(self.app, entered.is_set, 30),
+                        "the render never reached the transport",
+                    )
+                    self._pump_state(1, q.status_word(q.RUNNING))
+                    self.assertEqual(self._row(1)[2], q.status_word(q.RUNNING))
+                    self.assertEqual(self._row(1)[1], "klein", "the row names the profile")
+                    release.set()
+                    self.assertTrue(
+                        _pump(self.app, lambda: not self.app._busy, 30),
+                        "the render never finished",
+                    )
+                    self._pump_state(1, q.status_word(q.ACCEPTED))
+                    self.assertEqual(self._row(1)[3], "1")
+                except BaseException as exc:  # noqa: BLE001 - re-raised below
+                    outcome.append(exc)
+                finally:
+                    release.set()
+                    _pump(self.app, lambda: not self.app._busy, 30)
+                    self.app.quit()
+
+            self.app.after(0, body)
+            self.app.mainloop()
+        if outcome:
+            raise outcome[0]
+
+
+if __name__ == "__main__":
+    unittest.main()

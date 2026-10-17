@@ -76,7 +76,10 @@ def one(
         code, body = salad_gen._req(base + "/prompt", key, data=payload, timeout=180)
         if code == 200:
             break
-        if code in (502, 503, 504, 524):
+        if code in (502, 503):
+            # 504/524 are terminal (salad_studio.salad_queue): the gateway gave
+            # up on a job the container may still be running, so a re-POST
+            # submits a duplicate render.
             salad_gen.time.sleep(8)
             continue
         txt = body.decode("utf-8", "replace")
@@ -112,7 +115,9 @@ def main() -> int:
     args = ap.parse_args()
     key = salad_gen._read(salad_gen.CONFIG / "key")
     base = salad_gen._read(salad_gen.CONFIG / "gateway").rstrip("/")
-    salad_gen.wait_ready(base, key, 120)
+    from salad_studio.generator import ready_budget_s
+
+    salad_gen.wait_ready(base, key, ready_budget_s())
     token = _civitai_token()
 
     def _authed(url: str) -> str:
@@ -127,12 +132,15 @@ def main() -> int:
     stages = (args.stage,) if args.stage else tuple(cat.AGE)
     jobs = [(s, t) for s in sexes for t in stages]
     need_warm = ckpt.startswith("http") or lora.startswith("http")
+    fails = 0
     if need_warm:
         print("[warm] first replica download", flush=True)
         warm = one(
             key, base, jobs[0][0], jobs[0][1], args.prefix, ckpt, token, lora, args.lora_strength
         )
         print("[warm]", warm, flush=True)
+        if warm.startswith("fail "):
+            fails += 1
         jobs = jobs[1:]
     with ThreadPoolExecutor(max_workers=7) as pool:
         futs = [
@@ -142,8 +150,13 @@ def main() -> int:
             for s, t in jobs
         ]
         for fut in as_completed(futs):
-            print(fut.result(), flush=True)
-    return 0
+            line = fut.result()
+            print(line, flush=True)
+            if line.startswith("fail "):
+                fails += 1
+    # Same contract as salad_probe_klein.py: a run with any failed plate is not
+    # a success for a caller that chains this.
+    return 1 if fails else 0
 
 
 if __name__ == "__main__":

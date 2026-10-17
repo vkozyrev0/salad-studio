@@ -29,7 +29,6 @@ except ImportError:  # sibling imports when run from salad_studio
 
 USER_AGENT = "SaladStudio/1.0"
 CIVITAI_MODELS = "https://civitai.com/api/v1/models"
-CIVITAI_VERSION = "https://civitai.com/api/v1/model-versions/{vid}"
 _DOWNLOAD_VID = re.compile(r"/download/models/(\d+)", re.I)
 
 # Node class -> (kind, input field) for every weight a request can load.

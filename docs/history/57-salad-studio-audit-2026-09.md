@@ -5,7 +5,7 @@
 > **Kind:** read-only audit. No file under `salad_studio/` was
 > edited; the only repo change made by this audit is this report plus one
 > `docs/00-INDEX.md` row.
-> Companion docs: [`../workflow/16-salad-studio-prompt-graph.md`](../workflow/16-salad-studio-prompt-graph.md),
+> Companion docs: [`../../salad_studio/README.md#prompt-graph-pane-jointjs-in-webview2`](../../salad_studio/README.md#prompt-graph-pane-jointjs-in-webview2),
 > [`../workflow/15-salad-flux2-klein-group.md`](../workflow/15-salad-flux2-klein-group.md),
 > [`../../salad_studio/README.md`](../../salad_studio/README.md).
 
@@ -467,7 +467,7 @@ already exist (`test_graph_view.LivePaneExport`, `test_theme`).
 | R3 | Config: profiles `klein`/`klein5090`, dual replica badges, Flux2 vs Simple | **Holds** | `profiles.py:182`, `app.py:253-273`, `app.py:301-312` |
 | R4 | Generate disabled until the active gateway is Ready | **Holds** | `app.py:401-410` |
 | R5 | Policy Apply PATCHes Salad, not a Docker rebuild | **Holds** | `salad_status.py:267` |
-| R6 | Tokens in `studio-tokens.json` (gitignored) | **Holds**. `.gitignore:111`, file untracked | `git check-ignore -v` |
+| R6 | Tokens in `studio-tokens.json` (gitignored) | **Holds**. `.gitignore:111` was the line when this was written; it is `.gitignore:2` now, file untracked | `git check-ignore -v` |
 | R7 | Empty token slots copy from `~/.config` | **Holds** | `tokens.py:76-88` |
 | R8 | Logs redact secrets | **Holds** | `studio_log.py:39`, `app.py:1579` |
 | R9 | JointJS in a WebView2 pane; cache under `%LOCALAPPDATA%\SaladStudio\WebView2` | **Holds** | `graph_view.py:1669`, `graph_view.py:521` |
@@ -713,7 +713,8 @@ the `salad_klein/` Docker image; the vendored JS in `graph_html/`
 beyond version/provenance; interactive GUI verification of the Tk panes or the
 WebView2 diagram; performance/GPU-cost benchmarking; third-party credential
 security beyond confirming `studio-tokens.json` is gitignored
-(`.gitignore:111`, untracked).
+(`.gitignore:111` was the line when this was written; it is `.gitignore:2` now,
+untracked).
 
 ---
 

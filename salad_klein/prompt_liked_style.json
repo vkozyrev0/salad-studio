@@ -72,7 +72,7 @@
     "74": {
       "class_type": "CLIPTextEncode",
       "inputs": {
-        "text": "ArsMJStyle, Impressionism, REPLACE_THIS_PROMPT",
+        "text": "ArsMJStyle, Impressionism, oil painting on canvas, visible expressive brushstrokes, dappled natural light, soft impressionist colour, a seated figure in a sunlit room, crisp readable painted detail, clean edges, no text, no watermark.",
         "clip": ["81", 1]
       }
     },

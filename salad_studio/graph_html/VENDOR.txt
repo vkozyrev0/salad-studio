@@ -9,5 +9,5 @@ joint.min.js
 litegraph.min.js + litegraph.css
   litegraph.js 0.7.18  (MIT)
   https://github.com/jagenjo/litegraph.js
-  ComfyUI's editor engine. Kept as litegraph.html (Open in browser alternative).
+  ComfyUI's editor engine. Kept as litegraph.html (Open as Comfy page).
   Spline links look like Comfy; they do not pathfind around nodes.

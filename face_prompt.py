@@ -117,17 +117,13 @@ def compose_face_prompt(
         "must_not": entry.get("must_not") or "",
     }
     for sk in _STYLE_KEYS:
-        parts[sk] = style.get(sk) or ""
+        # A stage may override a style key. The pack's expression is written for
+        # adults ("adult expression … SMALL irises … lots of white sclera … no
+        # sparkle"); composed unchanged into an infant or child prompt it fights
+        # the stage's own eye guidance and the portrait comes out blank-eyed and
+        # lifeless, which is what "the newborns look dead" was.
+        parts[sk] = entry.get(sk) or style.get(sk) or ""
     return _clean(tpl.format(**parts))
-
-
-def compose_face_system_prompt(pack: dict[str, Any] | None = None) -> str:
-    """Optional system instruction for models that accept it (nano-banana-pro)."""
-    pack = pack or load_pack()
-    tpls = pack.get("templates") or {}
-    tpl = tpls.get("face_system") or ""
-    return _clean(tpl)
-
 
 def compose_age_edit_prompt(
     *,
@@ -164,181 +160,16 @@ def compose_negative(
     """Combined negative / Avoid string, same content for fal --negative and xai."""
     pack = pack or load_pack()
     style = pack.get("style") or {}
-    bits = [style.get("global_negative") or ""]
+    bits: list[str] = []
     if age_stage:
         _k, entry = _stage_entry(pack, age_stage)
+        # The stage's own negative list wins, so a stage can drop a clause that
+        # suppresses a life cue it needs (the infants drop "sparkle catchlights",
+        # because a baby's eyes need a natural catchlight to read as alive).
+        bits.append(entry.get("global_negative") or style.get("global_negative") or "")
         bits.append(entry.get("must_not") or "")
-    return ", ".join(b for b in bits if b)
-
-
-def compose_body_prompt(
-    *,
-    sex: str,
-    age_stage: str,
-    build: str | None = None,
-    hair_color: str | None = None,
-    skin_tone: str | None = None,
-    pregnancy_stage: str | None = None,
-    pack: dict[str, Any] | None = None,
-) -> str:
-    """Body catalog prompt, same age_stages + house style as faces (no face).
-
-    `pregnancy_stage`: none|early|mid|late, when early/mid/late, injects
-    visible belly progression for female body plates.
-    """
-    pack = pack or load_pack()
-    key, entry = _stage_entry(pack, age_stage)
-    bs = pack.get("body_style") or {}
-    builds = pack.get("body_build") or {}
-    body_age = pack.get("body_age_markers") or {}
-    preg_map = pack.get("body_pregnancy") or {}
-    preg_key = (pregnancy_stage or "none").strip().lower() or "none"
-    preg_line = preg_map.get(preg_key) or preg_map.get("none") or ""
-    tpl = (pack.get("templates") or {}).get("body_t2i") or (
-        "Body of {noun}, {years}. Build: {build}. {frame}."
-    )
-    # Prefer DNA-aware body template when present.
-    if (pack.get("templates") or {}).get("body_t2i_dna"):
-        tpl = pack["templates"]["body_t2i_dna"]
-    if preg_key in ("early", "mid", "late") and (pack.get("templates") or {}).get(
-        "body_t2i_pregnant"
-    ):
-        tpl = pack["templates"]["body_t2i_pregnant"]
-    build_key = str(build) if build is not None else "50"
-    hair = _trait(pack, "hairColor", hair_color)
-    skin = _trait(pack, "skinTone", skin_tone)
-    # Visible hair on shoulders must match face DNA (head still out of frame).
-    if hair_color and key == "elderly":
-        hair = (
-            f"{hair}; elderly: greying/white-dominant hair of this color family "
-            f"visible on shoulders and nape if any hair falls into frame"
-        )
-    elif hair_color:
-        hair = (
-            f"{hair}; any hair visible at the nape or shoulders MUST be this color"
-        )
-    parts = {
-        "noun": _noun(pack, key, entry, sex),
-        "years": entry.get("years") or age_stage,
-        "age_lock": entry.get("age_lock") or "",
-        "body_markers": body_age.get(key) or body_age.get(age_stage) or "age-accurate body",
-        "build": builds.get(build_key) or builds.get("50") or "average build",
-        "pregnancy": preg_line,
-        "hair": hair or "natural hair color if any hair is visible at shoulders",
-        "skin": skin or "natural skin tone on arms and neckline",
-        "frame": bs.get("frame") or "",
-        "pose": bs.get("pose") or "",
-        "wardrobe": bs.get("wardrobe") or "",
-        "background": bs.get("background") or "",
-        "medium": bs.get("medium") or "",
-        "global_must": bs.get("global_must") or "",
-        "must_not": entry.get("must_not") or "",
-        "body_global_negative": bs.get("global_negative") or "",
-    }
-    try:
-        return _clean(tpl.format(**parts))
-    except KeyError:
-        # Older templates without {pregnancy} still work.
-        parts.pop("pregnancy", None)
-        return _clean(tpl.format(**parts))
-
-
-def compose_young_deanime_edit_prompt(
-    *,
-    age_stage: str,
-    pack: dict[str, Any] | None = None,
-) -> str:
-    """Image-edit: keep identity, shrink cartoon eyes to human scale."""
-    pack = pack or load_pack()
-    key, entry = _stage_entry(pack, age_stage)
-    tpls = pack.get("templates") or {}
-    tpl = tpls.get("young_deanime_edit") or (
-        "Keep identity. Human-sized eyes. Semi-realistic villager portrait."
-    )
-    parts = {
-        "years": entry.get("years") or age_stage,
-        "age_lock": entry.get("age_lock") or "",
-        "must_not": entry.get("must_not") or "",
-    }
-    try:
-        return _clean(tpl.format(**parts))
-    except KeyError:
-        return _clean(tpl)
-
-
-def compose_face_cleanup_edit_prompt(
-    *,
-    age_stage: str | None = None,
-    hair_color: str | None = None,
-    eye_color: str | None = None,
-    pack: dict[str, Any] | None = None,
-) -> str:
-    """Image-edit: lock age/hair/eyes, magenta chroma, unsigned corners.
-
-    Flux T2I has no negative channel, so these are corrected here
-    (fal-ai/flux-pro/kontext), not by a longer face_t2i string.
-    """
-    pack = pack or load_pack()
-    tpls = pack.get("templates") or {}
-    tpl = tpls.get("face_cleanup_edit") or (
-        "Keep identity. Human-sized eyes. Unsigned portrait, clean blank corners."
-    )
-    key, entry = _stage_entry(pack, age_stage or "adults")
-    parts = {
-        "years": entry.get("years") or (age_stage or "adult"),
-        "age_lock": entry.get("age_lock") or "",
-        "hair": _trait(pack, "hairColor", hair_color) or "the source hair-color family",
-        "eyes": _trait(pack, "eyeColor", eye_color) or "the source eye color",
-    }
-    try:
-        return _clean(tpl.format(**parts))
-    except KeyError:
-        return _clean(tpl)
-
-
-def compose_body_age_edit_prompt(
-    *,
-    age_stage: str,
-    pregnancy_stage: str | None = None,
-    pack: dict[str, Any] | None = None,
-) -> str:
-    """Image-edit prompt: age a body-catalog anchor into another stage."""
-    pack = pack or load_pack()
-    key, entry = _stage_entry(pack, age_stage)
-    bs = pack.get("body_style") or {}
-    body_age = pack.get("body_age_markers") or {}
-    preg_map = pack.get("body_pregnancy") or {}
-    preg_key = (pregnancy_stage or "none").strip().lower() or "none"
-    tpls = pack.get("templates") or {}
-    if preg_key in ("early", "mid", "late") and tpls.get("body_age_edit_pregnant"):
-        tpl = tpls["body_age_edit_pregnant"]
     else:
-        tpl = tpls.get("body_age_edit") or (
-            "Age this exact body into {years}. Keep identity. Head out of frame."
-        )
-    parts = {
-        "years": entry.get("years") or age_stage,
-        "age_lock": entry.get("age_lock") or "",
-        "body_markers": body_age.get(key) or body_age.get(age_stage) or "age-accurate body",
-        "pregnancy": preg_map.get(preg_key) or preg_map.get("none") or "",
-        "frame": bs.get("frame") or "",
-        "pose": bs.get("pose") or "",
-        "background": bs.get("background") or "",
-        "must_not": entry.get("must_not") or "",
-        "body_global_negative": bs.get("global_negative") or "",
-    }
-    return _clean(tpl.format(**parts))
-
-
-def compose_body_negative(
-    age_stage: str | None = None, pack: dict[str, Any] | None = None
-) -> str:
-    pack = pack or load_pack()
-    bs = pack.get("body_style") or {}
-    bits = [bs.get("global_negative") or ""]
-    if age_stage:
-        _k, entry = _stage_entry(pack, age_stage)
-        bits.append(entry.get("must_not") or "")
+        bits.append(style.get("global_negative") or "")
     return ", ".join(b for b in bits if b)
 
 

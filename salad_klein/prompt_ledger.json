@@ -178,7 +178,7 @@
         ],
         "known_risk": "The first plate per arm also downloads the LoKr (~1.1 GB) at request time; with the container's readiness tolerance at 200 s a long first render could be replaced mid-flight, and a replacement loses the LoKr cache. Remedy if it bites: a pre-render POST /download with wait:true, or a temporarily looser tolerance."
       },
-      "full_writeup": "docs/workflow/20-comfy-klein-snofs-recipe-cards.md (copied verbatim from the user's Desktop)",
+      "full_writeup": "(copied verbatim from the user's Desktop)",
       "corrections_vs_flux1": {
         "DualCLIPLoader (T5+CLIP-L)": "CLIPLoader with type=flux2 + Qwen3-8B",
         "EmptyLatentImage": "EmptyFlux2LatentImage",

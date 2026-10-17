@@ -30,18 +30,6 @@ def _token() -> str:
     return TOKEN.read_text(encoding="utf-8").strip() if TOKEN.is_file() else ""
 
 
-def wait_ready(base: str, key: str, timeout_s: int = 2400) -> None:
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
-        code, raw = salad_gen._req(base + "/ready", key, timeout=20)
-        txt = raw.decode("utf-8", "replace")[:120]
-        print(time.strftime("%H:%M:%S"), "ready", code, txt, flush=True)
-        if code == 200:
-            return
-        time.sleep(20)
-    raise SystemExit("SDXL group still allocating")
-
-
 def salad_sdxl_base_refiner(pos: str, neg: str, seed: int, w: int, h: int) -> dict:
     """Official Salad SDXL recipe graph (baked base + refiner). No webhook."""
     return {
@@ -182,6 +170,12 @@ def post(base: str, key: str, prompt: dict, token: str, name: str) -> int:
             out.write_bytes(salad_gen.base64.b64decode(b))
             print("saved", out, out.stat().st_size, flush=True)
             return 0
+        if code not in (502, 503):
+            # Only a dead replica is worth another POST. 504/524 are terminal
+            # (salad_studio.salad_queue): the gateway gave up on a job the
+            # container may still be running, so a retry renders it twice.
+            print(f"  giving up on HTTP {code}", flush=True)
+            return 3
         time.sleep(20)
     return 3
 
@@ -193,7 +187,9 @@ def main() -> int:
     ckpt = LUSTIFY
     if token:
         ckpt = f"{LUSTIFY}?token={token}"
-    wait_ready(base, key)
+    from salad_studio.generator import ready_budget_s
+
+    salad_gen.wait_ready(base, key, ready_budget_s())
     ident_f = cat.compose(
         {
             "ageStage": "adults",

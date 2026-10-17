@@ -90,7 +90,9 @@ BANDS: list[tuple[str, str]] = [
 def main() -> int:
     key = salad_gen._read(salad_gen.CONFIG / "key")
     base = salad_gen._read(salad_gen.CONFIG / "gateway").rstrip("/")
-    salad_gen.wait_ready(base, key, 120)
+    from salad_studio.generator import ready_budget_s
+
+    salad_gen.wait_ready(base, key, ready_budget_s())
 
     src_infant = ART / "salad_newborn_v5.jpg"
     dst_infant = ART / "salad_age_infants.jpg"

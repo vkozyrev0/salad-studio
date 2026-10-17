@@ -1,15 +1,24 @@
-"""DeepSeek-backed prompt help for the Prompt Assist page.
+"""Prompt help for the Prompt Assist page, over DeepSeek or a local model.
 
-Window-free. Three pieces, each testable on its own:
+Window-free. Two backends share everything below the transport: the page's
+**Help (DeepSeek)** button calls :func:`help_with_prompts` with the key from the
+Tokens tab, and **Help (local)** calls :func:`help_with_prompts_local` against an
+OpenAI-compatible server the user runs (LM Studio by default) at the URL in the
+page's local URL field. Both build the same body, send the same instruction and
+parse the same reply contract, so the names here say "the model" where either
+backend is meant and "DeepSeek" or "the local server" only where one is.
 
-- :func:`build_payload`, the request body sent to DeepSeek, carrying the five
-  context inputs (editor positive/negative, adjusted positive/negative, the
-  request JSON) plus the resolved weight findings.
+Three pieces, each testable on its own:
+
+- :func:`build_payload`, the chat-completions body for one Help press, carrying
+  the five context inputs (editor positive/negative, adjusted
+  positive/negative, the request JSON) plus the resolved weight findings.
 - :func:`parse_reply`, a tolerant parser for the reply's adjusted prompts,
   raising :class:`ReplyError` when the reply has no usable prompts so the
   caller can surface the raw text instead of blanking the boxes.
-- :func:`ask_deepseek`, the transport, with the HTTP send injectable at the
-  boundary so tests assert the real request the app builds.
+- :func:`ask_deepseek` and :func:`ask_local`, the two transports, with the HTTP
+  send injectable at the boundary so tests assert the real request the app
+  builds.
 
 Three rules keep a *piece* of a reply from being taken for the whole reply.
 They exist because a reasoning model (LM Studio's Ministral, DeepSeek's
@@ -22,7 +31,9 @@ that parse as JSON, this system prompt's own schema, a first draft:
 2. **A reply cut off at the token limit is continued, not accepted.**
    ``finish_reason == "length"`` makes :func:`_collect` ask the model for the
    remainder (up to :data:`CONTINUE_ATTEMPTS` times) and stitch it on; only
-   then is the text parsed. An exhausted budget raises :class:`AiError`.
+   then is the text parsed. A budget spent with the reply still cut returns the
+   stitched text rather than raising, so the parser can still score a complete
+   object inside it.
 3. **The last complete object wins.** :func:`parse_reply_full` scores every
    complete ``{...}`` in the reply and prefers one that carries the prompts
    explicitly over a quoted draft, and treats the schema's ``"..."``
@@ -124,7 +135,7 @@ MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
 
 class AiError(RuntimeError):
-    """The DeepSeek call itself failed (key, transport or HTTP status)."""
+    """The model call itself failed (key, transport or HTTP status)."""
 
 
 class ReplyError(ValueError):
@@ -181,10 +192,10 @@ def build_payload(
     max_tokens: int = MAX_TOKENS,
     meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The DeepSeek chat-completions body for one Help press.
+    """The chat-completions body for one Help press, either backend.
 
     Without an image the user message stays a plain string; with one it becomes
-    the OpenAI-style content list the DeepSeek API accepts.
+    the OpenAI-style content list both APIs accept.
     """
     note = (
         "The last generated image is attached below, inspect it and name the "
@@ -456,7 +467,7 @@ def _best_json(candidates: Iterable[str]) -> dict[str, Any] | None:
 
 
 def parse_reply_full(reply: str) -> dict[str, str]:
-    """Pull (positive, negative, issue) out of a DeepSeek reply.
+    """Pull (positive, negative, issue) out of a model reply.
 
     A reasoning model writes a trace before its answer, and the trace quotes
     JSON, this module's own schema, a first draft. So every complete object in
@@ -471,7 +482,7 @@ def parse_reply_full(reply: str) -> dict[str, str]:
     """
     text = (reply or "").strip()
     if not text:
-        raise ReplyError("DeepSeek returned an empty reply", reply or "")
+        raise ReplyError("the model returned an empty reply", reply or "")
     best = _best_json(_candidates(text))
     if best is None:
         # Nothing at the top level parsed: look again for an object the model
@@ -650,12 +661,6 @@ def reply_info(body: bytes | str) -> dict[str, Any]:
     streamed = _sse_reply(text)
     return streamed if streamed is not None else out
 
-
-def content_of(body: bytes | str) -> str:
-    """``choices[0].message.content`` from a chat-completions body."""
-    return str(reply_info(body)["content"] or "").strip()
-
-
 def _error_detail(body: bytes | str) -> str:
     if isinstance(body, (bytes, bytearray)):
         body = body.decode("utf-8", "replace")
@@ -708,7 +713,8 @@ def _collect(
     limit, so what came back is the *front* of an answer. Continuing it is what
     "wait for the whole reply" means here: the pieces are stitched and only the
     stitched text is parsed. Returns ``(text, continuations, last_reply_info)``;
-    an exhausted budget raises rather than handing a fragment to the parser.
+    a budget spent with the reply still cut returns the stitched text, which the
+    parser then scores for a complete object.
     """
     text = ""
     info: dict[str, Any] = {}
@@ -729,14 +735,11 @@ def _collect(
         text += str(info["content"] or "")
         if not info["truncated"]:
             return text, round_no, info
-        if round_no == attempts:
-            raise AiError(
-                f"{who} kept hitting the output-token limit after "
-                f"{round_no} continuation(s), so the reply never finished. "
-                "Shorten the context (the request JSON and the prompts) or raise "
-                "max_tokens, then press Help again."
-            )
-        payload = _continuation_payload(payload, text)
+        if round_no < attempts:
+            payload = _continuation_payload(payload, text)
+    # The budget is spent with the reply still cut: fall out and return what was
+    # stitched. The parser scores every complete object in it, so a reply the
+    # model restarted after the cut is still recovered rather than discarded.
     return text, attempts, info
 
 
@@ -808,7 +811,11 @@ def help_with_prompts(
     timeout: int = TIMEOUT_S,
     meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """One Help round trip against DeepSeek: build, ask, parse."""
+    """One Help round trip against DeepSeek: build, ask, parse.
+
+    The local backend has its own :func:`help_with_prompts_local`, which
+    shares this body and this reply contract.
+    """
     image = image_data_url(image_path) if image_path else ""
     payload = build_payload(
         editor_positive=editor_positive,
@@ -1004,17 +1011,6 @@ def local_models(
         for mid in model_ids(body)
     ]
 
-
-def fetch_local_models(
-    base: str,
-    *,
-    send: Callable[[urllib.request.Request, int], tuple[int, bytes]] | None = None,
-    timeout: int = LOCAL_MODEL_URL_TIMEOUT_S,
-) -> list[str]:
-    """Just the ids the local server offers."""
-    return [str(row.get("id") or "") for row in local_models(base, send=send, timeout=timeout)]
-
-
 def _ask_local_full(
     payload: dict[str, Any],
     *,
@@ -1075,8 +1071,9 @@ def help_with_prompts_local(
 ) -> dict[str, Any]:
     """One Help round trip against the local LM Studio server.
 
-    The same context and reply contract as the DeepSeek call; only the transport
-    and the model id (discovered from ``/models``) differ.
+    The same context and reply contract as :func:`help_with_prompts`; only the
+    transport and the model id (discovered from the server's model list)
+    differ.
     """
     base = local_base(url)
     chosen = (model or "").strip()

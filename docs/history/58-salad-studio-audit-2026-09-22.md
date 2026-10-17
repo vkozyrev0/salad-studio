@@ -8,7 +8,7 @@
 > regression test that now pins it.
 > **Companion docs:** [`21`](../workflow/21-klein-image-handoff.md) (the image
 > handoff), [`15`](../workflow/15-salad-flux2-klein-group.md),
-> [`16`](../workflow/16-salad-studio-prompt-graph.md),
+> [`16`](../../salad_studio/README.md#prompt-graph-pane-jointjs-in-webview2),
 > [`../../salad_studio/README.md`](../../salad_studio/README.md).
 
 ## 0. How this audit was run (and what is proven vs inferred)
@@ -325,6 +325,10 @@ very differently" (no source found). Doc 17's download count is stale.
 ```
 python -m unittest discover -s salad_studio -p "test_*.py"
 ```
+
+(The tests moved out of the package into `tests/` afterwards, so the command
+today is `python -m unittest discover -s tests -p "test_*.py"`; the run this
+section records was the one above.)
 
 **Result** (captured to `salad_studio_suite_final.log` in the audit's scratch dir,
 which is transient. Re-run the command to reproduce):

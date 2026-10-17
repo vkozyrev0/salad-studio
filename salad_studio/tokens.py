@@ -7,6 +7,8 @@ If a slot is empty, copy from default storage:
 - huggingface  ``~/.config/huggingface/token``
 - civitai      ``~/.config/civitai/token``
 - deepseek     ``~/.config/deepseek/key``, else ``DEEPSEEK_API_KEY``
+- vast         no provider convention: the local store is its only home, and the
+  config page's Vast.ai instances section reads it from there
 
 A kind listed in ``TOKEN_ENV_VARS`` also reads its key from that environment
 variable when no file has one. The environment value is used as-is and is
@@ -32,6 +34,7 @@ TOKEN_SPECS: tuple[tuple[str, str, str], ...] = (
     ("huggingface", "Hugging Face", "huggingface/token"),
     ("civitai", "Civitai", "civitai/token"),
     ("deepseek", "DeepSeek", "deepseek/key"),
+    ("vast", "Vast.ai", "vast/key"),
 )
 
 # Kinds that also have a conventional environment variable. Only consulted
@@ -52,6 +55,11 @@ PROBE_SPECS: dict[str, tuple[str, str]] = {
     "huggingface": ("https://huggingface.co/api/whoami-v2", "Authorization"),
     "civitai": ("https://civitai.com/api/v1/me", "Authorization"),
     "deepseek": ("https://api.deepseek.com/models", "Authorization"),
+    # The vast.ai control API lists this account's instances, which is the
+    # cheapest call that proves the token is live. The URL is repeated here
+    # rather than imported so this module stays a leaf; test_tokens asserts it
+    # is the one the vast client uses (vast.INSTANCES_URL).
+    "vast": ("https://console.vast.ai/api/v1/instances/", "Authorization"),
 }
 
 VALID = "valid"
@@ -77,14 +85,6 @@ def default_label(kind: str) -> str:
     label = str(default_path(kind))
     name = env_var(kind)
     return f"{label}   (or {name} in the environment)" if name else label
-
-
-def token_path(kind: str) -> Path:
-    """Local JSON is the store for every kind."""
-    if kind not in {k for k, _l, _r in TOKEN_SPECS}:
-        raise KeyError(f"unknown token {kind}")
-    return LOCAL_PATH
-
 
 def token_label(kind: str) -> str:
     for kid, label, _rel in TOKEN_SPECS:
@@ -254,14 +254,6 @@ def probe_token(
     if status == 0:
         return {"kind": kind, "state": UNKNOWN, "detail": "no response"}
     return {"kind": kind, "state": UNKNOWN, "detail": f"HTTP {status}"}
-
-
-def probe_all(*, send=None, timeout: int = PROBE_TIMEOUT_S) -> dict[str, dict[str, str]]:
-    """Check every kind that has a probe spec."""
-    return {
-        kind: probe_token(kind, send=send, timeout=timeout) for kind in PROBE_SPECS
-    }
-
 
 def state_color(state: str) -> str:
     """Palette key for an indicator dot. Kept here so the widget only renders."""

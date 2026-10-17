@@ -9,7 +9,53 @@
         ],
         "markers": [
           "snofs"
-        ]
+        ],
+        "deployment": {
+          "context": "salad_klein",
+          "base_image": "ghcr.io/saladtechnologies/comfyui-api:comfy0.35.0-api1.19.2-torch2.13.0-cuda13.0-runtime",
+          "build_arg": "KLEIN_UNET_SET=snofs",
+          "ports": {
+            "api": 3000,
+            "comfy": 8188
+          },
+          "env": [
+            {
+              "name": "HF_TOKEN",
+              "token": "huggingface",
+              "note": "gated BFL unet download on the first boot"
+            },
+            {
+              "name": "CIVITAI_API_TOKEN",
+              "token": "civitai",
+              "note": "the Civitai LoRA URLs a replica downloads"
+            },
+            {
+              "name": "STARTUP_CHECK_MAX_TRIES",
+              "value": "120",
+              "note": "the wrapper's boot budget, already in the Dockerfile"
+            }
+          ],
+          "gpu": "RTX 5090 32 GB",
+          "disk_gb": 100,
+          "vcpu": 4,
+          "memory_gb": 30
+        },
+        "startup_probe": {
+          "path": "/health",
+          "port": 3000,
+          "initial_delay_seconds": 1200,
+          "period_seconds": 120,
+          "timeout_seconds": 10,
+          "failure_threshold": 20
+        },
+        "readiness_probe": {
+          "path": "/ready",
+          "port": 3000,
+          "initial_delay_seconds": 0,
+          "period_seconds": 10,
+          "timeout_seconds": 5,
+          "failure_threshold": 20
+        }
       },
       "klein": {
         "image": "docker.io/vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-klein",
@@ -19,7 +65,53 @@
         ],
         "markers": [
           "klein"
-        ]
+        ],
+        "deployment": {
+          "context": "salad_klein",
+          "base_image": "ghcr.io/saladtechnologies/comfyui-api:comfy0.35.0-api1.19.2-torch2.13.0-cuda13.0-runtime",
+          "build_arg": "KLEIN_UNET_SET=base,distilled",
+          "ports": {
+            "api": 3000,
+            "comfy": 8188
+          },
+          "env": [
+            {
+              "name": "HF_TOKEN",
+              "token": "huggingface",
+              "note": "gated BFL unet download on the first boot"
+            },
+            {
+              "name": "CIVITAI_API_TOKEN",
+              "token": "civitai",
+              "note": "the Civitai LoRA URLs a replica downloads"
+            },
+            {
+              "name": "STARTUP_CHECK_MAX_TRIES",
+              "value": "120",
+              "note": "the wrapper's boot budget, already in the Dockerfile"
+            }
+          ],
+          "gpu": "RTX 4090 24 GB",
+          "disk_gb": 100,
+          "vcpu": 4,
+          "memory_gb": 30
+        },
+        "startup_probe": {
+          "path": "/health",
+          "port": 3000,
+          "initial_delay_seconds": 1200,
+          "period_seconds": 120,
+          "timeout_seconds": 10,
+          "failure_threshold": 20
+        },
+        "readiness_probe": {
+          "path": "/ready",
+          "port": 3000,
+          "initial_delay_seconds": 0,
+          "period_seconds": 10,
+          "timeout_seconds": 5,
+          "failure_threshold": 20
+        }
       }
     }
   },

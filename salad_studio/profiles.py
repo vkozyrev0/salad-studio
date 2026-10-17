@@ -9,6 +9,7 @@ and the seed list a new built-in profile starts from.
 """
 from __future__ import annotations
 
+import copy
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -16,6 +17,7 @@ from typing import Any, Callable
 
 # Top-level, the way this package's leaf modules are imported (studio_log,
 # request_json): one module object per process, shared with the app and tests.
+import hostings  # noqa: E402
 import studio_meta  # noqa: E402
 
 PROFILES_PATH = Path.home() / ".config" / "salad" / "studio-profiles.json"
@@ -38,20 +40,24 @@ DEFAULT_KLEIN_LORA_IDS = (
 )
 
 
-def _default_selected_loras() -> list[str]:
-    return list(DEFAULT_KLEIN_LORA_IDS)
+# The form's untouched CFG. Shipped Klein recipes are 1, and at CFG 1 the
+# negative is inert. A number the user types may differ; this one must not.
+FORM_CFG = 1
 
 
 @dataclass
 class SaladProfile:
     name: str
+    # The profile's render URL for any hosting: a Salad gateway, a vast.ai
+    # instance, or whatever a later row in ``hostings.ADAPTERS`` names.
     gateway: str = ""
+    mode: str = hostings.DEFAULT
     key_path: str = field(default_factory=_default_key_path)
     graph: str = "klein"
     width: int = 1024
     height: int = 1024
     steps: int = 20
-    cfg: float = 5
+    cfg: float = FORM_CFG
     seed: int = 1
     scheduler: str = "flux2"
     # Every checkpoint this container serves. One container holds one unet
@@ -60,8 +66,14 @@ class SaladProfile:
     checkpoints: list[str] = field(default_factory=list)
     use_loras: bool = True
     selected_loras: list[str] = field(default_factory=list)
+    # This config's own Salad group policy (image tag, GPU classes, country
+    # codes, startup and readiness probe settings). Per profile, never
+    # window-wide: switching the Config page between profiles must not carry
+    # one group's policy onto another group.
+    policy: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        self.mode = _coerce_mode(self.mode)
         self.checkpoints = [c for c in (str(c).strip() for c in self.checkpoints) if c]
         if self.selected_loras:
             self.use_loras = True
@@ -97,10 +109,6 @@ class SaladProfile:
 # list, so growing that list is a Config-page edit and no code change. The
 # metadata document keeps what a family *is* (its markers) and the seed list a
 # new built-in profile starts from.
-SNOFS_MARKER = "snofs"
-# Mirrors request_json.UNET_SNOFS, duplicated on purpose: this module is
-# stdlib-only and request_json imports salad_gen + lora_store.
-SNOFS_UNET = "snofsSexNudesAndOther_distilledV12KleinFp8.safetensors"
 
 
 def unet_family(unet_name: str, meta: dict[str, Any] | None = None) -> str:
@@ -152,17 +160,18 @@ def mixed_family_reason(
 ) -> str:
     """Why this profile's list spans more than one family, or ``""``.
 
-    One container holds one unet family in VRAM, so a list that mixes families
-    cannot be served by one group: the second unet forces Comfy to stream
-    weights from host memory and a seconds-long render becomes minutes.
+    This is a warning, not a refusal. Some images carry two or more checkpoints,
+    so a mixed list can be served by one group when its image carries every
+    family. When the image carries only one, the second unet forces Comfy to
+    stream weights from host memory and a seconds-long render becomes minutes.
     """
     families = sorted(f for f in profile_families(profile, meta) if f)
     if len(families) <= 1:
         return ""
     return (
         f"Profile {profile.name!r} lists checkpoints from {len(families)} unet "
-        f"families ({', '.join(families)}). One container holds one unet family in "
-        "VRAM, so split the list across one profile per family."
+        f"families ({', '.join(families)}). This works only when the image carries "
+        "every family; otherwise split the list across one profile per family."
     )
 
 
@@ -171,23 +180,59 @@ def serving_family(profile: SaladProfile, meta: dict[str, Any] | None = None) ->
     return checkpoint_family(profile.primary_checkpoint, meta)
 
 
+def policy_image_for(profile: SaladProfile, meta: dict[str, Any] | None = None) -> str:
+    """The metadata document's container image for the family this profile serves.
+
+    ``""`` means the document names none: the profile lists no checkpoint, the
+    document does not classify what it lists, or that family carries no image.
+    Nothing here may raise — a hand-made or broken document must leave a config
+    imageless, not abort the page reading it.
+    """
+    try:
+        doc = studio_meta.default() if meta is None else meta
+        return studio_meta.image_for_family(serving_family(profile, doc), doc)
+    except Exception:  # noqa: BLE001 - a broken document must not abort the caller
+        return ""
+
+
+def seeded_policy(
+    profile: SaladProfile, meta: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """The policy a config with nothing stored starts from.
+
+    The metadata document is where the image and the two probes come from until
+    the config stores its own or a live group is read, and the document's values
+    are also the fallback when neither supplies one. Only what the document
+    documents is carried, so ``{}`` when it documents nothing for this profile's
+    family: nothing is invented here.
+    """
+    image = policy_image_for(profile, meta)
+    policy: dict[str, Any] = {studio_meta.IMAGE: image} if image else {}
+    try:
+        doc = studio_meta.default() if meta is None else meta
+        policy.update(
+            studio_meta.probe_settings_for_family(serving_family(profile, doc), doc)
+        )
+    except Exception:  # noqa: BLE001 - a broken document must not abort the caller
+        return policy
+    return policy
+
+
 def add_checkpoint(
     profile: SaladProfile, unet: str, meta: dict[str, Any] | None = None
 ) -> str:
-    """Append ``unet`` to the profile's list. Returns ``""`` or a refusal reason."""
+    """Append ``unet`` to the profile's list. Returns ``""`` or a refusal reason.
+
+    A checkpoint from another family is allowed: some container images carry
+    more than one checkpoint. The list is no longer a statement that one image
+    serves one family; callers warn with :func:`mixed_family_reason` instead of
+    refusing, and the Config page shows that warning after the add.
+    """
     name = (unet or "").strip()
     if not name:
         return "Type a checkpoint filename or pick a label first."
     if name in profile.checkpoints:
         return f"{name} is already in {profile.name!r}."
-    mine = checkpoint_family(name, meta)
-    listed = sorted(f for f in profile_families(profile, meta) if f)
-    if listed and mine not in listed:
-        return (
-            f"{name} is a {mine} checkpoint and {profile.name!r} serves "
-            f"{listed[0]}. One container holds one unet family in VRAM, so add it "
-            "to a profile for that family instead."
-        )
     profile.checkpoints.append(name)
     return ""
 
@@ -209,30 +254,6 @@ def profiles_for_checkpoint(
     if not name:
         return []
     return sorted(p.name for p in all_profiles.values() if name in p.checkpoints)
-
-
-def route_payload(
-    payload: dict[str, Any] | None,
-    all_profiles: dict[str, SaladProfile],
-    meta: dict[str, Any] | None = None,
-) -> tuple[str, SaladProfile] | None:
-    """Which profile should render this graph, by the checkpoint it loads.
-
-    The profile's own list decides, so adding a checkpoint to a profile on the
-    Config page makes a graph loading it routable with no code edit. None means
-    "no profile serves it": nothing lists the checkpoint, two profiles do and
-    the choice would be a coin toss, or the one that lists it mixes families.
-    """
-    unets = payload_unets(payload)
-    if not unets:
-        return None
-    names = profiles_for_checkpoint(unets[0], all_profiles)
-    if len(names) != 1:
-        return None
-    profile = all_profiles[names[0]]
-    if mixed_family_reason(profile, meta):
-        return None
-    return names[0], profile
 
 
 @dataclass(frozen=True)
@@ -286,9 +307,6 @@ def plan_route(
             "which container should render it is ambiguous. Leave it on one profile."
         )
     target = all_profiles[names[0]]
-    mixed = mixed_family_reason(target, doc)
-    if mixed:
-        return None, mixed
     if target.name == here.name:
         return None, ""
     family = checkpoint_family(checkpoint, doc)
@@ -344,12 +362,26 @@ def _read_optional_text(path: Path) -> str:
 
 
 def _load_doc(path: Path) -> dict:
+    """The stored document, or an empty one.
+
+    A half-written file is the case this must survive: ``_save_doc`` writes in
+    place, so a crash mid-write leaves truncated JSON, and a loader that raised
+    there would abort ``load_all`` and with it app startup. Every sibling store
+    (``studio_meta``, ``vast``, ``salad_queue``, ``tokens``, ``prompt_history``,
+    ``prompt_catalog``, ``image_deploy``) degrades the same way.
+    """
     if not path.is_file():
         return {"profiles": {}, "active": None}
-    raw = path.read_text(encoding="utf-8")
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return {"profiles": {}, "active": None}
     if not raw.strip():
         return {"profiles": {}, "active": None}
-    data = json.loads(raw)
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return {"profiles": {}, "active": None}
     if not isinstance(data, dict):
         return {"profiles": {}, "active": None}
     profiles = data.get("profiles")
@@ -400,6 +432,30 @@ def _coerce_checkpoints(data: dict[str, Any]) -> list[str]:
     return [legacy] if legacy else []
 
 
+def _coerce_mode(value: Any) -> str:
+    """A hosting key this table knows, or ``hostings.DEFAULT``.
+
+    A store written before ``mode`` existed, or a hand-edited unknown value,
+    loads as Salad so an existing profile keeps working.
+    """
+    mode = str(value or "").strip().lower()
+    return mode if mode in hostings.BY_KEY else hostings.DEFAULT
+
+
+def _coerce_policy(value: Any) -> dict[str, Any]:
+    """The stored policy as this profile's own dict; ``{}`` when unusable.
+
+    The keys inside are the Policy page's business, so this stores whatever
+    shape it is handed and hands the same shape back. The copy is deep because
+    two loaded profiles must never share a nested ``startup`` or
+    ``gpu_classes``: editing one profile's policy would otherwise edit the
+    other's, and ``asdict`` would write that shared edit to both records.
+    """
+    if not isinstance(value, dict):
+        return {}
+    return copy.deepcopy(value)
+
+
 def _profile_from_dict(name: str, data: object) -> SaladProfile:
     if not isinstance(data, dict):
         data = {}
@@ -407,23 +463,32 @@ def _profile_from_dict(name: str, data: object) -> SaladProfile:
     use_loras = bool(selected) if "selected_loras" in data else bool(
         data.get("use_loras", True)
     )
-    if "selected_loras" not in data and use_loras and not selected:
-        selected = list(DEFAULT_KLEIN_LORA_IDS)
-    return SaladProfile(
+    profile = SaladProfile(
         name=str(data.get("name") or name),
         gateway=str(data.get("gateway", "")),
+        mode=_coerce_mode(data.get("mode")),
         key_path=str(data.get("key_path") or DEFAULT_KEY_PATH),
         graph=str(data.get("graph") or "klein"),
         width=_coerce(data.get("width", 1024), int, 1024),
         height=_coerce(data.get("height", 1024), int, 1024),
         steps=_coerce(data.get("steps", 20), int, 20),
-        cfg=_coerce(data.get("cfg", 5) or 5, float, 5),
+        cfg=_coerce(data.get("cfg", FORM_CFG) or FORM_CFG, float, FORM_CFG),
         seed=_coerce(data.get("seed", 1) or 1, int, 1),
         scheduler=str(data.get("scheduler") or "flux2"),
         checkpoints=_coerce_checkpoints(data),
         use_loras=use_loras if "selected_loras" not in data else bool(selected),
         selected_loras=selected,
+        policy=_coerce_policy(data.get("policy")),
     )
+    # A store written before the policy existed, or one whose policy carries no
+    # image, loads with the document's image for its family so no config is
+    # imageless. Only the image is filled in: a stored probe or placement the
+    # config already has stays, and a stored image is the config's own.
+    if not str(profile.policy.get(studio_meta.IMAGE) or "").strip():
+        image = policy_image_for(profile)
+        if image:
+            profile.policy = {**profile.policy, studio_meta.IMAGE: image}
+    return profile
 
 
 def _profiles_from_doc(doc: dict) -> dict[str, SaladProfile]:
@@ -468,13 +533,14 @@ def seed_checkpoints(name: str, meta: dict[str, Any] | None = None) -> list[str]
 
 def default_profile(name: str = "klein", meta: dict[str, Any] | None = None) -> SaladProfile:
     """A built-in profile: its checkpoint list is the metadata document's seed
-    for the family its group serves, and that list is what routing reads."""
+    for the family its group serves, and that list is what routing reads. Its
+    policy image is the same document's, so a new config is never imageless."""
     key = (name or "klein").strip() or "klein"
     if key == "klein5090":
         gw = _read_optional_text(GATEWAY_KLEIN_5090_PATH) or KLEIN_5090_GATEWAY
     else:
         gw = _read_optional_text(GATEWAY_KLEIN_PATH) or KLEIN_GATEWAY
-    return SaladProfile(
+    profile = SaladProfile(
         name=key,
         gateway=gw,
         key_path=DEFAULT_KEY_PATH,
@@ -486,6 +552,8 @@ def default_profile(name: str = "klein", meta: dict[str, Any] | None = None) -> 
         use_loras=True,
         selected_loras=list(DEFAULT_KLEIN_LORA_IDS),
     )
+    profile.policy = seeded_policy(profile, meta)
+    return profile
 
 
 def fallback_gateway(name: str) -> str:

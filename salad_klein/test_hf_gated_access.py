@@ -60,6 +60,13 @@ class HfGatedKleinAccess(unittest.TestCase):
                     self.fail(f"GATED 403 model_info {repo}: {e}")
                 except HfHubHTTPError as e:
                     self.fail(f"HTTP {e.response.status_code if e.response else '?'} model_info {repo}: {e}")
+                except Exception as e:  # noqa: BLE001 - a transport failure is not a verdict
+                    # A live check needs the network. A DNS failure, a reset or a
+                    # proxy timeout says nothing about the token or the gate, so
+                    # it skips with the reason instead of reporting a false red —
+                    # the same way the root structural check skips without its
+                    # Eldermark checkout.
+                    raise unittest.SkipTest(f"cannot reach huggingface.co: {e!r}") from e
                 self.assertEqual(info.id, repo)
                 url = hf_hub_url(repo_id=repo, filename=filename)
                 try:
@@ -71,6 +78,8 @@ class HfGatedKleinAccess(unittest.TestCase):
                         f"HTTP {e.response.status_code if e.response else '?'} "
                         f"file {repo}/{filename}: {e}"
                     )
+                except Exception as e:  # noqa: BLE001 - a transport failure is not a verdict
+                    raise unittest.SkipTest(f"cannot reach huggingface.co: {e!r}") from e
                 size = int(getattr(meta, "size", 0) or 0)
                 self.assertGreater(size, 1_000_000_000, f"{filename} size={size}")
 

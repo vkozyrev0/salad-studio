@@ -13,7 +13,7 @@ from typing import Callable, Iterable, Optional, Sequence, Union
 
 from PIL import Image, ImageTk
 
-from salad_studio.theme import rgb, style_history_strip
+from salad_studio.theme import PALETTE, rgb, style_history_strip
 
 PathLike = Union[str, Path]
 OpenCallback = Callable[[Path], None]
@@ -22,6 +22,9 @@ _PLACEHOLDER_RGB = rgb("border")
 _LETTERBOX_RGB = rgb("well")
 _GAP = 8
 _PAD = 8
+# What the strip says when there is nothing in it: two arrows over a blank band
+# reads as a broken strip rather than an empty one.
+EMPTY_TEXT = "No plates yet. A finished render appears here."
 
 
 class HistoryStrip(tk.Frame):
@@ -41,6 +44,7 @@ class HistoryStrip(tk.Frame):
         self._paths: list[Path] = []
         self._photos: list[ImageTk.PhotoImage] = []
         self._item_ids: list[int] = []
+        self._empty_id: int | None = None
 
         self.left_btn = tk.Button(
             self,
@@ -141,6 +145,24 @@ class HistoryStrip(tk.Frame):
             x += tw + _GAP
         content_w = x - _GAP + _PAD if self._item_ids else _PAD
         self.canvas.configure(scrollregion=(0, 0, content_w, canvas_h))
+        self._place_empty_state(canvas_h)
+
+    def _place_empty_state(self, canvas_h: int) -> None:
+        """Draw, move or drop the empty-state line, so it follows the strip's height."""
+        if self._empty_id is not None:
+            self.canvas.delete(self._empty_id)
+            self._empty_id = None
+        if self._paths:
+            return
+        self._empty_id = self.canvas.create_text(
+            _PAD * 2,
+            max(1, canvas_h // 2),
+            text=EMPTY_TEXT,
+            anchor="w",
+            fill=PALETTE["fg_muted"],
+            font=("Segoe UI", 10),
+            tags=("empty",),
+        )
 
     def _on_canvas_configure(self, _event: tk.Event | None = None) -> None:
         self._layout_thumbs()

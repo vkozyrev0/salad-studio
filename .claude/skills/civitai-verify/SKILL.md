@@ -57,18 +57,20 @@ Multiple URLs are allowed. Tokens come from the same places Studio reads
 
 ## What the POST meets
 
-Routing and the container groups come from the metadata document
-(`salad_studio/studio-metadata.json`, or your copy at
-`~/.config/salad/studio-metadata.json`), read through `studio_meta`; a graph
-whose checkpoint has no entry there is refused with a stated reason rather than
-sent to a group that cannot serve it.
+The container groups come from the profile store (`profiles.load_all`); the
+metadata document (`salad_studio/studio-metadata.json`, or your copy at
+`~/.config/salad/studio-metadata.json`, read through `studio_meta`) supplies the
+family markers, the seed unets and the image. The driver lists the Studio groups
+and picks one with `pick_studio_group` — a Ready replica when one exists,
+otherwise the first listed group — then POSTs to that group's gateway
+(`post_to_group`).
 
 The POST itself goes through the shared queue (`salad_queue.shared()`), the same
 line Studio's Generate button uses. While another render holds the line the
 request waits its turn, so a verify run can sit behind an in-flight Studio
 render. A container that is not available yet (`502`, `503`, `520`, `521`,
 `522`, `523`, or a transport that never answered) is retried automatically, up
-to `MAX_ATTEMPTS` attempts with `RETRY_SLEEP_S` seconds between them. A `504` or
+to `salad_queue.MAX_ATTEMPTS` attempts with `salad_queue.RETRY_SLEEP_S` seconds between them. A `504` or
 `524` is terminal, because Cloudflare returns those after giving up on a job the
 container may still be running, and a request the container has already accepted
 is never POSTed twice. A run that meets an unavailable container therefore
@@ -113,9 +115,9 @@ Journal `prompt-edit`. Then compare the new JPEG to the site plate.
 5. If JSON is not runnable or POST/Comfy fails, the driver diagnoses the error. With **`--edit-import`**, mechanical `missing_node_type` failures may omit/stub **node types** and retry; without it the run journals `skipped: "edit_import is off; conversion code was not modified"` and halts. If the journal has `skipped: "no mechanical import-code fix for these issues"`, you may edit conversion **structure** only.
 6. Re-run the same command with the **same `--journal`** after a manual conversion edit. The driver fingerprints those import sources. If a new fingerprint restores an earlier hash, it writes `step: loop`, `loop: true`, and **stops**. An unchanged mechanical patch is journaled as no-mechanical-fix; it is not a loop.
 7. After an import-code edit, run the repo's suite from the repo root:
-   `python -m unittest discover -s salad_studio -p "test_*.py"`
+   `python -m unittest discover -s tests -p "test_*.py"`
    If it fails, revert the edit, journal the revert by re-running (the loop detector will stop a ping-pong), and stop.
-8. Cap: `MAX_ATTEMPTS` (`civitai_verify.py`); the driver stops itself at the cap and at a fingerprint loop.
+8. Cap: `civitai_verify.MAX_ATTEMPTS` (`civitai_verify.py`); the driver stops itself at the cap and at a fingerprint loop.
 
 Site-plate fetch uses the Civitai image API `url` field.
 

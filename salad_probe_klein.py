@@ -3,7 +3,8 @@
 
 Uses ~/.config/salad/gateway-klein (not loganberry). Face prompts come from
 face_prompt.py. Body prompts are Klein full-figure (painted face, cream
-paper), not catalog compose_body_prompt, which is headless. Mass catalog
+paper), not the catalog's headless body frame (`face_prompt_pack.json`
+`body_style`, whose face is composited later). Mass catalog
 freeze is unchanged.
 """
 from __future__ import annotations
@@ -33,10 +34,6 @@ FULL_FIG = (
     "small figure with margin above the head and below the feet, "
     "do not crop legs, do not crop the skull"
 )
-INFANT = (
-    "NEWBORN 0 to 3 months only, tiny infant, large cranium, cannot sit "
-    "unsupported, not a toddler, not a two-year-old, not a preschooler"
-)
 THIRTIES = (
     "about 35 years old, mid-thirties adult, not grey or white hair, "
     "not elderly, not a child"
@@ -46,7 +43,8 @@ FACE_LOCK = (
     "each face has two eyes one nose one mouth, readable features, "
     "not melted, not smeared, not extra limbs, not a crowd of tiny heads"
 )
-# Catalog compose_body_prompt is HEADLESS (face composited later). Klein
+# The catalog body frame is HEADLESS (`body_style.global_must`; the face is
+# composited later). Klein
 # full-figure probes need a painted face; stacking the pack's "headless"
 # line with FULL_FIG blanked male faces and cropped skulls.
 FACE_ON_BODY = (
@@ -112,7 +110,7 @@ def _klein_body_prompt(
     ]
     if key == "infants":
         bits.append(
-            f"{INFANT}. real living baby lying on cream paper, short limbs, "
+            "real living baby lying on cream paper, short limbs, "
             "cannot stand, not a standing toddler, not a doll"
         )
     elif key in {"adults", "thirties", "twenties", "young_adult"}:
@@ -323,7 +321,10 @@ def one(
         code, body = salad_gen._req(base + "/prompt", key, data=payload, timeout=180)
         if code == 200:
             break
-        if code in (502, 503, 504, 524):
+        if code in (502, 503):
+            # 504/524 are terminal (salad_studio.salad_queue): the gateway gave
+            # up on a job the container may still be running, so a re-POST
+            # submits a duplicate render.
             salad_gen.time.sleep(8)
             continue
         return f"fail {out.name} HTTP {code} {body[:180]!r}"
@@ -344,9 +345,8 @@ def jobs() -> list[tuple[str, str, int, int, bool]]:
     out: list[tuple[str, str, int, int, bool]] = []
     for sex in ("female", "male"):
         for stage in _face_stages():
-            extra = f"{INFANT}. " if stage == "infants" else ""
             prompt = _no_magenta(
-                f"{STYLE}. {extra}"
+                f"{STYLE}. "
                 + face_prompt.compose_face_prompt(
                     sex=sex,
                     age_stage=stage,
@@ -406,7 +406,9 @@ def main() -> int:
     args = ap.parse_args()
     key = salad_gen._read(salad_gen.CONFIG / "key")
     base = _gateway()
-    salad_gen.wait_ready(base, key, 120)
+    from salad_studio.generator import ready_budget_s
+
+    salad_gen.wait_ready(base, key, ready_budget_s())
     ART.mkdir(parents=True, exist_ok=True)
     todo = jobs()
     if args.only:

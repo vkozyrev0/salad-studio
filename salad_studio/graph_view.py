@@ -817,11 +817,6 @@ def boxes_from_xy(
     return boxes
 
 
-def node_boxes(prompt: Prompt) -> dict[str, tuple[float, float, float, float]]:
-    """Axis-aligned card rects from ``layout_xy`` + ``node_metrics``."""
-    return boxes_from_xy(prompt, layout_xy(prompt))
-
-
 def segment_hits_box(
     x0: float,
     y0: float,
@@ -1060,13 +1055,6 @@ def densify_polyline(
     return _dedupe_pts(out)
 
 
-def round_polyline(
-    pts: list[tuple[float, float]], radius: float = _WIRE_CORNER
-) -> list[tuple[float, float]]:
-    """Back-compat: chamfer then densify (no circular arcs)."""
-    return densify_polyline(chamfer_polyline(pts, cut=radius), step=10.0)
-
-
 def _overlap_clusters(
     segs: list[tuple[int, int, float, float, float]],
 ) -> list[list[tuple[int, int, float, float, float]]]:
@@ -1265,6 +1253,10 @@ class GraphPane(ttk.Frame):
         self._web = None
         self._web_ok = False
         self._embedded_ready = False
+        # The callbacks this pane scheduled for itself, so Destroy can cancel
+        # them: one that fires after the pane is gone makes Tk print
+        # `invalid command name` for each (T1 in docs/history/61-...-audit).
+        self._pending_afters: set[str] = set()
         bar = ttk.Frame(self)
         bar.pack(fill="x", pady=(0, 6))
         ttk.Label(
@@ -1345,7 +1337,7 @@ class GraphPane(ttk.Frame):
     def _on_eval_error(self, exc: object = None) -> None:
         """An async eval failure: reload the page instead of going stale."""
         self._hint.configure(text=f"Graph refresh failed ({exc}); reloading the page")
-        self.after_idle(self._reload_page)
+        self._soon(self._reload_page)
 
     def _on_web_ready(self) -> None:
         """The page is laid out: the graph can now be pushed in place."""
@@ -1354,7 +1346,36 @@ class GraphPane(ttk.Frame):
             self._hint.configure(text="")
         except tk.TclError:
             return
-        self.after_idle(self._redraw)
+        self._soon(self._redraw)
+
+    def _soon(self, func) -> None:
+        """Run ``func`` at the next idle moment, tracked so Destroy cancels it."""
+        box: list[str] = []
+
+        def run() -> None:
+            if box:
+                self._pending_afters.discard(box[0])
+            if not self.winfo_exists():
+                return
+            func()
+
+        try:
+            handle = self.after_idle(run)
+        except RuntimeError:
+            # The main loop is gone: the window is being torn down.
+            return
+        box.append(handle)
+        self._pending_afters.add(handle)
+
+    def destroy(self) -> None:
+        """Cancel what this pane scheduled before the widget goes."""
+        for handle in list(self._pending_afters):
+            try:
+                self.after_cancel(handle)
+            except Exception:
+                pass
+        self._pending_afters.clear()
+        super().destroy()
 
     def _reload_page(self) -> None:
         if self._web is None or not self._web_ok:
@@ -1440,13 +1461,6 @@ class GraphPane(ttk.Frame):
         else:
             self.set_prompt(nxt)
 
-    def _draw_grid(self, width: float, height: float) -> None:
-        step = 24
-        for x in range(0, int(width) + step, step):
-            self.canvas.create_line(x, 0, x, height, fill=_GRID, width=1)
-        for y in range(0, int(height) + step, step):
-            self.canvas.create_line(0, y, width, y, fill=_GRID, width=1)
-
     def _redraw(self) -> None:
         self.canvas.delete("all")
         prompt = self._prompt
@@ -1482,41 +1496,3 @@ class GraphPane(ttk.Frame):
                 "(it writes the page on demand). WebView2 embed needs tkwry."
             ),
         )
-
-
-def _wrap(text: str, width: int) -> list[str]:
-    words = (text or "").replace("\n", " ").split()
-    lines: list[str] = []
-    cur = ""
-    for w in words:
-        nxt = f"{cur} {w}".strip()
-        if len(nxt) > width and cur:
-            lines.append(cur)
-            cur = w
-        else:
-            cur = nxt
-    if cur:
-        lines.append(cur)
-    return lines or [""]
-
-
-def _rounded_rect(
-    canvas: tk.Canvas, x0: float, y0: float, x1: float, y1: float, **kw: Any
-) -> int:
-    r = _CORNER
-    pts = [
-        x0 + r, y0,
-        x1 - r, y0,
-        x1, y0,
-        x1, y0 + r,
-        x1, y1 - r,
-        x1, y1,
-        x1 - r, y1,
-        x0 + r, y1,
-        x0, y1,
-        x0, y1 - r,
-        x0, y0 + r,
-        x0, y0,
-        x0 + r, y0,
-    ]
-    return canvas.create_polygon(pts, smooth=True, splinesteps=16, **kw)

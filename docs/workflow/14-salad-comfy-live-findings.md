@@ -9,12 +9,7 @@
 > file's old "RESEARCH / no pods / live T2I is banana-pro only" banner is
 > **stale** for Salad: a Comfy group is deployed and was used for probes.
 >
-> **Mass catalog freeze.** Batch face regen is **stopped** until faces,
-> bodies, events, and sex each have an **explicit chosen model**. Do not
-> run `salad_catalog_faces.py --generate` (or mass `regen_faces.py`) until
-> those four picks exist. Pause sentinel:
-> `art/catalog/face/salad_PAUSE.txt`. Chosen models stay **TBD** except
-> this freeze.
+> **Mass catalog freeze** — see §3 for the rules and the stop condition.
 
 Sex in the sim is **18+ only**. Infant/child plates are non-sexual DNA
 portraits. Salad's container does **not** 422 those infant DNA plates
@@ -53,7 +48,7 @@ Secrets stay **out of git**: Salad key `~/.config/salad/key`, gateway
 
 | Script | Role |
 |---|---|
-| `salad_gen.py` | `POST /prompt` Flux graph; optional `ckpt_name` / `lora_name` |
+| `salad_gen.py` | `POST /prompt` Flux graph. Flags `--prompt`, `--negative`, `--out`, `--seed`, `--steps`, `--width`, `--height`, `--wait-ready`, `--timeout`; `ckpt_name` / `lora_name` are `flux_payload()` parameters, not flags |
 | `salad_catalog_faces.py` | Mass face catalog. **`--generate` exits if `salad_PAUSE.txt` exists** unless `--ignore-pause` |
 | `salad_probe_ages.py` | Age×sex face probes (`--prefix`, `--ckpt`, `--lora`) |
 
@@ -132,14 +127,10 @@ Klein9B. **27/27 HTTP 200** in ~4 min. Prefix
 | Pregnancies | 3 (late front/45/side) | Bump visible. Cropped (not head-to-feet). |
 | Events | 6 | See ### Events. Harvest strongest. |
 
-**Retry (prompt postfix cream paper / full-figure / newborn / thirties):**
-27/27 again. Pack **magenta chroma still wins** on faces/bodies (compose
-includes `#FF00FF` and Klein follows it). Events stay cream (no pack
-chroma). Male adult face is male. Bodies still often crop head or feet.
-Infant still reads older than 0–3 months. **Not chosen.**
+**Retry** (postfix cream paper / full-figure / newborn / thirties): 27/27 again, pack **magenta chroma still wins** on faces/bodies (compose `#FF00FF`), events stay cream. **Not chosen.**
 
 **Bodies are unusable as catalog paperdolls (2026-09-19, 150-plate
-batch).** Root cause: `compose_body_prompt` is **headless by design**
+batch).** Root cause: the catalog body frame is **headless by design**
 (`face_prompt_pack.json` `body_style.frame` = collarbone-to-shin, face
 out of frame; `global_must` = "headless"). Stacking that with
 Impressionism Klein9B + `FULL_FIG` (crown-to-soles) made Klein resolve
@@ -152,20 +143,7 @@ thirties front is a usable full figure** with a painted face. LoRA
 plates melt. Male plain still blanked the face because the pack still
 said headless.
 
-Round 2 (`art/salad_probe_klein_bodyfix2_*.jpg`, painted-face prompt,
-LoRA off): male thirties **front** and female **seventies** work
-(standing human, head-to-feet). The word **paperdoll** was taken
-literally. Female thirties front became a rag doll; infant a reborn
-doll with white eyes; male side a bald mannequin. Pregnant late is a
-real bump under a gown (no brown sphere).
-
-Round 3 (`art/salad_probe_klein_bodyfix3_*.jpg`): dropped "paperdoll",
-kept `ArsMJStyle` **text** with LoRA off. Female thirties front and
-male side are painted standing humans (best so far). Mid-pregnancy
-still reads not-pregnant. Infant is a standing toddler. "standing
-figure" overrode lying/newborn; prompt now branches infants off
-standing. Do **not** mass-regen the 150 until a recipe is accepted.
-**Not chosen.**
+Rounds 2–3 (`…bodyfix2_*.jpg`, `…bodyfix3_*.jpg`) and the rest of the probe record: `salad_probe_klein.py`.
 
 ---
 
@@ -206,74 +184,32 @@ group after the LoRA is on the container. Rows are in
 | Event, watercolor | YFG Grud F.2 Klein 9B | 2715533@**3051077** | [134526753](https://civitai.com/images/134526753) | `YFG-Grud style.`, outlier, not the oil house. |
 
 CreativeEdge plates: Euler, cfg **5**, **40** steps. None of these LoRAs
-are pre-pulled on `flux2-klein` (Detail Slider / Impressionism included).
+are pre-pulled on `flux2-klein2` (Detail Slider / Impressionism included).
 Jobs that need them send a Civitai URL on `LoraLoader`. **Not chosen.**
 
-Civitai **on-site** generation is a different sampler stack than Salad
-Comfy (native `flux2` + AIR LoRAs + **simple** schedule vs
-`Flux2Scheduler` / `LoraLoader`). Matching Euler/CFG/steps/seed is
-**not** a pixel clone. Quality work (Aged Art in the unet, optional
-`BasicScheduler` `simple`, Import tab) lives in
-[`15-salad-flux2-klein-group.md`](15-salad-flux2-klein-group.md)
-§Matching Civitai. Probe via **Salad Studio**
-(`salad_studio/`).
-
----
-
-## 4. Do not re-download on this Flux pod
-
-| ID | Why |
-|---|---|
-| Civitai **618692** @ 691639 | Stock Flux.1-dev fp32; same family as baked fp8 |
-| Civitai **978314** UltraReal Fine-Tune | Second Flux ckpt; OOM |
-| Civitai **2758431** KreaKult | Krea 2 LoRA |
-| Civitai **2888019** FasciumKROMA | Krea 2 ~12.5 GB ckpt |
-| Civitai **562604** Art Nouveau as a **face house** | Style LoRA (Mucha/MJ), fights DNA plates |
-| Hugging Face `huggingface.co/…` URLs on API 1.10 | Downloader bug; use Civitai HTTP + token |
-
-Civitai **401 Unauthorized** on Lustify / some realism LoRAs without
-`~/.config/civitai/token`. Pony / WAI / XXMix allowed anonymous GET.
+Civitai **on-site** generation is a different sampler stack, so matching
+Euler/CFG/steps/seed is **not** a pixel clone: [doc 15 §Matching Civitai](15-salad-flux2-klein-group.md). Probe via **Salad Studio** (`salad_studio/`).
 
 ---
 
 ## 4b. Flux.2 Klein, not a drop-in on this Flux.1 group
 
-Salad's official Comfy recipes list Dreamshaper 8, **FLUX.1-Dev**,
-FLUX.1-Schnell, **SDXL**, **SD 3.5 Medium**. **Flux.2 Klein is not on
-that list.** The live recipe graph is `CheckpointLoaderSimple`
-(`flux1-dev-fp8.safetensors`) + `FluxGuidance` + `EmptySD3LatentImage`
-+ `KSampler`. Klein T2I is a different graph: `UNETLoader` +
-`CLIPLoader` type `flux2` (`qwen_3_8b_fp8mixed`) + `VAELoader` +
-`EmptyFlux2LatentImage` + `Flux2Scheduler` + `SamplerCustomAdvanced`
-(Comfy-Org `image_flux2_text_to_image_9b.json`).
-
-Liked CivitAI style https://civitai.com/images/135504982 is **Flux.2
-Klein 9B-Base** (**2322332** @ **2612548**, bf16 16.91 GB) + Klein
-Detail Slider (**2334190** @ **2625692**) + Impressionism Klein9B
-(**545264** @ **2763568**, trigger `ArsMJStyle, Impressionism`), Euler,
-832×1216, not Flux.1-dev / Inzaniak Light. Do not use Flux.1
-Impressionism **545264@755598** as a stand-in.
-
-Klein LoRAs on Flux.1-dev are the same class of silent no-op as Krea
-LoRAs. A second ~12–17 GB unet next to baked Flux.1 **OOMs** a 24 GB
-4090 / Cloudflare **524**. Salad-capable path: a **separate** Comfy
-group with baked fp8 unet + Qwen3-8B + flux2 VAE. Do **not** POST a
-Klein graph at the live Flux.1 replica. How to build that group
-(Docker + Portal):
-[`15-salad-flux2-klein-group.md`](15-salad-flux2-klein-group.md).
-Files: `salad_klein/`.
+The live recipe graph is `CheckpointLoaderSimple` (`flux1-dev-fp8.safetensors`) + `FluxGuidance` +
+`EmptySD3LatentImage` + `KSampler`; Klein T2I is a different graph: `UNETLoader` + `CLIPLoader` type
+`flux2` (`qwen_3_8b_fp8mixed`) + `VAELoader` + `EmptyFlux2LatentImage` + `Flux2Scheduler` +
+`SamplerCustomAdvanced`. Liked CivitAI style https://civitai.com/images/135504982 is **Flux.2 Klein
+9B-Base** (**2322332** @ **2612548**) + Klein Detail Slider (**2334190** @ **2625692**) + Impressionism
+Klein9B (**545264** @ **2763568**, trigger `ArsMJStyle, Impressionism`), Euler, 832×1216 — not Flux.1
+Impressionism **545264@755598**. Do **not** POST a Klein graph at the live Flux.1 replica (a second
+~12–17 GB unet next to baked Flux.1 **OOMs** a 24 GB 4090 / Cloudflare **524**). The Klein graph, the
+recipe list and how to build the separate group: [doc 15 §Graph](15-salad-flux2-klein-group.md).
 
 ---
 
 ## 5. Pointers
 
-- Pause file: `art/catalog/face/salad_PAUSE.txt`
-- Host ranking (still valid as research): [`13-gpu-host-catalog-plans.md`](C:/Users/vkozy/repos/lifesim-design/docs/workflow/13-gpu-host-catalog-plans.md)
 - Catalog spec: [`02-image-catalog.md`](C:/Users/vkozy/repos/lifesim-design/docs/systems/02-image-catalog.md)
 - Face compose: `salad_catalog_faces.py` `HOUSE` + `compose()`
-- Body compose: `face_prompt.py` `compose_body_prompt`
+- Body compose: `salad_probe_klein.py` `_klein_body_prompt` + the pack's `body_age_markers` / `body_pregnancy` (the body path is hand-written prose; the old body templates were removed)
 - Local LoRA/checkpoint cache (gitignored): `art/model-cache/`. `python model_catalog.py seed` then `fetch-missing`. Each index row keeps Civitai page + version id + sha256. Salad still URL-loads on a new replica; this cache is this machine + a future custom image bake. UltraRealPhoto v2 is ~2 GB, metadata only unless `--force`.
-- Flux.2 Klein custom group **`flux2-klein`** (`life-sim` / `default`,
-  gateway `~/.config/salad/gateway-klein`):
-  [`15-salad-flux2-klein-group.md`](15-salad-flux2-klein-group.md) +
-  `salad_klein/`
+- Flux.2 Klein group `flux2-klein2` and its gateway: doc 15 §Live groups.

@@ -80,6 +80,16 @@ REQUIRED_SNIPPETS = (
 
 def main() -> int:
     assert DOC.is_file(), f"missing findings artifact {DOC}"
+    if not ELDERMARK.is_dir():
+        # This check reads the Eldermark checkout's docs and skills as well as
+        # this repo's, so a machine without it cannot run the whole thing. It
+        # says so and stops rather than reporting a false pass or a false
+        # failure. (T8 in docs/history/61-salad-studio-audit-2026-10-13.md.)
+        print(
+            f"skipped: the Eldermark checkout is not at {ELDERMARK}. Set "
+            "ELDERMARK_REPO to it (see README.md, Configuration) and run again."
+        )
+        return 0
     text = DOC.read_text(encoding="utf-8")
     missing = [s for s in REQUIRED_SNIPPETS if s not in text]
     assert not missing, f"findings doc missing required facts: {missing}"

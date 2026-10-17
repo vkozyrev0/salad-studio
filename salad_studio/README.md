@@ -13,39 +13,111 @@ Run from the repo root, or:
 python salad_studio/app.py
 ```
 
-Layout: **top action bar** (Generate + live generation status every 2s, and the
-replica status badges with the Salad probe, right-aligned; a press made while a
+Layout: **top action bar** (Generate + live generation status every 2s, and a
+compact container strip with the Salad probe, right-aligned: a green dot with
+the number of ready containers, an amber dot with the number still starting and
+a red dot with the number not started, separated by `|`; a press made while a
 render is in flight is queued, not dropped), **vertical tabs** on the left
-(**Config**, **Prompt Settings**, **Policy**, **Tokens**, **LoRAs**,
+(**Config**, **Prompt Settings**, **Tokens**, **LoRAs**,
 **Prompt Editor**, **Prompt Assist**, **Prompt Catalog**, **Import**,
 **Prompt History**, **Queue**, **Logs**).
 Bottom (always visible) = horizontal history strip with a tall button on
 the left and right.
 
-- **Config**. The profiles this app can render on, and what each one serves.
-  The **Active profile** box lists every profile the store holds; type a name and
-  press **Add profile** to create one (it is seeded from the metadata document's
-  family list and starts with the typed **Gateway URL**), **Save profile** writes
-  the selected one back, and **Delete profile** removes it (removing the last one
-  recreates a default, so the app stays usable). Below that, **Checkpoints this
-  profile serves** is the list routing reads: type a checkpoint filename or pick a
-  label, press **Add**, and select a row and press **Remove selected**. A profile's
-  list must stay in one unet family — one container holds one unet in VRAM, so
-  adding a checkpoint of another family is refused with the reason — and adding a
-  checkpoint makes a graph that loads it routable with no code edit. Every profile
-  gets its own replica badge and probe in the top action bar, and Generate is
-  disabled until the *active* gateway is Ready. The prompt knobs live on
-  **Prompt Settings**.
+- **Config**. The deployment page, in four sub-tabs in the order a deployment
+  runs them: **Profile**, **Images**, **Salad group**, **Vast.ai**. Each sub-tab
+  scrolls on its own when its content is taller than the window.
+
+  **Profile**. The **Active profile** box lists every profile the store holds: type a name and press **Add profile** to create one (seeded
+  from the metadata document's family list, starting with the typed URL), **Save profile** writes the selected one
+  back, and **Delete profile** removes it (removing the last one recreates a default, so the app stays usable). A profile names
+  its **Target** — a Salad gateway or a vast.ai instance — and the URL field's label follows that target (`Gateway URL` or
+  `Instance URL`); the list is a table a new hosting joins. **Use the selected instance** fills the URL from the Vast.ai
+  sub-tab's active row when the target has one to pick from. The active profile's target is what **Generate** uses; the
+  Vast.ai sub-tab is the instance list, not a second engine switch. **Checkpoints
+  this profile serves** is the list routing reads: type a checkpoint filename or pick a label, press **Add**, and select a row
+  and press **Remove selected**. A profile's list may span more than one unet family; the page adds it and warns that the
+  image must carry every family, since one image can serve a mixed list only when it does. A checkpoint in the list makes a
+  graph that loads it routable with no code edit. Every profile is probed, and the
+  action bar's three counts (ready, up-but-not-serving, configured minus existing) are sums over all of them. The prompt knobs
+  live on **Prompt Settings**.
+
+  **Images**. **Container images**: the images this app deploys and what a host needs for
+  each, read from the metadata document's `routing.families.<family>.deployment` — the fields are
+  doc 23 §1.2's. The **Image** picker selects one (the two built images, plus any you add); the
+  **Environment** tree shows the documented entries (`HF_TOKEN` and `CIVITAI_API_TOKEN` from their
+  Tokens-tab slots, plus literals such as `STARTUP_CHECK_MAX_TRIES=120`), a secret's value masked
+  until **show token values** is ticked, and **Add env** / **Remove selected** / **Save
+  environment** editing your own extra entries (a row for a documented name overrides its value),
+  kept in `~/.config/salad/studio-images.json`. **Deploy** shows that image's commands —
+  `docker build` with the build arg, `docker push`, a `docker run`, and the `vastai create instance`
+  line whose `--env` carries the ports and the environment (the image's own ENTRYPOINT does the
+  first-boot download, so no `--onstart-cmd` is needed) — plus the **Salad portal fields** to create
+  a group with; **Copy commands** puts what is shown on the clipboard, a secret staying a `${NAME}`
+  placeholder unless **show token values** is ticked. **Your own image** adds a tag of your own
+  (name, tag, build arg, context, and the two ports it publishes), and removing it takes its extra
+  environment with it. This section is the app's half of
+  [`docs/workflow/23-salad-container-group-deployment.md`](../docs/workflow/23-salad-container-group-deployment.md).
+
+  **Salad group**. Each config's **Salad policy**: the group's **Image**,
+  **GPU classes**, **US-only** country codes, the startup and readiness probe
+  fields, and **Reallocate** (confirm). The **Image** field offers the tags
+  of the two images on **Images** (still editable, so a group running a tag this app has
+  never been told about is fine). Two images are built from
+  `salad_klein/` — `eldermark-klein:…-prefetch6-klein` for the Klein family and
+  `…-prefetch6-snofs` for the SNOFS one, differing only in the unet set baked at
+  first boot — and both are described together, with their build args, ports and
+  entrypoint, in
+  [`docs/workflow/23-salad-container-group-deployment.md`](../docs/workflow/23-salad-container-group-deployment.md)
+  §1.2. Either one also runs as a vast.ai instance image (see **Vast.ai**). The policy belongs to the selected
+  config — **Load from Salad** reads that config's group, **Apply to Salad**
+  PATCHes that config's group (Salad, not a Docker rebuild), and **Save
+  profile** stores the fields with that config, so selecting another config swaps them for that config's own policy.
+  **Selecting a config re-reads its group** with the same fresh GET the button makes, so the fields show that group's
+  current image, GPU classes, country codes and probes; the read fills the fields only, never rewrites a stored record,
+  and a failed read (no key, no network, no matching group) leaves what is on screen standing. Every field - the image
+  and all twelve probe fields - is filled in this order, so the page shows a complete policy the moment the window
+  opens: a fresh read of that config's group where it has a value, else the config's stored policy, else the metadata
+  document's documented settings for its family (its per-family `image`, `startup_probe` and `readiness_probe`). A
+  blank or whitespace-only value counts as absent, so a field saved empty cannot hide the one behind it. The window's saved state names the config it was last on, so that config's policy and
+  checkpoints are what the page shows even when the store's active config differs; there is one policy per config, no window-wide copy.
+
+  **Vast.ai**. **Vast.ai instances**: the vast.ai instances a profile may render on.
+  The list holds **one or more** addresses: type an address (`http://1.2.3.4:31234`, or
+  several comma-separated), pick the **Image** the instance runs (a tag from **Container images**)
+  and press **Add instance**; **Fetch instances from Vast.ai** lists the account's own machines with
+  the stored key — the Bearer call to `https://console.vast.ai/api/v1/instances/` — and adds the
+  ones that publish a ComfyUI port (8188). Selecting a row points Generate at that instance (the row
+  is marked), **Set image for selected** records what a fetched row runs, **New profile for this
+  instance** creates a profile named for it with the target and the image's checkpoint family already
+  set, **Remove selected** drops one, and **Save list** writes them to
+  `~/.config/salad/studio-vast.json`, so nothing about a vast account lands in the repo. The key authenticates the vast.ai control API only and is never sent to
+  an instance; a render is queued on the profile's line, like a Salad render, and POSTs the same body
+  to the instance's own `/prompt`, so the plate lands in the gallery and the prompt history like any
+  other. Both answers an instance can give are handled: a Salad-style wrapper (port **3000**) answers
+  with base64 JPEGs in `images[]`, while a plain ComfyUI (port **8188**) answers with a `prompt_id`,
+  so the app polls `/history/<id>` and fetches the plate from `/view`. The wrapper is the endpoint
+  that resolves Civitai LoRA URLs, so a graph that carries one needs the wrapper's port. For the host
+  choice, the CUDA and driver requirement, and what each failure means, see
+  [the vast.ai deployment guide](../docs/workflow/23-salad-container-group-deployment.md#5-vastai-instances). The plate's
+  extension follows its own bytes - `studio_<ms>.jpg` from a wrapper, PNG from native ComfyUI - and
+  the gallery, the history strip and **Clean gallery** read both; the strip shows an explicit empty
+  state when nothing has been rendered. When the selected instance is gone, the
+  **If the selected instance is destroyed** box can rent the cheapest offer that
+  clears the price, CUDA 13, download and upload floors it names; the create and
+  the wait for its endpoint run off the Tk thread, and the press asks for Generate
+  again once the new instance is ready.
 - **Prompt Settings**. **Width**, **Height**, **Steps**, **CFG**, **Seed**,
-  **Graph** (Flux.2 Klein / Flux.1 Dev), **Scheduler** (Flux2 / Simple), the
-  **Checkpoint** (Base 9B / Distilled 9B) and the **LoRA** checkboxes. These are
+  **Graph** (Flux.2 Klein / Flux.1 Dev), **Scheduler** (Flux2 (Klein) / Simple
+  (Civitai)), the **Checkpoint** (Base 9B / Distilled 9B / SNOFS 9B) and the
+  **LoRA** checkboxes. These are
   the values the Prompt Editor's JSON is rebuilt from.
-- **Policy**. Probes, **image tag**, **GPU classes**, **US-only**, and
-  **Reallocate** (confirm). Apply PATCHes Salad, not a Docker rebuild.
-- **Tokens**. Salad / Hugging Face / Civitai / DeepSeek keys in
+- **Tokens**. Salad / Hugging Face / Civitai / DeepSeek / Vast.ai keys in
   `studio-tokens.json` (gitignored). Empty slots copy from `~/.config`; the
   DeepSeek slot also reads `DEEPSEEK_API_KEY` from the environment when no
-  file has one (that value is never copied into the store).
+  file has one (that value is never copied into the store). Vast.ai has no
+  provider file convention, so the store is its only home: the **Config** page's
+  Vast.ai instances section reads it from there.
   Generate sends the Salad key as `Salad-Api-Key` and appends Civitai
   `?token=` on LoRA URLs at POST time. Each slot carries a validity dot:
   **green** only when a real provider call accepted the key, **red** when the
@@ -56,14 +128,20 @@ the left and right.
   Studio/HTTP events (secrets redacted).
 - **LoRAs**. Known catalog LoRAs plus extras you add from a Civitai
   page / `civitai:id@version`, Hugging Face URL, local `.safetensors`
-  path, or a direct download URL.
+  path, or a direct download URL. The grid leads with **Verified**: a dot per
+  row, green when the row is verified and red when it is not (the row's own tag
+  carries the colour, since a `Treeview` colours a row and not a cell). Clicking
+  a **heading** orders the grid by that column and clicking it again reverses the
+  order, and **Find by name** narrows it to the rows whose name contains what you
+  type — any part of the name, any case; **Clear** brings every row back, and a
+  narrowed grid still sorts.
 - **Prompt Editor**. The JSON body POSTed to Salad `/prompt`. The
   node graph is **JointJS in a WebView2 pane** (manhattan wires that
   route around cards; no Graphviz `dot`). WebView2 cache lives in
   `%LOCALAPPDATA%\SaladStudio\WebView2` (not next to `python.exe`).
   **Open in browser** if the embed is blank; **Open as Comfy** is
   LiteGraph (Comfy's engine, spline wires, can cross cards). See
-  [`docs/workflow/16-salad-studio-prompt-graph.md`](../docs/workflow/16-salad-studio-prompt-graph.md).
+  [the prompt graph pane](#prompt-graph-pane-jointjs-in-webview2).
   Selecting LoRAs on Prompt Settings rebuilds the `LoraLoader` chain here. **Rebuild from JSON**
   does the reverse (prompt, size, graph, selected LoRAs). **Validate** runs
   the same `parse_request_json` gate as Generate (plus Civitai-token check).
@@ -77,16 +155,30 @@ the left and right.
   **CLIPLoader** (Qwen), not the last `LoraLoader`.
 - **Import**. Paste Civitai generation data and/or Comfy `nodes`/`links`
   JSON. Convert **routes** on graph presence first (Comfy nodes vs no
-  Comfy), then tooling (Draw Things / A1111 metadata). UUID subgraph
+  Comfy), then tooling (Draw Things / A1111 metadata). A Comfy paste whose
+  graph has **no sampling path** — no sampler, no diffusion-model loader, no
+  text encode, so an image-processing pass such as the SeedVR2 upscale
+  workflow image 125073040 carries — is built from the generation data
+  instead of being converted as a graph, because that graph cannot become a
+  request; a paste with neither still converts as a graph. UUID subgraph
   flatten assigns unique link ids and skips muted (mode 4) copies;
   nodes not on the SaveImage path (notes, Fast Groups Bypasser,
   unused inlined loaders) are dropped as orphans. Local LoRA
   filenames are searched on Civitai (including ``_CE_`` trainer names
   and sibling versions on the same model); a miss is omitted from the
-  graph so Convert still succeeds. Convert rewrites Salad-missing nodes: ``ReferenceLatent`` is
-  dropped (CLIP encode → CFG positive), ``ConditioningZeroOut`` becomes
+  graph so Convert still succeeds. Convert rewrites Salad-missing nodes:
+  ``ReferenceLatent`` is dropped (CLIP encode → CFG positive),
+  ``ConditioningZeroOut`` becomes
   an empty CLIP encode, ``full_encoder_small_decoder`` → ``flux2-vae``,
-  and ``Color Correct GPU (mtb)`` is bypassed. Civitai
+  and ``Color Correct GPU (mtb)`` is bypassed. The LoraManager pack
+  (image 123550044) is rewritten the same way: its ``Lora Loader
+  (LoraManager)`` becomes a stock ``LoraLoader`` chain carrying the stack from
+  its own widget (name and strength per entry), its prompt / trigger-word /
+  debug helpers are dropped, and the prompt text they fed is written onto the
+  ``CLIPTextEncode`` they pointed at, from the generation data. Generate POSTs a
+  copy with no pack type in it; a LoRA still holding a local filename after the
+  Civitai lookup is omitted from that copy (the container loads LoRAs from
+  Civitai URLs only) and the editor keeps it. Civitai
   ``flux-2-klein-9b-fp8mixed`` maps to replica ``flux-2-klein-9b-fp8``.
   KSampler ``control_after_generate`` (`randomize`/`fixed`) is not packed
   as steps. When a Civitai Comfy graph has no ``LoraLoader`` but Resources
@@ -108,10 +200,8 @@ the left and right.
   `image.getGenerationData` (Civitai token) or the public image page.
   Example: [135440425](https://civitai.com/images/135440425)
   is **Draw Things** (not Comfy): distilled Klein + **Artificeal** `3088444` at 1344×1792, CFG 1, 5
-  steps. Draw Things `DPM++ SDE` is remapped to Comfy **euler** on
-  distilled Klein. Klein-native LoRAs encode CLIP **after** the last
-  `LoraLoader`; Illustrious/Anima stacks still encode on the CLIPLoader.
-  Without the LoRA Salad only draws the graphite sketch layer. That image's
+  steps. Draw Things `DPM++ SDE` is remapped to Comfy **euler** on distilled Klein, and the CLIP-encode
+  stack rule is the Prompt Editor's, above. Without the LoRA Salad only draws the graphite sketch layer. That image's
   stored CLIP is only the Artificeal trigger + a stool sentence; Convert
   expands it to the cover scene (overalls, landscape, wordmark) so Fetch
   does not paint abstract washes. Generation data may be prompt + **Negative prompt** + `Steps:` /
@@ -140,9 +230,11 @@ the left and right.
   the editor. **Delete** asks first. Stored under
   `~/.config/salad/studio-prompt-catalog.json` (not git), with Civitai tokens
   stripped from the stored LoRA URLs. The table shows Added / Short name /
-  Description / Prompt / Graph.
-- **Prompt Assist**. Asks **DeepSeek** to improve a prompt pair. The top row
-  mirrors the Prompt Editor's current **positive** and **negative** prompt
+  Description / Prompt / Graph, and an explicit empty state when nothing is kept.
+- **Prompt Assist**. Asks a model to improve a prompt pair: **Help (DeepSeek)**
+  uses the DeepSeek API (the key lives on the Tokens tab) and **Help (local)**
+  uses an OpenAI-compatible server you run yourself, LM Studio by default. The
+  top row mirrors the Prompt Editor's current **positive** and **negative** prompt
   (read-only, refreshed when you open the page or press **Refresh from Prompt
   Editor**); the second row is a pair of **adjusted** prompts you edit freely.
   They are independent of the editor, and typing in them never touches the
@@ -153,28 +245,19 @@ the left and right.
   generated image** to attach the newest plate from `art/salad_studio/` as well,
   so the model can look at the picture and name the defect itself (the label
   shows which file will ride along); the image is downscaled to 1024 px before
-  it is sent. Both backends are reasoning models, so a Help press waits for the
-  **whole** answer: a reply the API cut off at the token limit
-  (`finish_reason: "length"`) is asked for again and stitched on (up to
-  `ai_helper.CONTINUE_ATTEMPTS`, the Logs tab saying how many rounds it took),
-  a trace that used the whole budget with nothing written is answered by a
-  demand for the JSON, and a body that streams despite `stream: false` is
-  assembled from its frames. When the budget still runs out, the press fails
-  with a message naming max_tokens rather than filling the boxes with the
-  front of a reply. The reply is then read as a whole: of every complete
-  `{...}` in it the best-scoring one wins. The object that fills both prompts
-  and names them outright, so the schema or a first draft a reasoning model
-  quotes in its trace is never mistaken for the answer, and the schema's
-  `"..."` placeholders read as no answer at all. A model that answers a
-  continuation by re-writing the object from the top (Ministral does) is still
-  read: the restarted object is recovered from behind the cut-off head. A reply
-  that arrives missing one of the two prompts leaves the box you typed in
-  untouched and says so in the Logs tab, so a partial answer cannot wipe your
-  own wording. The system prompt is `studio_meta.instruction()` over the
-  metadata document's `prompt` section (`role`, `task`, `rules` and the
-  `reply_contract`), so the house's Klein anatomy rules live in that document.
-  The wording came from
-  [`docs/workflow/19-two-body-prompt-playbook.md`](../docs/workflow/19-two-body-prompt-playbook.md):
+  it is sent. Both backends are reasoning models, so a Help press waits for the **whole** answer: a reply the API cut off
+  at the token limit (`finish_reason: "length"`) is asked for again and stitched on (up to `ai_helper.CONTINUE_ATTEMPTS`,
+  the Logs tab saying how many rounds it took), a trace that used the whole budget with nothing written is answered by a
+  demand for the JSON, and a body that streams despite `stream: false` is assembled from its frames; when the budget still
+  runs out the press fails naming max_tokens rather than filling the boxes with the front of a reply. The reply is then read
+  as a whole: of every complete `{...}` in it the best-scoring object wins — the one that fills both prompts and names them
+  outright, so the schema or a first draft a reasoning model quotes in its trace is never mistaken for the answer, and the
+  schema's `"..."` placeholders read as no answer at all. A model that answers a continuation by re-writing the object from
+  the top (Ministral does) is still read; a reply that arrives missing one of the two prompts leaves the box you typed in
+  untouched and says so in the Logs tab. The system prompt is `studio_meta.instruction()` over the metadata document's
+  `prompt` section (`role`, `task`, `rules` and the `reply_contract`), so the house's Klein anatomy rules live in that
+  document. The wording came from
+  [`docs/workflow/21-klein-image-handoff.md`](../docs/workflow/21-klein-image-handoff.md#9-two-body-prompt-playbook):
   state the act directly, name the position in the model's own vocabulary,
   give each body its own limb posture, clinical anatomical words, a short
   style-only negative, the style block verbatim with no placeholder token, and
@@ -202,20 +285,33 @@ the left and right.
   Every referenced weight is resolved locally
   first (catalog, extras, replica disk, filename family) and then online
   (Civitai) if the local sources miss; anything still unknown is reported as
-  **UNRESOLVED** to the model rather than dropped. Model id lives in
-  `ai_helper.MODEL` (`deepseek-flash`).
+  **UNRESOLVED** to the model rather than dropped. The DeepSeek backend's model
+  id lives in `ai_helper.MODEL` (`deepseek-flash`); **Help (local)** uses the
+  model its server reports.
 - **Prompt History**. Stores the full request JSON (prompt column for
   skim, Graph column for node/LoRA/size stats). A successful Generate
   writes a 48×48 thumbnail in the first column. Double-click restores
-  JSON + prompt.
+  JSON + prompt. The page shows an explicit empty state when nothing has been
+  generated.
 - **Queue**. The Salad request queue, rendered from `salad_queue`'s own
   records: one row per request with its **Profile** (the container profile it is
-  dispatched to), **State** (queued / running / accepted / failed / cancelled),
-  **Attempts**, **Last status**, **Reason** and **Request** (gateway host and
-  POST size, never a token), plus a summary of the states and an explicit empty
+  dispatched to), **State** — the human word for the request's stage: **waiting**
+  (queued, not submitted yet), **in progress** (submitted and running), **done**,
+  **failed**, **cancelled** — **Attempts**, **Last status**, **Reason**,
+  **Request** (gateway host and POST size, never a token) and **Finished** (the
+  time it finished), plus a summary of the states and an explicit empty
   state when nothing is queued. The rows refresh on the existing 15 s tick and on
   every queue event, so a render in flight and its recorded outcome both show up
-  without a manual refresh. There is **one line per profile**: a request waits
+  without a manual refresh, and the word on a row changes as the request moves.
+  **A finished request stays on the page for four hours**
+  (`salad_queue.FINISHED_RETENTION_S`), including after the window is closed and
+  reopened: the queue writes a finished request's row (id, profile, state,
+  status, reason and finish time) beside its container record in
+  `~/.config/salad/studio-queue.json` and drops it once it is older than that
+  window, so the next request keeps the id numbering and a kept row is never
+  overwritten. A request that has not finished is never in that record, so the
+  window can never drop one; **Clear finished** clears the page and the kept
+  rows together. There is **one line per profile**: a request waits
   behind the other requests for *its* container, and runs beside a request for a
   different profile, because one container runs one Comfy instance. **Cancel
   selected** drops a request that has **not been submitted yet** (a request the
@@ -225,36 +321,56 @@ the left and right.
   retries; a request the container already accepted is never re-POSTed, so it is
   not retryable; **Clear finished** drops the terminal rows.
 
-  The queue also owns the containers' **lifecycle**, so nothing has to be started
-  or stopped by hand. Before a request's first attempt, the queue asks Salad to
-  **start** the group behind that profile's gateway when the group is stopped
-  (`POST …/containers/{name}/start`), once per stopped container: a retry does
-  not start it again, a container that is already running is left alone, an
-  unknown state is left alone rather than guessed at, and a start Salad rejects
-  fails that request with the control plane's own reason instead of hanging.
-  The start uses the Salad token the app already stores. When a profile's last
-  request has finished, the queue **stops** its group once it has been idle for
-  the `queue.idle_stop_s` timeout in the metadata document (3600 seconds, one
-  hour, by default), from the app's existing 15 s tick: a profile with a request
-  queued or in flight is never stopped, a stopped container leaves the idle set
-  so a second check cannot stop it twice, and a stop Salad rejects is retried
-  only after another full timeout.
+  **Generate is never disabled by the queue or by the status word**: a request
+  already queued or in flight and a booting replica both leave the button live,
+  and the press queues behind the first request instead of
+  being blocked. The press is the gate — a replica that is gone, and a group the
+  badge says is **stopped**, are refused with their reason when the press is
+  made, not by greying the button out: the Logs line, the status line
+  (`Refused: …`) and the dialog all carry that one sentence, and nothing is
+  queued. A press that
+  repeats the request at the **head** of the queue adds nothing: the app digests
+  the request it is about to submit and, when the queue's first item carries the
+  same digest, it reports that the identical request is already queued (naming
+  that row, and pointing at **Retry selected** or **Clear finished** when that
+  row is finished). The identical request is still accepted when it is not the
+  head, so a second copy can be queued behind a different request.
+
+  The queue also owns the containers' **lifecycle**, and it never **starts** a container: before a request's first attempt it reads the state
+  of the group behind that profile's gateway, leaves a group that is running or in an unknown state alone, and refuses a group that is
+  **not running** with the same message the press would give (the case where the group stopped between the badge read and the dispatch) — a
+  **refused** request (the Logs line, the status line's `Refused: …` and the dialog all carry the sentence), never a failed render.
+  `ContainerLifecycle.stop` is the only control-plane call the app makes; nothing in it starts a container. **Generate is not refused for a
+  container that is up but not serving yet**: the request is dispatched, the queue reads the state, and the render waits for that container's
+  `/ready` before it POSTs — a boot is minutes, so the wait covers about ninety minutes, asking every 10 s at first, then every 30 s, then every 60 s
+  (`generator.ready_sleep_s`). While the container has no ready replica every answer is the same 503 page (never pasted into a log; the status line says so in one line),
+  and a container that never answers fails the request naming the profile, the gateway and the last status it saw; only a replica that is *gone* and a group the badge says is stopped are refused up front, with the badge's own reason, and
+  the state is read again at every dispatch. When a profile's last request has finished, the queue **stops** its group once it has been idle
+  for the `queue.idle_stop_s` timeout in the metadata document (3600 seconds, one hour, by default), from the app's existing 15 s tick: a
+  profile with a request queued or in flight is never stopped, a stopped container leaves the idle set so a second check cannot stop it
+  twice, and a stop Salad rejects is retried only after another full timeout. Which containers the app owns and when each last had work is
+  written to `~/.config/salad/studio-queue.json`, so **closing and reopening Studio does not forget a container**: the idle hour still
+  arrives and the first tick past it asks for the stop. **The app stops only containers it may stop**, via the record's own `started_by_app`:
+  a record that cannot say the app started that container is dropped at load with a line in the log and its container left running, so
+  **opening Studio never shuts down a container you started by hand**. The status probe may only *follow* a container the record already owns
+  (`SaladQueue.refresh`), never claim one; a request the app dispatches claims its container for that session only, a container with a request
+  queued or in flight is never stopped, and the check runs off the Tk thread, so the window never freezes while the control plane is called.
 
 Klein group, prefetch image, Civitai-vs-Comfy quality, and startup
 probes: [`docs/workflow/15-salad-flux2-klein-group.md`](../docs/workflow/15-salad-flux2-klein-group.md).
 
-Secrets: `salad_studio/studio-tokens.json` (not git; seeded from
-`~/.config` if empty). Gateway files stay in `~/.config/salad/`.
-Profiles: `~/.config/salad/studio-profiles.json`. User LoRA extras:
-`~/.config/salad/studio-loras.json`. Prompt history (full `/prompt` JSON):
-`~/.config/salad/studio-prompt-history.json`. Prompt catalog (named request
-JSON): `~/.config/salad/studio-prompt-catalog.json`.
+Stores (none in git): `salad_studio/studio-tokens.json` (seeded from `~/.config`
+if empty); `~/.config/salad/` holds the gateway files, `studio-profiles.json`,
+`studio-loras.json` (LoRA extras), `studio-prompt-history.json` (full `/prompt`
+JSON), `studio-prompt-catalog.json` (named request JSON), `studio-images.json`
+(your own images and their extra deployment environment) and `studio-vast.json`
+(vast.ai instances and the engine choice).
 
 ## Layers
 
-Six layers, one seam. `app.py` owns the window, the tab wiring and the thread
+Eight layers, one seam. `app.py` owns the window, the tab wiring and the thread
 starts; every module outside the UI layer imports and runs in a process where
-`tkinter` is never loaded. `test_layers.py` drives one real call per non-UI
+`tkinter` is never loaded. `tests/test_layers.py` drives one real call per non-UI
 layer in a subprocess and asserts exactly that, and a second test keeps the
 window in `app.py`.
 
@@ -262,24 +378,16 @@ window in `app.py`.
 |---|---|---|
 | UI | `app.py`, `__main__.py`, `graph_view.py`, `theme.py`, `ui_state.py`, `history_strip.py`, `json_highlight.py` | the window, the tabs, the prompt graph pane |
 | Import | `comfy_import.py`, `civitai_verify.py`, `request_json.py` | a Comfy graph built from a Civitai page, a Comfy workflow, or the prompt knobs |
-| Persistence | `tokens.py`, `prompt_history.py`, `prompt_catalog.py`, `lora_store.py`, `profiles.py`, `studio_meta.py` | stored tokens, prompts, configurations, LoRAs, model info and the metadata document |
+| Persistence | `tokens.py`, `prompt_history.py`, `prompt_catalog.py`, `lora_store.py`, `profiles.py`, `hostings.py`, `studio_meta.py` | stored tokens, prompts, configurations, LoRAs, model info, where a profile renders, and the metadata document |
 | Logging | `studio_log.py` | formatted redacted log lines, and an explanation for an HTTP failure |
-| Salad communication | `generator.py`, `salad_status.py`, `salad_queue.py`, `salad_gen.py` (repo root) | a routed, queued render request, the plate it wrote, and the container lifecycle (start on demand, stop when idle) |
+| Salad communication | `generator.py`, `salad_status.py`, `salad_queue.py`, `salad_gen.py` (repo root) | a routed, queued render request, the plate it wrote, and the container lifecycle (never start, stop when idle) |
+| Vast.ai communication | `vast.py` | the account's instance list behind the Bearer key, the endpoint each instance maps, the stored instance list, and the POST that renders on one |
+| Image deployment | `image_deploy.py` | the tag, ports and environment each image needs, and the build, run and vast.ai commands that deploy it |
 | AI communication | `ai_helper.py`, `ref_check.py` | the Prompt Assist request and its parsed reply |
 
-`app.py` keeps the widgets and the wiring and nothing else that belongs to a
-layer: the routing decision is `profiles.plan_route`, the POST is
-`generator.generate_from_payload` driven through `salad_queue`, and the Prompt
-Assist instruction is assembled from the metadata document.
-
-**Queue.** One container runs one Comfy instance, so `salad_queue` holds
-requests in order: pressing **Generate** while a render is in flight queues the
-request instead of dropping it, and it starts when the container is free. The
-queue retries only when the container is *not available yet* (502, 503, 520,
-521, 522, 523, or a transport that never answered), and treats 504/524 as
-terminal, because Cloudflare returns those after giving up on a job the
-container may still be running and a re-POST renders the plate twice. A request
-the container has already accepted is never POSTed again.
+`app.py` keeps the widgets and the wiring: the routing decision is `profiles.plan_route`,
+the POST is `generator.generate_from_payload` through `salad_queue`, and the Prompt Assist
+instruction is the metadata document.
 
 ### Metadata document
 
@@ -298,55 +406,140 @@ and the reason is carried in the document's `error` field.
 - `routing.families` says what a unet **family** is: the `unets` that belong to
   it (the seed list a new profile starts from and the exact names the family
   check matches), the `markers` that catch a variant, and the `image` that group
-  runs (informational). **Which profile serves which checkpoint is not here**: it
-  is each profile's own `checkpoints` list, edited on the **Config** page, and
-  routing sends a graph to the profile that lists the checkpoint it loads. A
-  checkpoint in no profile's list is refused with a stated reason instead of
-  being sent to a container that cannot serve it, and so is one two profiles
-  list (the choice would be a coin toss) and a profile whose list spans two
-  families (one container holds one unet family in VRAM). A checkpoint the
-  document does not classify is its own family, so a checkpoint that does not
-  exist yet needs no document edit.
+  runs — the source a config's policy image is seeded from, and the fallback when
+  neither its stored policy nor its live group names one. `startup_probe` and
+  `readiness_probe` document the six settings each probe runs (`path`, `port`,
+  `initial_delay_seconds`, `period_seconds`, `timeout_seconds`,
+  `failure_threshold`), which a new config's policy and the Config page start from.
+  `deployment` is what it takes to run that image on a host — the build
+  `context`, `base_image` and `build_arg` (which unet set the tag bakes), the
+  `ports` (`api` 3000 and `comfy` 8188), the `env` entries (each a Tokens-tab
+  `token` slot or a literal `value`, with a `note`), and the `gpu` / `disk_gb` /
+  `vcpu` / `memory_gb` — and the Config page's **Container images** section renders it.
+  **Which profile serves which checkpoint is not here**: it is each profile's own
+  `checkpoints` list, edited on the **Config** page, and routing sends a graph to
+  the profile that lists the checkpoint it loads. A checkpoint in no profile's
+  list is refused with a stated reason instead of being sent to a container that
+  cannot serve it, and so is one two profiles list (the choice would be a coin
+  toss). A profile whose list spans two families routes with a warning, because
+  it works only when the image carries every family. A checkpoint the document
+  does not classify is its own family, so a checkpoint that does not exist yet
+  needs no document edit.
 - `queue.idle_stop_s` is how long a container may sit idle before the queue stops
-  it, in seconds (one hour by default). A hand-edited `0`, a negative number or a
-  word reads as the default, so a typo cannot stop a container the moment it goes
-  quiet.
+  it, in seconds (one hour by default); a hand-edited `0`, negative number or word
+  reads as the default, so a typo cannot stop a container the moment it goes quiet.
 - `prompt` holds the AI layer's instruction: `role`, `task`, `rules` and
   `reply_contract`. Prompt Assist sends what is written there, so the house
-  Klein rules in [`docs/workflow/19-two-body-prompt-playbook.md`](../docs/workflow/19-two-body-prompt-playbook.md)
+  Klein rules in [`docs/workflow/21-klein-image-handoff.md`](../docs/workflow/21-klein-image-handoff.md#9-two-body-prompt-playbook)
   are edited in the document, not in `ai_helper.py`.
 
 ## Settings (this repo is standalone; two things live elsewhere)
 
-This folder was moved out of the Eldermark repo, so the paths that used to be
-relative walk-ups are environment settings with machine defaults:
+This folder was moved out of the Eldermark repo, so the paths that used to be relative walk-ups are environment settings with machine defaults; the three settings, their defaults and the Known-limitation paragraph beside them are in the root [`README.md`](../README.md) (Configuration, Known limitations).
 
-| Setting | Default | What it is |
-|---|---|---|
-| `ELDERMARK_ART` | `C:\Users\vkozy\repos\lifesim-design\art` | the Eldermark art tree this tool writes plates into (`art/salad_studio/`, `art/model-cache/`) |
-| `ELDERMARK_REPO` | `C:\Users\vkozy\repos\lifesim-design` | the Eldermark checkout `test_salad_comfy_live_findings.py` reads docs and skills from |
-| `SALAD_STUDIO_HOME` | this folder | where `model_catalog.py` stages Klein weights for the Docker build |
-
-Known limitation: the three Eldermark catalog helpers that moved here
-(`salad_catalog_faces.py`, `salad_probe_ages.py`, `salad_probe_sdxl.py`) still
-import `paperdoll_mask` and `regen_faces`, which stayed in the Eldermark repo,
-so they do not run standalone. The Studio package itself and its suite do not
-depend on them. `test_salad_comfy_live_findings.py` at the repo root detects this
-and asserts the documented failure instead of a false pass; it starts exercising
-the real freeze path the moment that gap is closed.
-
-Two test commands, and the second is not part of the first:
+Three test commands, and the later ones are not part of the first:
 
 ```
-python -m unittest discover -s salad_studio -p "test_*.py"   # 683 tests, ~5 min
-python test_salad_comfy_live_findings.py                     # root structural checks
+python -m unittest discover -s tests -p "test_*.py"    # 1165 tests, ~15-30 min
+python test_salad_comfy_live_findings.py               # root structural checks
+cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```
+
+The tests live in `tests/` at the repo root, not in the package: `salad_studio/`
+holds only the app's modules, and each test module puts the package directory and
+the repo root on `sys.path` itself, so either of the first two commands runs from
+the repo root. The third runs in `salad_klein/`, where the image's own two test
+modules live.
 
 ## Container groups
 
 Building the Salad container image, creating a group, and calling either the
 control-plane API or a running container are documented in one place:
 [`docs/workflow/23-salad-container-group-deployment.md`](../docs/workflow/23-salad-container-group-deployment.md).
-`salad_status.py` is the client it describes; the **Policy** tab is the UI over
-it (image PATCH, probes, GPU classes, US-only, Reallocate).
+`salad_status.py` is the client it describes; the Config page's policy section
+is the UI over it (image PATCH, probes, GPU classes, US-only, Reallocate), one
+policy per config.
 
+## Prompt graph pane: JointJS in WebView2
+
+*Consolidated from `docs/workflow/16-salad-studio-prompt-graph.md` on 2026-10-17. Subsection numbers below are the source document's own.*
+
+> **Studio graph pane**, not eldermark. Code:
+> [`graph_view.py`](graph_view.py).
+> This manual describes the pane; the durable decision and library survey are below.
+> Klein groups: [`15-salad-flux2-klein-group.md`](../docs/workflow/15-salad-flux2-klein-group.md).
+
+This file is the durable copy of the 2026-09-20 diagram-library
+research, plus what we actually shipped afterward.
+
+### Decision (2026-09-20)
+
+**Stay on JointJS + tkwry** (user, 2026-09-20): do not rewrite Salad
+Studio in Qt for NodeGraphQt. NodeGraphQt is the best Python-native
+node editor, but it is a second GUI toolkit and does not manhattan-route
+around cards. Live pane stays HTML JointJS in WebView2.
+
+**Live graph is JointJS** (`@joint/core` 4.2.5), served as local HTML
+under `salad_studio/graph_html/` and embedded with **tkwry**
+(WebView2 child HWND). No Graphviz `dot` on the live path. tkinterweb
+`HtmlFrame` cannot run Canvas2D / SVG diagram JS (PythonMonkey, not a
+browser).
+
+Python places cards with Comfy columns sized to the JointJS card (`prompt_to_joint`); unknown classes are not forced into the sampler column. JointJS draws
+rounded dark cards, left/right ports, and **manhattan** orthogonal
+wires with **rounded** corners that **route around other cards**. The requirement was Comfy-style
+left-to-right cards, side ports, wires that do not run through boxes, and **field text that stays inside**
+the card (`name` / `lora_name`); no inspected Python widget is a drop-in for Tk Salad Studio.
+
+| Piece | Where |
+|---|---|
+| Prompt → JointJS JSON | `prompt_to_joint` |
+| HTML shell | `graph_html/viewer.html` + vendored `joint.min.js` |
+| Pane | `GraphPane` → tkwry `WebView` (`app=_current.html`, `user_data_dir` under `%LOCALAPPDATA%\SaladStudio\WebView2`) |
+| Fallback | **Open in browser** (same HTML). **Open as Comfy** = LiteGraph |
+| Tests | `test_graph_view.py` class `JointGraphExport` |
+
+LiteGraph.js (ComfyUI's editor) is also vendored. Spline links look
+like Comfy; they do **not** pathfind around nodes. That is why it is
+not the live pane.
+
+The Graphviz/grandalf stack is gone; the helper list is in *What we tried before the live pane*.
+
+### HTML / JS libraries
+
+These run in a **browser or WebView2**, not in Tk Canvas.
+
+| Library | Comfy-like? | Smooth wires | Avoid node overlap | Embed notes |
+|---|---|---|---|---|
+| **JointJS** (`manhattan` + `rounded`) | Dark cards + L/R ports if we style them | Orthogonal with circular fillets | **Yes.** Manhattan treats other elements as obstacles | One UMD file. **Live pick.** |
+| **LiteGraph.js** | **Yes, ComfyUI's editor** | Bezier/spline | No; wires can cross cards (same as Comfy) | Vendored. **Open as Comfy** |
+| **Drawflow** | HTML nodes, not Comfy cards | Curved SVG | No | Vanilla JS |
+| **Rete.js** | Visual programming | Plugin renderers | No | Heavy, needs a renderer |
+| **xyflow + SmartBezier / avoid-nodes-edge** | Customizable cards | Bezier or orthogonal | **Best "no intersection"** (libavoid WASM) | React, not a drop-in in Tk |
+| **ELK.js** (`edgeRouting: SPLINES`, conservative) | Layout engine, we paint | Splines that hug a layered graph | Conservative mode routes around nodes; sloppy can clip | Needs a real JS engine; worker-based bundle is awkward in file:// |
+| **nodegraph-js** | Dark cards, L/R slots | Bezier | Auto-arrange, not obstacle routing | Vanilla JS |
+| **@gravity-ui/graph** | Node editor | Bezier | Canvas+HTML | Needs a bundler |
+| **tkinterweb HtmlFrame** | Not a graph lib | n/a | n/a | HTML/CSS in Tk. JS is PythonMonkey and **cannot** run JointJS/LiteGraph |
+| **tkwry (WebView2)** | Host for any JS graph | n/a | n/a | Real Edge in a Tk frame. **Live host.** |
+
+The table above carries each rejection; the Graphviz stack is removed (see "What we tried").
+
+Not a fit: Nodezator, NetworkX+Matplotlib, Qt/NodeGraphQt.
+
+### What we tried before the live pane (both removed)
+
+Two Tk attempts are gone with the dead layout stack: in-house Comfy columns with gutter polylines
+(chamfered corners, not circular fillets; wires still crossed cards) and grandalf Sugiyama placement
+(scattered nodes; rank-by-topology is not Comfy column order). The Graphviz attempt (`splines=true`,
+HTML `<TABLE>` labels, compass `:e` → `:w` edges) went with them, and its helpers (`prompt_to_dot`,
+`run_dot`, `graphviz_layout`, `find_dot`, `parse_dot_plain`, `grandalf_resolve`, `resolve_layout`)
+were **removed** from `graph_view.py` — nothing on the shipped path called them.
+
+**No `dot` dependency today.** The pane never invokes Graphviz; the live pane is JointJS HTML in
+WebView2 and the fallback is **Open in browser** (the same HTML). There is no install message and no
+`layout_xy` fallback because there is no `dot` path at all.
+
+### Sources (survey)
+
+- JointJS manhattan router + rounded connector (docs.jointjs.com); LiteGraph.js (github.com/jagenjo/litegraph.js, ComfyUI editor); tkwry WebView2 embed (pypi.org/project/tkwry)
+- Graphviz `rankdir`, shapes, `splines`, `radius`, `fixedsize`, `dot` layout (graphviz.org docs); this repo's `salad_studio/graph_view.py`

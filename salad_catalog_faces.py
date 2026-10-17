@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -26,6 +27,7 @@ sys.path.insert(0, str(TOOLS))
 # Eldermark art output tree (outside this tool); ELDERMARK_ART overrides it.
 ART = Path(os.environ.get("ELDERMARK_ART", r"C:\Users\vkozy\repos\lifesim-design\art"))
 
+import face_prompt  # noqa: E402
 import salad_gen  # noqa: E402
 from paperdoll_mask import install_knockout_plate  # noqa: E402
 from regen_faces import (  # noqa: E402
@@ -40,7 +42,6 @@ def ISO():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 PROGRESS = ART / "catalog" / "face" / "salad_progress.json"
 LOG = ART / "catalog" / "face" / "salad_regen.log"
-PIDFILE = ART / "catalog" / "face" / "salad_runner.pid"
 PAUSE = ART / "catalog" / "face" / "salad_PAUSE.txt"
 _LOCK = threading.Lock()
 
@@ -57,9 +58,18 @@ HOUSE = (
     "enlarged. Soft even studio light. Solid MAGENTA chroma-key background "
     "#FF00FF. Cream ruffled linen collar."
 )
+
+
+def _pack_years(stage: str) -> str:
+    """The pack's age band. Catalog prompts must not keep a second copy."""
+    entry = (face_prompt.load_pack().get("age_stages") or {}).get(stage) or {}
+    return str(entry.get("years") or "")
+
+
 AGE = {
     "infants": (
-        "TRUE INFANT 0 to 3 months, newborn baby, not a toddler, not a child. "
+        _pack_years("infants")
+        + ". not a toddler, not a child. "
         "Large infant cranium, tiny nose, round apple cheeks, sparse baby hair. "
         "Slight happy open-mouth smile, no teeth."
     ),
@@ -143,9 +153,7 @@ def log(msg: str) -> None:
             f.write(line + "\n")
 
 
-def load_progress() -> dict:
-    if PROGRESS.is_file():
-        return json.loads(PROGRESS.read_text(encoding="utf-8"))
+def _empty_progress() -> dict:
     return {
         "version": 1,
         "created_at": ISO(),
@@ -156,6 +164,22 @@ def load_progress() -> dict:
     }
 
 
+def load_progress() -> dict:
+    if PROGRESS.is_file():
+        try:
+            return json.loads(PROGRESS.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            # A crash mid-write leaves a partial file. Move it aside so every
+            # later --status/--generate can still start instead of dying here.
+            bad = PROGRESS.with_name(PROGRESS.name + f".corrupt-{int(time.time())}")
+            try:
+                PROGRESS.replace(bad)
+            except OSError:
+                pass
+            log(f"[warn] unreadable progress ({e}); moved aside, starting fresh")
+    return _empty_progress()
+
+
 def save_progress(prog: dict) -> None:
     prog["updated_at"] = ISO()
     cells = prog.get("cells") or {}
@@ -163,7 +187,19 @@ def save_progress(prog: dict) -> None:
         "done": sum(1 for r in cells.values() if r.get("status") == "done"),
         "failed": sum(1 for r in cells.values() if r.get("status") == "failed"),
     }
-    PROGRESS.write_text(json.dumps(prog, indent=2) + "\n", encoding="utf-8")
+    PROGRESS.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=PROGRESS.name + ".", suffix=".tmp", dir=str(PROGRESS.parent)
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(prog, indent=2) + "\n")
+        os.replace(tmp_name, PROGRESS)
+    finally:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
 
 
 def noun(sex: str, stage: str) -> str:
@@ -198,7 +234,13 @@ def compose(params: dict) -> str:
     return f"{HOUSE} Portrait of {who}. {age} {hair}. {eyes}. {skin}."
 
 
-def wait_ready(key: str, base: str, ping_s: int) -> None:
+def wait_ready(*, key: str, base: str, ping_s: int) -> None:
+    """Block until ``/ready`` answers 200, logging each try.
+
+    Unlike ``salad_gen.wait_ready`` this never gives up: a batch resumes when a
+    replica comes up. The parameters are keyword-only because they are the same
+    three as ``salad_gen.wait_ready``'s, in the opposite order.
+    """
     n = 0
     while True:
         n += 1
@@ -227,7 +269,13 @@ def queue(entries: list[dict], policy: dict, prog: dict) -> list[dict]:
 
 
 def gen_one(entry: dict, cat: Path, key: str, base: str) -> str:
-    """Return done | retry | failed. 502/503 = retry (dead replica), not a long wait."""
+    """Return done | retry | failed. 502/503/429 = retry (dead replica), not a long wait.
+
+    504/524 are terminal, the way ``salad_studio.salad_queue`` reads them: the
+    gateway returns them after giving up on a job the container may still be
+    running, so a re-POST submits a duplicate render. They fall through to
+    ``failed`` below.
+    """
     params = entry.get("params") or {}
     prompt = compose(params)
     seed = salad_gen.random.randint(1, 2**48)
@@ -243,7 +291,7 @@ def gen_one(entry: dict, cat: Path, key: str, base: str) -> str:
         return "retry"
     if code in (401, 403):
         raise SystemExit(f"auth HTTP {code}")
-    if code in (502, 503, 504, 429) or code >= 500:
+    if code in (502, 503, 429):
         log(f"[retry] {cell_key(entry)} HTTP {code}")
         time.sleep(2)
         return "retry"
@@ -306,8 +354,7 @@ def main() -> int:
 
     key = salad_gen._read(salad_gen.CONFIG / "key")
     base = salad_gen._read(salad_gen.CONFIG / "gateway").rstrip("/")
-    PIDFILE.write_text(str(os.getpid()), encoding="utf-8")
-    wait_ready(key, base, args.ping_s)
+    wait_ready(key=key, base=base, ping_s=args.ping_s)
     if args.limit:
         q = q[: args.limit]
     depth = max(1, args.queue_depth)
@@ -368,7 +415,7 @@ def main() -> int:
             fill()
     remaining = len(queue(load_index(cat), policy, load_progress()))
     log(f"[done] processed_ok={n_done} failed={n_fail} remaining={remaining}")
-    return 0
+    return 1 if n_fail else 0
 
 
 if __name__ == "__main__":

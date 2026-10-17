@@ -16,7 +16,9 @@ the window showed or managed it.
 - "executed" means a command or a driven window produced the evidence;
   "read-from-source" means the claim is a reading of the code, stated as such.
 - The suite was run from the repo root:
-  `python -m unittest discover -s salad_studio -p "test_*.py"`.
+  `python -m unittest discover -s salad_studio -p "test_*.py"` (the tests
+moved into `tests/` at the repo root on 2026-09-26, so the command today is
+`python -m unittest discover -s tests -p "test_*.py"`).
 - The queue page was driven in a **hidden** window (`SaladStudio(show=False)`)
   with an injected transport, so no render and no network call happened.
 - One measured behaviour matters for the test design and is recorded in A4: a
@@ -122,7 +124,7 @@ than deleted. Deferred with that reason.
 ### D1, the root README's test count was 50 tests behind (High, executed, FIXED)
 
 `README.md` said "566 tests"; the suite was at 616. Fixed, and now checked:
-`test_docs_match.py` counts `def test_` across `salad_studio/test_*.py` and
+`test_docs_match.py` counts `def test_` across `tests/test_*.py` and
 compares it with the number in the README, so this cannot drift silently again.
 
 ### D2, the root README named two dependencies the app does not use (Medium, executed, FIXED)
@@ -243,6 +245,9 @@ Stated in `app.py`'s `QUEUE_CANCEL_NOTE` and in `salad_studio/README.md`.
 python -m unittest discover -s salad_studio -p "test_*.py"
 Ran 619 tests ... OK
 ```
+(The tests moved out of the package into `tests/` afterwards, so the command
+today is `python -m unittest discover -s tests -p "test_*.py"`; the run this
+section records was the one above.)
 
 619 is 566 (the number the root README claimed before this pass) plus the tests
 this pass added: `test_queue_page.py` (10), `test_docs_match.py` (8), six new

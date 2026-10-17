@@ -104,6 +104,12 @@ line). `finish_time` 23:10:53.395 is the matching stop, logged as:
 
 ## 3. The cause: the group had been idle-stopped, and this request started it
 
+> **Forward note (2026-10-14):** the start path this document analyses was
+> removed on 2026-10-13 (commit `d52907b`). The queue no longer starts a
+> container: a group that is not running is refused, with the profile and its
+> gateway named, so the press reports the container is down instead. The
+> idle-stop and ownership analysis below still holds; only the start does not.
+
 The restart is a **fresh container after an idle stop**, triggered by this
 request's dispatch. The chain, each step cited:
 
@@ -231,8 +237,8 @@ dedupes); a single call returns only the oldest 100 entries of the window.
 `tests.txt` is the repo's own suite, which covers the two shipped behaviours this
 write-up leans on: the idle stop and the cold start a later request asks for
 (`tests/test_salad_queue.py`, for example
-`test_a_fresh_process_stops_the_container_the_app_started` and
-`test_a_stopped_container_is_started_then_waited_for_before_the_post`) and the
+`test_a_fresh_process_stops_the_container_an_older_session_started` and
+`test_a_stopped_container_is_refused_and_never_started`) and the
 routing of a checkpoint to the one profile that lists it
 (`tests/test_profiles.py`, `test_each_family_routes_to_its_own_group`).
 

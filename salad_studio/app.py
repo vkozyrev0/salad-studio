@@ -765,6 +765,22 @@ class SaladStudio(tk.Tk):
         widget = getattr(event, "widget", None)
         if widget is None:
             return
+        # FocusIn also fires on every ancestor as focus enters its subtree.
+        # Revealing a container scrolls its far edge into view; on the Vast.ai
+        # page the body frame's far edge is the Rent a machine panel, so a click
+        # on an instance row jumped there. Only a control that took focus may
+        # move the page.
+        if widget.winfo_class() in {
+            "TFrame",
+            "Frame",
+            "TLabelframe",
+            "Labelframe",
+            "TNotebook",
+            "Notebook",
+            "TPanedwindow",
+            "Panedwindow",
+        }:
+            return
         for page, canvas in self._scroll_canvases.items():
             if self._on_page(widget, page):
                 self._reveal(canvas, page, widget)

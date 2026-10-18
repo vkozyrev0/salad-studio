@@ -3766,6 +3766,21 @@ class ContentBelowTheFoldIsReachable(unittest.TestCase):
             canvas.yview()[0], before, "a control already in view moves nothing"
         )
 
+    def test_a_focus_event_on_the_page_body_does_not_scroll_it(self) -> None:
+        """Tk fires FocusIn on every ancestor; only the control may be revealed.
+
+        Revealing the body frame scrolls its bottom edge into view, which is the
+        Rent a machine panel below the instance list on the Vast.ai page.
+        """
+        app = self.app
+        page = app._config_section_pages["vast"]
+        body = app._scroll_bodies[page]
+        with mock.patch.object(app, "_reveal") as reveal:
+            app._on_page_focus(type("E", (), {"widget": body})())
+        self.assertFalse(
+            reveal.called, "the page body is a container, not a control taking focus"
+        )
+
     # -- the sideways scroll -----------------
     # The lines that pass added, as (shipped text, what it replaced) pairs, so
     # the old vertical-only helper and reveal can be rebuilt from this file.

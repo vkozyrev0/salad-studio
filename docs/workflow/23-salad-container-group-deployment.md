@@ -102,6 +102,8 @@ Both tags work as a container image for a Salad group or a **vast.ai instance**.
 - **Do not `FROM` a `flux1dev` Salad tag.** It OOMs or 524s on a 24 GB card for
   Klein graphs.
 
+`manifest.yaml` sets `before_start: []`; do not put sequential HF URLs back.
+
 `prefetch.py` is the only thing that puts weights on disk, at **first boot**, not at build:
 
 1. If a `.zip` sits next to the Comfy path, or a zip was misnamed

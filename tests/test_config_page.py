@@ -1045,6 +1045,38 @@ class ConfigPage(unittest.TestCase):
             _pump(app, lambda: not app._busy)
         self.assertEqual(seen.get("endpoint"), "http://203.0.113.9:31234")
 
+    def test_a_dropped_apply_callback_clears_the_create_lock(self) -> None:
+        """Generate's automatic path must not wedge the lock when _later fails."""
+        app = self.app
+        app.var_vast_image.set("docker.io/example/klein:tag")
+        self._vast_window()
+        alive = {
+            "action": "alive",
+            "row": {
+                "endpoint": "http://203.0.113.9:31234",
+                "id": 1,
+                "gpu": "RTX 4090",
+                "state": "running",
+            },
+            "message": "the instance is alive",
+        }
+        with mock.patch.object(
+            self.app_mod.vast, "replace_destroyed", return_value=alive
+        ), mock.patch.object(
+            self.app_mod.generator,
+            "generate_from_vast",
+            return_value=Path(self.tmp) / "plate.jpg",
+        ), mock.patch.object(
+            app, "_later", return_value=None
+        ), mock.patch(
+            "salad_studio.app.threading.Thread", _Inline
+        ):
+            app._on_generate()
+        self.assertFalse(
+            app._vast_create_busy,
+            "a callback that could not be scheduled must release the create lock",
+        )
+
     def test_a_created_instance_without_an_endpoint_is_remembered(self) -> None:
         """A contract that has not mapped an endpoint must not be created again."""
         app = self.app
@@ -1251,6 +1283,11 @@ class ConfigPage(unittest.TestCase):
         app = self.app
         tok.write_token("vast", "vast-key")
         app.var_vast_image.set("docker.io/example/klein:tag")
+        # An active instance with an image is what Replace needs to get past
+        # its own guards, so a refusal here can only be the shared lock.
+        app.var_vast_new.set("203.0.113.9:31234")
+        app._on_vast_add()
+        self.assertIsNotNone(app._vast_active(), "replace has a row to act on")
         self._fill_offers([self._offer(42)])
         app.vast_offer_tree.selection_set("42")
         unmapped = {
@@ -1271,6 +1308,10 @@ class ConfigPage(unittest.TestCase):
             self.assertTrue(app._vast_create_busy, "rent takes the one create lock")
             app._on_vast_replace()
             self.assertFalse(replace.called, "replace waits for the same lock")
+            self.assertEqual(
+                app.var_vast_status.get(),
+                "a replacement check is already running",
+            )
             held = _HeldThread.held[-1]
             held.target()
             self.assertTrue(_pump(app, lambda: not app._vast_create_busy))

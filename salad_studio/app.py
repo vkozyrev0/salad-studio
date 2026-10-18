@@ -6685,7 +6685,8 @@ class SaladStudio(tk.Tk):
                 except Exception as e:  # noqa: BLE001 - end the press, not the app
                     result = {"action": "error", "message": f"{type(e).__name__}: {e}"}
                 action = str(result.get("action") or "")
-                self._later(0, lambda: self._apply_vast_rent(result, row))
+                if self._later(0, lambda: self._apply_vast_rent(result, row)) is None:
+                    self._vast_create_busy = False
                 if action == "alive":
                     endpoint = str(
                         (result.get("row") or {}).get("endpoint") or endpoint

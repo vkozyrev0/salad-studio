@@ -208,9 +208,18 @@ Documented, **not** resolved. Do not assume an answer.
 5. **NAG (Normalized Attention Guidance).** Unverified on our image.
 6. **The position matrix.** Only missionary has a human verdict. Doggystyle, cowgirl and blowjob are candidate prompts with no plate judged.
 7. **An automatic anatomy QC gate.** A prototype scored 25 % TPR / 33 % FPR, measured negative. A person on a contact sheet is currently better.
-8. **The SDXL migration question.** See doc 22 §10; premise unverified.
+8. **The SDXL migration question.** See doc 22 §5; premise unverified.
 9. **Does the `comfyui-api` hang depend on batch size?** Observed after ~8 sequential renders; not characterised.
 10. **Can any diffusion configuration give anatomically correct two-body interlock *every time*?** As of 2026-09-23, no: two independent passes found no published measured rate from either family, and the only route with correctness *by construction* is 3D (DAZ → Blender geograft weld, or an engine with hand-keyed penetration). Krea 2 / Flux.2-Klein masking refuses SDXL adapters. [22](22-two-body-correctness-research.md).
+
+**Session discipline.** Test one variable per run against the held baseline
+(seed, graph, LoRA chain, 832x1216, euler, 4 steps, CFG 1) and stop at the
+first step that clears the artifact rate. Score a 6-seed labelled contact sheet
+and show it to the user; do not sign off on anatomy from your own read. The
+harness is `salad_studio.generator.generate_from_payload`, with the gateway and
+key read from `~/.config/salad/`; never print or commit them. Do not download
+weights without asking. Renders stay under the gitignored `target/` and are
+never committed.
 
 ---
 
@@ -246,15 +255,15 @@ concatenation.
 | diffusers LoKr bug: issue `#13261` **open**, created 2026-03-12; first fix PR `#13997` **closed, merged=false**; umbrella PR `#14163` **open** | GitHub API | **MATCH** |
 | the SNOFS LoRA's Klein v1.4 build is version `2960556` | `https://civitai.com/api/v1/models/1972981` | **MATCH** |
 
-The corrections listed here were applied at their source: doc 22 §9 (its §2.1/§9) and §9 (its §3). **New since the docs were written:** the SNOFS **merged** model now publishes three **Krea 2** versions (`3333138` Turbo v1.4, `3333068` Raw v1.4, `3226711` Raw v1.3D) alongside the Klein ones, and the SNOFS **LoRA** model has six Krea 2 versions, so Klein is no longer the newest line on either page.
+The corrections listed here were applied at their source: doc 22 §4 and §3. **New since the docs were written:** the SNOFS **merged** model now publishes three **Krea 2** versions (`3333138` Turbo v1.4, `3333068` Raw v1.4, `3226711` Raw v1.3D) alongside the Klein ones, and the SNOFS **LoRA** model has six Krea 2 versions, so Klein is no longer the newest line on either page.
 
 **Not re-verified, treat as unconfirmed:**
 
 | Claim | Source as cited | Why not |
 | --- | --- | --- |
-| The SNOFS author's fp8 warning (*"FP8 is up. I noticed significant degradation … fingers … recommend bf16"*) | quoted in doc 22 §9, its §2.2 | The version descriptions come back **empty** from the Civitai API and the civarchive page does not carry the sentence. **As of 2026-09-23, not re-verified.** |
-| "3 arms or other horrors images … increasing to eight steps seems to help" | doc 22 §9, its §2.2, cited to the HF fp8 discussions | The thread **is** real, discussion **#2, "4steps gives many 3 arms or other horrors images"**, opened 2026-01-16, open, but the wording differs and it is **about 4 steps**, not fp8: *"This fp8 version + default Comfyui workflow gives 3 arms or other horrors images many time. Giving 8steps seems to help…"*, answered by a report that **40 steps also fails** and that a q8 GGUF is better. Re-verified with that correction. |
-| NAG, MatchingPose, RefControl, the `res_2s` class name, Male Anatomy's PromptHero host | doc 22 §9 / doc 21 §9 | Not re-fetched. Anything §9 marks *"verify in your build"* has **not** been checked against our image (`api1.19.2`). |
+| The SNOFS author's fp8 warning (*"FP8 is up. I noticed significant degradation … fingers … recommend bf16"*) | quoted in doc 22 §4.1 | The version descriptions come back **empty** from the Civitai API and the civarchive page does not carry the sentence. **As of 2026-09-23, not re-verified.** |
+| "3 arms or other horrors images … increasing to eight steps seems to help" | doc 22 §4.1, cited to the HF fp8 discussions | The thread **is** real, discussion **#2, "4steps gives many 3 arms or other horrors images"**, opened 2026-01-16, open, but the wording differs and it is **about 4 steps**, not fp8: *"This fp8 version + default Comfyui workflow gives 3 arms or other horrors images many time. Giving 8steps seems to help…"*, answered by a report that **40 steps also fails** and that a q8 GGUF is better. Re-verified with that correction. |
+| NAG, MatchingPose, RefControl, the `res_2s` class name, Male Anatomy's PromptHero host | doc 22 §4 / doc 21 §9 | Not re-fetched. Anything §9 marks *"verify in your build"* has **not** been checked against our image (`api1.19.2`). |
 
 Corroboration for §6 item 4: <https://myaiforce.com/flux-2-klein-anatomy-horror/> (2026-09-23, single-author blog, no published methodology) names **4 steps** as the risky end for **two-person interactions**; one blog is not a controlled test.
 
@@ -262,13 +271,13 @@ Corroboration for §6 item 4: <https://myaiforce.com/flux-2-klein-anatomy-horror
 
 *Consolidated from `docs/workflow/19-two-body-prompt-playbook.md` on 2026-10-17. Subsection numbers below are the source document's own.*
 
-**Started 2026-09-22.** Companion to doc 22 §9 (why Klein failed for two-body acts) and doc 22 §10 (the SDXL question). The machine-readable form is **`salad_klein/prompt_ledger.json`**. That file is canonical for the prompt text; this doc explains what the entries have in common.
+**Started 2026-09-22.** Companion to doc 22 §4 (why Klein failed for two-body acts) and doc 22 §5 (the SDXL question). The machine-readable form is **`salad_klein/prompt_ledger.json`**. That file is canonical for the prompt text; this doc explains what the entries have in common.
 
 **Scope:** 18+ adults only, two adults, no minors, nothing illegal.
 
 ### 1. Why this exists
 
-Before 2026-09-22 the work produced **zero** acceptable two-body plates, 22 judged, none good, and the cause was misdiagnosed four times (LoRA stack, LoRA download, prompt enumeration, prompt length). Two things were wrong, and neither was the wording: **three unets in one container group thrashed VRAM**, turning 3-second renders into 239–576 s no gateway would wait for (fixed by routing one unet family per group, doc 22 §9, its §1.1); and a **template shipped as a prompt**, `prompt_snofs_distilled_v12.json` carried the literal `REPLACE_THIS_PROMPT`, so a "successful" 0.9 s render was a picture of that word. With both fixed, renders are **1–4 s** and acceptable plates arrive at roughly **2 in 7 seeds**. The work now is collecting which prompts work; selection, not wording, is what you spend effort on.
+Before 2026-09-22 the work produced **zero** acceptable two-body plates, 22 judged, none good, and the cause was misdiagnosed four times (LoRA stack, LoRA download, prompt enumeration, prompt length). Two things were wrong, and neither was the wording: **three unets in one container group thrashed VRAM**, turning 3-second renders into 239–576 s no gateway would wait for (fixed by routing one unet family per group, doc 22 §3.3); and a **template shipped as a prompt**, `prompt_snofs_distilled_v12.json` carried the literal `REPLACE_THIS_PROMPT`, so a "successful" 0.9 s render was a picture of that word. With both fixed, renders are **1–4 s** and acceptable plates arrive at roughly **2 in 7 seeds**. The work now is collecting which prompts work; selection, not wording, is what you spend effort on.
 
 ### 2. The verified configuration
 
@@ -303,7 +312,7 @@ The `comfyui-api` `/prompt` hang and its recovery: §5.
 
 **Source: the user's own research, 2026-09-22.** No plate from this recipe has been judged by a human, so it is not in `prompt_ledger.json`'s `verdicts`; it sits under `candidates`.
 
-The candidate is **Base 9B at 30–50 steps and CFG 4–5**, with SNOFS **0.8–1.0** alone or **0.3–0.5** stacked, Euler + Flux2 scheduler (fall back to `res_2s` / `res_multistep` if it melts), and about **1–1.5 MP** before upscale. This contradicts the verified operating point (§6 item 1). Its full framework, settings, negatives, and Comfy recipe cards are the research record in doc 22 §9; none of it is verified against our image (`api1.19.2`).
+The candidate is **Base 9B at 30–50 steps and CFG 4–5**, with SNOFS **0.8–1.0** alone or **0.3–0.5** stacked, Euler + Flux2 scheduler (fall back to `res_2s` / `res_multistep` if it melts), and about **1–1.5 MP** before upscale. This contradicts the verified operating point (§6 item 1). Its full framework, settings, negatives, and Comfy recipe cards are the research record in doc 22 §4; none of it is verified against our image (`api1.19.2`).
 
 ### 7. Adding to this playbook
 

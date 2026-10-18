@@ -63,24 +63,21 @@ the left and right.
   **GPU classes**, **US-only** country codes, the startup and readiness probe
   fields, and **Reallocate** (confirm). The **Image** field offers the tags
   of the two images on **Images** (still editable, so a group running a tag this app has
-  never been told about is fine). Two images are built from
-  `salad_klein/` — `eldermark-klein:…-prefetch6-klein` for the Klein family and
-  `…-prefetch6-snofs` for the SNOFS one, differing only in the unet set baked at
-  first boot — and both are described together, with their build args, ports and
-  entrypoint, in
+  never been told about is fine). The two images built from `salad_klein/`, their
+  build args, ports, and entrypoint are in
   [`docs/workflow/23-salad-container-group-deployment.md`](../docs/workflow/23-salad-container-group-deployment.md)
   §1.2. Either one also runs as a vast.ai instance image (see **Vast.ai**). The policy belongs to the selected
-  config — **Load from Salad** reads that config's group, **Apply to Salad**
+  config: **Load from Salad** reads that config's group, **Apply to Salad**
   PATCHes that config's group (Salad, not a Docker rebuild), and **Save
   profile** stores the fields with that config, so selecting another config swaps them for that config's own policy.
-  **Selecting a config re-reads its group** with the same fresh GET the button makes, so the fields show that group's
-  current image, GPU classes, country codes and probes; the read fills the fields only, never rewrites a stored record,
-  and a failed read (no key, no network, no matching group) leaves what is on screen standing. Every field - the image
-  and all twelve probe fields - is filled in this order, so the page shows a complete policy the moment the window
-  opens: a fresh read of that config's group where it has a value, else the config's stored policy, else the metadata
-  document's documented settings for its family (its per-family `image`, `startup_probe` and `readiness_probe`). A
-  blank or whitespace-only value counts as absent, so a field saved empty cannot hide the one behind it. The window's saved state names the config it was last on, so that config's policy and
-  checkpoints are what the page shows even when the store's active config differs; there is one policy per config, no window-wide copy.
+  The page fills all twelve probe fields in this order: a fresh read of the
+  selected config's group where it has a value, else the config's stored policy,
+  else the metadata document's per-family settings. A blank or whitespace-only
+  value counts as absent, so a field saved empty cannot hide the one behind it.
+  Selecting a config re-reads its group with the same GET the button uses. The
+  read fills the fields only and never rewrites a stored record; a failed read
+  leaves the fields standing. There is one policy per config, and the saved
+  state names the config the window was last on.
 
   **Vast.ai**. **Vast.ai instances**: the vast.ai instances a profile may render on. Type one
   address (`http://1.2.3.4:31234`, or several comma-separated), pick the **Image** the instance

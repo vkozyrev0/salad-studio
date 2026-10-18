@@ -7,8 +7,9 @@ If a slot is empty, copy from default storage:
 - huggingface  ``~/.config/huggingface/token``
 - civitai      ``~/.config/civitai/token``
 - deepseek     ``~/.config/deepseek/key``, else ``DEEPSEEK_API_KEY``
-- vast         no provider convention: the local store is its only home, and the
-  config page's Vast.ai instances section reads it from there
+- vast         no standard provider file; ``~/.config/vast/key`` is read when
+  the local store is empty, and the config page's Vast.ai instances section
+  reads the store
 
 A kind listed in ``TOKEN_ENV_VARS`` also reads its key from that environment
 variable when no file has one. The environment value is used as-is and is

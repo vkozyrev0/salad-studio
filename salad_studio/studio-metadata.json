@@ -138,6 +138,7 @@
       "Do not enumerate defects or count limbs, and avoid intertwined, tangled and fused wording, conflicting arm verbs and ultra-tight crops. Keep the figures large in frame.",
       "The seed dominates the plate, roughly 2 in 7 acceptable on a settled prompt, so change the wording the reported defect actually needs and do not claim that wording alone will fix it."
     ],
-    "reply_contract": "Reply with ONLY a JSON object of the form {\"issue\": \"what is wrong with the image, or an empty string when none was given\", \"positive\": \"...\", \"negative\": \"...\"} and no other text."
+    "reply_contract": "Reply with ONLY a JSON object of the form {\"issue\": \"what is wrong with the image, or an empty string when none was given\", \"positive\": \"...\", \"negative\": \"...\"} and no other text.",
+    "provenance": "The Klein anatomy rules come from docs/workflow/21-klein-image-handoff.md section 9 (the two-body prompt playbook), recorded on 2026-09-23."
   }
 }

@@ -83,7 +83,7 @@ Model Flux2 prepared for dynamic VRAM loading. 8658MB Staged. 112 patches
 attached. Force pre-loaded 80 weights      (measured 2026-09-22)
 ```
 
-A 3 s render becomes 240–576 s, and every one of them 524s. `prefetch.py` takes a
+A 3 s render becomes 239–576 s, and every one of them 524s. `prefetch.py` takes a
 build-time `KLEIN_UNET_SET` so each image ships only its own unets
 (`prefetch6-klein` = base + distilled, `prefetch6-snofs` = SNOFS).
 
@@ -160,7 +160,7 @@ Measured dead ends. Do not retry these.
 | HTTP **521** on `/health` and `/ready` | Cloudflare edge up, replica origin down or being reallocated. Salad's API still reports the group `running` and the instance `ready`. | Wait. Do not retry the render. |
 | HTTP **524** on `/prompt` | Response cut at the gateway's ~100 s read window. The job continues server-side, so resubmitting the same graph usually returns the cached plate in ~2 s. | Resubmit once, or reduce the work. |
 | `comfyui-api` **hangs on `/prompt`** while still answering `/ready` 200 | Observed after ~8 sequential renders: Comfy logs nothing for new requests and the client times out. | Reallocate the instance. Keep batches modest; never trust `/ready` alone. |
-| 3 s render becomes 240–576 s | Two unet families resident in one group (§2). | Route by unet family. |
+| 3 s render becomes 239–576 s | Two unet families resident in one group (§2). | Route by unet family. |
 | Every render fails with `lora_name` errors | A LoRA URL the replica cannot fetch, usually a gated Civitai file with no `?token=`. | Studio appends it at POST; check the Logs tab's `loras:` line. |
 
 **Graph-level traps**
@@ -301,7 +301,7 @@ That file is canonical for the prompt text; this doc explains what the entries h
 
 Everything before tonight produced **zero** acceptable two-body plates, 22 judged, none good, and the cause was misdiagnosed four times
 (LoRA stack, LoRA download, prompt enumeration, prompt length). Two things were actually wrong, and neither was the wording: **three
-unets in one container group thrashed VRAM**, turning 3-second renders into 240–576 s no gateway would wait for (fixed by routing one
+unets in one container group thrashed VRAM**, turning 3-second renders into 239–576 s no gateway would wait for (fixed by routing one
 unet family per group, doc 22 §9, its §1.1); and a **template shipped as a prompt** — `prompt_snofs_distilled_v12.json` carried the literal
 `REPLACE_THIS_PROMPT`, so a "successful" 0.9 s render was a picture of that word. With both fixed, renders are **1–4 s** and acceptable
 plates arrive at roughly **2 in 7 seeds**; the work now is **collecting which prompts work and knowing that selection, not wording, is what

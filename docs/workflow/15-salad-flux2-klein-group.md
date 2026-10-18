@@ -219,7 +219,7 @@ Full runbook: [doc 23 §1–§3](23-salad-container-group-deployment.md) — acc
 three `~/.config/` tokens), build, portal fields and wait-for-Ready; the short form is
 [`salad_klein/README.md`](../../salad_klein/README.md). Leave loganberry running only if you still need Flux.1 probes.
 
-### 2. Optional local API check (no GPU)
+### 1. Optional local API check (no GPU)
 
 Without a local NVIDIA GPU you can still confirm the image starts far enough to print Comfy's boot log. A
 24 GB local card adds `--gpus all -p 8188:8188` to the `docker run` below:
@@ -234,11 +234,11 @@ Expect a long first download or a CUDA error; either is fine for this box. Then 
 until 200, and POST `prompt_liked_style.json` at `/prompt`. `/ready` going 200 is a **Salad 4090** check, not
 this laptop.
 
-### 3. Push
+### 2. Push
 
 `docker login`, then `docker push` both tags built above: [doc 23 §1.2](23-salad-container-group-deployment.md).
 
-### 6. Smoke the liked stack
+### 3. Smoke the liked stack
 
 The gateway file for this group is `~/.config/salad/gateway-klein`, never the Flux.1 `gateway` file (doc 23 §3).
 
@@ -257,7 +257,7 @@ Decode `.images[0]` to a JPEG. Trigger words in the positive prompt: `ArsMJStyle
 Euler, 832×1216; public CivitAI meta on 135504982 is hidden. Cloudflare gateway timeout is still **~100 s**
 (doc 21 §5): a 20-step 832×1216 Klein on a 4090 should fit, and if it 524s, drop steps on the first smoke.
 
-### 7. After it works
+### 4. After it works
 
 - Scale replicas only if you will actually queue jobs.
 - Do not load Flux.1 / Krea / SDXL checkpoints into this image. Keep `salad_PAUSE.txt` and keep `salad_catalog_faces.py` off this group until Klein is an explicit **chosen** house in doc 14 (freeze: [doc 14 §3](14-salad-comfy-live-findings.md)).

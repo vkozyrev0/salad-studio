@@ -90,7 +90,7 @@ What either image is, inside:
 | Salad wrapper | `comfyui-api` on port **3000**: `/health`, `/ready`, and `POST /prompt` answering `images[]` as base64 JPEG (`convert_output`) |
 | ENTRYPOINT | `python /prefetch.py` — parallel weight download, then `exec ./comfyui-api` |
 | Custom nodes | `rgthree-comfy` (Image Comparer, Power Lora Loader) at the pinned commit |
-| Weights | none in any layer: the first boot fetches the set this tag was built for (~10 GB+) |
+| Weights | none in any layer: the first boot fetches the set this tag was built for (18 GB for `snofs`, 28 GB for `klein`) |
 | Size | ~12 GB image; a new replica re-downloads, because node storage is ephemeral |
 
 Both tags are interchangeable as a container **image**: the Config page's

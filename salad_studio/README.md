@@ -22,7 +22,7 @@ each side.
   target, and the tab is an instance list, not a second engine switch.
   **Checkpoints this profile serves**: filename or label, **Add**,
   **Remove selected**; a list may span families (the image must carry all), and
-  listing a checkpoint routes it. Every profile is probed.
+  listing a checkpoint routes it.
 
   **Images.** **Container images** lists deployable images and host needs from
   `routing.families.<family>.deployment` (doc 23 §1.2). **Image** picks one.
@@ -172,14 +172,10 @@ each side.
   Civitai tokens stripped from LoRA URLs. The table shows Added, Short name,
   Description, Prompt, Graph, and an empty state.
 - **Prompt Assist**. **Help (DeepSeek)** uses the DeepSeek API; **Help (local)**
-  an OpenAI-compatible server you run, LM Studio by default. The top row mirrors
-  the Prompt Editor's **positive** and **negative** prompt (read-only, refreshed
-  on open or **Refresh from Prompt Editor**); the second holds the **adjusted**
-  pair you edit. **Image issue / problem** is the **highest priority**
-  instruction: the rewrite targets that defect, and the negative names it.
-  **Send the latest generated image** attaches the newest plate from
-  `art/salad_studio/`, downscaled to 1024 px. A press waits for the **whole**
-  answer. A reply cut at the token limit (`finish_reason: "length"`) is asked
+  an OpenAI-compatible server you run, LM Studio by default. **Image issue /
+  problem** is the **highest priority** instruction. **Send the latest generated
+  image** attaches the newest plate from `art/salad_studio/`, downscaled to 1024
+  px. A reply cut at the token limit (`finish_reason: "length"`) is asked
   for again and stitched on, up to `ai_helper.CONTINUE_ATTEMPTS` (the Logs tab
   reports the rounds). A trace that spent the budget with nothing written is
   answered by a demand for the JSON. A body that streams despite
@@ -209,13 +205,13 @@ each side.
   (`deepseek-flash`); **Help (local)** uses the server-reported model.
 - **Prompt History**. The full request JSON, with a prompt column and a Graph
   column. A successful Generate writes a 48×48 thumbnail in the first column.
-  Double-click restores JSON and prompt. Explicit empty state.
+  Double-click restores JSON and prompt. Empty state.
 - **Queue**. From `salad_queue`'s records: one row per request with **Profile**,
   **State** (**waiting**, **in progress**, **done**, **failed**, **cancelled**),
   **Attempts**, **Last status**, **Reason**, **Request** (gateway host and POST
   size, never a token) and **Finished**. Rows refresh on
   the 15 s tick and every queue event. **A finished request stays four hours**
-  (`salad_queue.FINISHED_RETENTION_S`), including after a reopen: the queue
+  (`salad_queue.FINISHED_RETENTION_S`): the queue
   writes its row (id, profile, state, status, reason, finish time) beside its
   container record in `~/.config/salad/studio-queue.json` and drops it when
   older, so the next request keeps the id numbering and a kept row is never
@@ -251,18 +247,16 @@ each side.
   dispatch. When a profile's last request finishes, the queue **stops** its
   group after `queue.idle_stop_s` idle (3600 seconds, one hour, by default),
   from the 15 s tick. A profile with a request queued or in flight is never
-  stopped; a stopped container leaves the idle set so a second check cannot stop
-  it twice; a rejected stop is retried only after another full timeout. The
-  containers the app owns, and when each last had work, are written to
-  `~/.config/salad/studio-queue.json`, so a reopen does not forget a container:
-  the idle hour still arrives and the first tick past it asks for the stop. The
-  app stops only containers it may stop, through the record's own
-  `started_by_app`: a record that cannot say the app started that container is
-  dropped at load with a log line and left running, so opening Studio never
-  shuts down a container you started by hand. The status probe may only
-  **follow** a container the record already owns (`SaladQueue.refresh`), never
-  claim one; a dispatched request claims its container for that session only,
-  and the check runs off the Tk thread.
+  stopped; a stopped container leaves the idle set. A rejected stop is retried
+  only after another full timeout. The containers the app owns are written to
+  `~/.config/salad/studio-queue.json`, so a reopen does not forget a container.
+  The app stops only containers it may stop, through the record's own
+  `started_by_app`; a record that cannot say the app started it is dropped at
+  load with a log line and left running, so opening Studio never shuts down a
+  container you started by hand. The status probe may only **follow** a
+  container the record already owns (`SaladQueue.refresh`); a dispatched request
+  claims its container for that session only, and the check runs off the Tk
+  thread.
 
 Klein group, prefetch image, Civitai-vs-Comfy quality, and startup probes:
 [doc 15](../docs/workflow/15-salad-flux2-klein-group.md).
@@ -279,26 +273,20 @@ switch),
 ## Layers
 
 `app.py` owns the window, tab wiring and thread starts; no non-UI module loads
-`tkinter`. `tests/test_layers.py` drives one real call per non-UI layer in a
-subprocess.
+`tkinter`. `tests/test_layers.py` drives one real call per non-UI layer.
 
-| Layer | Modules | Caller gets |
-|---|---|---|
-| UI | `app.py`, `__main__.py`, `graph_view.py`, `theme.py`, `ui_state.py`, `history_strip.py`, `json_highlight.py` | window, tabs, graph pane |
-| Import | `comfy_import.py`, `civitai_verify.py`, `request_json.py` | a graph from a Civitai page, workflow, or knobs |
-| Persistence | `tokens.py`, `prompt_history.py`, `prompt_catalog.py`, `lora_store.py`, `profiles.py`, `hostings.py`, `studio_meta.py` | tokens, prompts, configs, LoRAs, model info, hosting, metadata |
-| Logging | `studio_log.py` | redacted log lines, HTTP failure explanation |
-| Salad communication | `generator.py`, `salad_status.py`, `salad_queue.py`, `salad_gen.py` (repo root) | a routed, queued render, its plate, lifecycle |
-| Vast.ai communication | `vast.py` | instance list, endpoints, stored list, render POST |
-| Image deployment | `image_deploy.py` | tag, ports, environment, deploy commands |
-| AI communication | `ai_helper.py`, `ref_check.py` | Prompt Assist request and parsed reply |
-
-Routing is `profiles.plan_route`; the POST is
-`generator.generate_from_payload` through `salad_queue`.
+| Layer | Modules |
+|---|---|
+| UI | `app.py`, `__main__.py`, `graph_view.py`, `theme.py`, `ui_state.py`, `history_strip.py`, `json_highlight.py` |
+| Import | `comfy_import.py`, `civitai_verify.py`, `request_json.py` |
+| Persistence | `tokens.py`, `prompt_history.py`, `prompt_catalog.py`, `lora_store.py`, `profiles.py`, `hostings.py`, `studio_meta.py` |
+| Logging | `studio_log.py` |
+| Salad communication | `generator.py`, `salad_status.py`, `salad_queue.py`, `salad_gen.py` (repo root) |
+| Vast.ai communication | `vast.py` |
+| Image deployment | `image_deploy.py` |
+| AI communication | `ai_helper.py`, `ref_check.py` |
 
 ### Metadata document
-
-Data, not code:
 
 | Path | Role |
 |---|---|
@@ -308,15 +296,12 @@ Data, not code:
 `studio_meta.py` re-reads when the mtime moves; a broken user document falls
 back to the shipped one (`error` names the reason).
 
-- `routing.families`: each unet **family**'s `unets` (seed list and exact match
-  names), `markers`, `image` (policy-image seed and fallback).
-  `startup_probe` / `readiness_probe`: six settings each (`path`, `port`,
-  `initial_delay_seconds`, `period_seconds`, `timeout_seconds`,
-  `failure_threshold`). `deployment`: `context`, `base_image`, `build_arg`
-  (unet set), `ports` (`api` 3000, `comfy` 8188), `env` (Tokens `token` slot or
-  literal `value`, with `note`), `gpu`, `disk_gb`, `vcpu`, `memory_gb`;
-  **Container images** renders it. Each profile's `checkpoints` list (on
-  **Config**) is the routing list: a checkpoint in no profile, or in two, is
+- `routing.families`: each unet **family**'s `unets`, `markers`, and `image`
+  (policy-image seed and fallback). `startup_probe` / `readiness_probe`: the six
+  probe settings. `deployment`: `context`, `base_image`, `build_arg`, `ports`
+  (`api` 3000, `comfy` 8188), `env`, `gpu`, `disk_gb`, `vcpu`, `memory_gb`;
+  **Container images** renders it. Each profile's `checkpoints` list is the
+  routing list: a checkpoint in no profile, or in two, is
   refused with a reason; one spanning two families routes with a warning; an
   unclassified one is its own family.
 - `queue.idle_stop_s`: idle seconds before a stop (3600 default); `0`, a
@@ -340,21 +325,18 @@ python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```
 
-Each test module puts the package directory and the repo root on `sys.path`, so
-the first two run from the repo root; the third runs in `salad_klein/`.
+Run from the repo root; the third command runs in `salad_klein/`.
 
 ## Container groups
 
 Building, creating a group, and calling the control-plane API or a running
 container are in
 [doc 23](../docs/workflow/23-salad-container-group-deployment.md).
-`salad_status.py` is its client; the Config policy section is the UI over it
-(image PATCH, probes, GPU classes, US-only, Reallocate).
+`salad_status.py` is its client.
 
 ## Prompt graph pane: JointJS in WebView2
 
-JointJS (`@joint/core` 4.2.5) in a tkwry WebView2 child, with manhattan wires
-that route around cards; cache in `%LOCALAPPDATA%\SaladStudio\WebView2`. **Open
-in browser** loads the same HTML; **Open as Comfy** opens LiteGraph. Tests:
-`test_graph_view.py` class `JointGraphExport`. See
-[the decision record](../docs/history/65-salad-studio-prompt-graph-decision-2026-10-17.md).
+JointJS (`@joint/core` 4.2.5) in a tkwry WebView2 child; cache in
+`%LOCALAPPDATA%\SaladStudio\WebView2`. **Open in browser** loads the same HTML;
+**Open as Comfy** opens LiteGraph. Tests: `test_graph_view.py` class
+`JointGraphExport`. [Decision record](../docs/history/65-salad-studio-prompt-graph-decision-2026-10-17.md).

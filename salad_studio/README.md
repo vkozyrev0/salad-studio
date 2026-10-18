@@ -85,10 +85,14 @@ the left and right.
   **Vast.ai**. **Vast.ai instances**: the vast.ai instances a profile may render on.
   The list holds **one or more** addresses: type an address (`http://1.2.3.4:31234`, or
   several comma-separated), pick the **Image** the instance runs (a tag from **Container images**)
-  and press **Add instance**; **Fetch instances from Vast.ai** lists the account's own machines with
-  the stored key — the Bearer call to `https://console.vast.ai/api/v1/instances/` — and adds the
-  ones that publish a ComfyUI port (8188). Selecting a row points Generate at that instance (the row
-  is marked), **Set image for selected** records what a fetched row runs, **New profile for this
+  and press **Add instance**; **Fetch instances from Vast.ai** reads the account's own machines with
+  the stored key — the unfiltered Bearer call to `https://console.vast.ai/api/v1/instances/` — and
+  reconciles the whole list. A record that maps no ComfyUI port (loading, stopped, or another image)
+  is still a row: its Address column shows `#<id>` and its State column says why. An id-bearing row
+  the account no longer lists becomes **destroyed**, keeps its id and history, and loses its address;
+  a truncated listing marks nothing destroyed. Selecting a row that has an endpoint points Generate
+  at that instance (the row is marked); a row with no endpoint cannot be the target and says so.
+  **Set image for selected** records what a row runs, **New profile for this
   instance** creates a profile named for it with the target and the image's checkpoint family already
   set, **Remove selected** drops one, and **Save list** writes them to
   `~/.config/salad/studio-vast.json`, so nothing about a vast account lands in the repo. **Rent a machine**
@@ -99,10 +103,11 @@ the left and right.
   the stored key to `POST https://console.vast.ai/api/v0/bundles/` ordered by
   `dlperf_per_dphtotal` descending, then the table re-sorts by images per dollar (`dlperf` divided by
   $/hr), then the GPU preference, then price. Select a row and press **Create instance on selected
-  offer**: one `PUT` to that offer's ask, with the image and optional label from the row above, and
-  the new instance joins the list and becomes the active target once its endpoint maps. An instance
-  that was created but has not mapped an endpoint is kept as pending, and a second rent is refused
-  until **Fetch instances from Vast.ai** sees it. The key authenticates the vast.ai control API only and is never sent to
+  offer**: one `PUT` to that offer's ask, with the image and optional label from the row above. The
+  contract appears immediately as a **creating** row, and **Fetch instances from Vast.ai** promotes
+  it to the active target once its ComfyUI port maps. There is no separate pending slot. A vast-mode
+  profile that held a destroyed instance's address is repointed at the new active endpoint (or
+  cleared), so Generate refuses instead of POSTing to a dead host. The key authenticates the vast.ai control API only and is never sent to
   an instance; a render is queued on the profile's line, like a Salad render, and POSTs the same body
   to the instance's own `/prompt`, so the plate lands in the gallery and the prompt history like any
   other. Both answers an instance can give are handled: a Salad-style wrapper (port **3000**) answers
@@ -451,7 +456,7 @@ This folder was moved out of the Eldermark repo, so the paths that used to be re
 Three test commands, and the later ones are not part of the first:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1191 tests, ~15-30 min
+python -m unittest discover -s tests -p "test_*.py"    # 1215 tests, ~15-30 min
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```

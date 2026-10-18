@@ -397,9 +397,24 @@ An instance that is still listed is used as-is. A missing one is replaced, the
 new row becomes the active target, and the press reports the new instance
 instead of POSTing: the first boot still has to pull the image and prefetch the
 weights, so Generate again when `/ready` is green. **Replace if destroyed now**
-runs the same check and creation without waiting for a press. A created contract
-that has not mapped an endpoint is stored as pending, and a second rent waits
-for **Fetch instances from Vast.ai** to see it.
+runs the same check and creation without waiting for a press; it acts on the
+row selected in the Instances table, so a destroyed row (which has no address
+and is never the active target) can be replaced too.
+
+A row is an instance, not an endpoint. **Fetch instances from Vast.ai** reads
+the unfiltered `/api/v1/instances/` records and reconciles the stored list:
+
+- a record that maps no ComfyUI port is still a row, showing its real state
+  (`loading`, `stopped`, …) with `#<id>` in the Address column;
+- an id-bearing row absent from a complete listing becomes `destroyed`, keeps
+  its id and image, and loses its address; a truncated listing destroys nothing;
+- the endpoint-less row a create left behind becomes the active target when its
+  ComfyUI port finally maps, and a vast-mode profile that held a gone address
+  is repointed at the new active endpoint or cleared.
+
+A created contract appears as a `creating` row immediately, so the Instances
+table shows the new machine before it has an address. There is no separate
+`pending` slot any more.
 
 ---
 

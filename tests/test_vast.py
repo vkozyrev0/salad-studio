@@ -1006,9 +1006,17 @@ class VastTabAndGenerate(unittest.TestCase):
         rows = [app.vast_tree.item(i, "values") for i in app.vast_tree.get_children()]
         self.assertEqual(
             [row[2] for row in rows],
-            ["http://203.0.113.9:31234", "http://198.51.100.7:40111"],
+            ["http://203.0.113.9:31234", "http://198.51.100.7:40111", "#333"],
+            "the stopped record is a row too; it just has no address",
         )
+        self.assertEqual(rows[2][4], "exited")
         self.assertEqual(rows[0][1], "klein-4090", "the label column shows the vast label")
+        self.assertIsNone(
+            app._vast_active(),
+            "Fetch does not promote a row it did not create; the user selects one",
+        )
+        app.vast_tree.selection_set(app.vast_tree.get_children()[0])
+        app._on_vast_select()
         self.assertEqual(app._vast_active()["endpoint"], "http://203.0.113.9:31234")
 
     def test_fetch_reconciles_the_evidence_state_in_a_hidden_window(self) -> None:

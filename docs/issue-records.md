@@ -2,7 +2,7 @@
 
 This is the one record of the studio's six issue passes. Each entry names the artifact, what was wrong, the measured drive, the fix or resolution, the check that keeps it fixed, and its status.
 
-The six dated files this consolidates, all removed on 2026-10-17: `docs/top-5-issues-2026-10-14.md`, `docs/top-5-issues-2026-10-15.md`, `docs/issue-sweep-2026-10-15.md`, `docs/issue-sweep-2026-10-15b.md`, `docs/issue-sweep-2026-10-16.md`, and `docs/issue-sweep-2026-10-16b.md`.
+The six dated files this consolidates, all removed when this record was consolidated on 2026-10-16: `docs/top-5-issues-2026-10-14.md`, `docs/top-5-issues-2026-10-15.md`, `docs/issue-sweep-2026-10-15.md`, `docs/issue-sweep-2026-10-15b.md`, `docs/issue-sweep-2026-10-16.md`, and `docs/issue-sweep-2026-10-16b.md`.
 
 Severity is the highest rule that applied: a red suite or a shipped break; the app exposing, losing, or falsifying the user's work; a documented claim a reader acts on and fails; a control or document a reader cannot reach. Ties break by how many surfaces the defect reaches.
 

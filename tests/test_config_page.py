@@ -1077,8 +1077,8 @@ class ConfigPage(unittest.TestCase):
             "a callback that could not be scheduled must release the create lock",
         )
 
-    def test_a_created_instance_without_an_endpoint_is_remembered(self) -> None:
-        """A contract that has not mapped an endpoint must not be created again."""
+    def test_a_created_instance_without_an_endpoint_is_a_creating_row(self) -> None:
+        """The contract is a durable row, not a one-slot pending shadow."""
         app = self.app
         app._vast_create_busy = True
         app._apply_vast_rent(
@@ -1093,8 +1093,15 @@ class ConfigPage(unittest.TestCase):
             None,
         )
         self.assertFalse(app._vast_create_busy)
-        self.assertEqual(app._vast_doc["pending"]["contract"], 777)
-        self.assertEqual(vast.load_doc()["pending"]["contract"], 777)
+        row = app._vast_doc["instances"][0]
+        self.assertEqual(row["id"], 777)
+        self.assertEqual(row["endpoint"], "")
+        self.assertEqual(row["state"], "creating")
+        self.assertEqual(row["label"], "salad-studio-klein")
+        self.assertEqual(row["image"], "docker.io/example/klein:tag")
+        self.assertEqual(app._vast_doc["pending"], {})
+        self.assertEqual(vast.load_doc()["pending"], {})
+        self.assertEqual(vast.load_doc()["instances"][0]["state"], "creating")
         self.assertIn("not mapped", app.status.get())
 
     # -- the rent panel --------------------------------------------------
@@ -1225,7 +1232,7 @@ class ConfigPage(unittest.TestCase):
             profiles.load_all()[name].gateway, "http://203.0.113.55:40111"
         )
 
-    def test_an_unmapped_rent_is_pending_and_a_second_rent_is_refused(self) -> None:
+    def test_an_unmapped_rent_adds_a_creating_row_immediately(self) -> None:
         app = self.app
         tok.write_token("vast", "vast-key")
         app.var_vast_image.set("docker.io/example/klein:tag")
@@ -1244,11 +1251,12 @@ class ConfigPage(unittest.TestCase):
         ), mock.patch("salad_studio.app.threading.Thread", _Inline):
             app._on_vast_rent()
             self.assertTrue(_pump(app, lambda: not app._vast_create_busy))
-        self.assertEqual(app._vast_doc["pending"]["contract"], 777)
-        self.assertEqual(vast.load_doc()["pending"]["contract"], 777)
-        with mock.patch.object(vast, "rent_offer") as second:
-            app._on_vast_rent()
-        self.assertFalse(second.called, "a pending contract blocks a second rent")
+        values = app.vast_tree.item("777", "values")
+        self.assertEqual(values[2], "#777", "the row appears before its endpoint does")
+        self.assertEqual(values[4], "creating")
+        stored = vast.load_doc()["instances"]
+        self.assertEqual([(row["id"], row["state"]) for row in stored], [(777, "creating")])
+        self.assertEqual(vast.load_doc()["pending"], {})
         self.assertIn("has not mapped", app.status.get())
 
     def test_a_failed_search_is_reported_on_the_section_the_line_and_the_logs(
@@ -1316,30 +1324,42 @@ class ConfigPage(unittest.TestCase):
             held.target()
             self.assertTrue(_pump(app, lambda: not app._vast_create_busy))
 
-    def test_a_fetch_that_maps_the_pending_contract_clears_it(self) -> None:
+    def test_a_fetch_that_maps_the_creating_row_promotes_it(self) -> None:
         app = self.app
         doc = dict(app._vast_doc)
-        doc["pending"] = {
-            "contract": 777,
-            "label": "salad-studio-42",
-            "image": "docker.io/example/klein:tag",
-        }
+        doc["instances"] = [
+            {
+                "id": 777,
+                "endpoint": "",
+                "label": "salad-studio-42",
+                "gpu": "RTX 5090",
+                "state": "creating",
+                "image": "docker.io/example/klein:tag",
+            }
+        ]
+        doc["active"] = ""
         app._vast_doc = doc
         app._apply_vast_fetch(
             {
                 "status": 200,
                 "instances": [
                     {
-                        "endpoint": "http://203.0.113.77:40111",
-                        "label": "salad-studio-42",
                         "id": 777,
-                        "gpu": "RTX 5090",
-                        "state": "running",
+                        "label": "salad-studio-42",
+                        "gpu_name": "RTX 5090",
+                        "actual_status": "running",
+                        "public_ipaddr": "203.0.113.77",
+                        "ports": {"8188/tcp": [{"HostPort": 40111}]},
                     }
                 ],
                 "error": "",
             }
         )
+        row = app._vast_doc["instances"][0]
+        self.assertEqual(row["endpoint"], "http://203.0.113.77:40111")
+        self.assertEqual(row["state"], "running")
+        self.assertEqual(app._vast_doc["active"], "http://203.0.113.77:40111")
+        self.assertEqual(row["image"], "docker.io/example/klein:tag")
         self.assertEqual(app._vast_doc["pending"], {})
         self.assertEqual(vast.load_doc()["pending"], {})
 

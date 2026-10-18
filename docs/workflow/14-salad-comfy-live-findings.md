@@ -9,7 +9,7 @@
 > file's old "RESEARCH / no pods / live T2I is banana-pro only" banner is
 > **stale** for Salad: a Comfy group is deployed and was used for probes.
 >
-> **Mass catalog freeze** — see §3 for the rules and the stop condition.
+> **Mass catalog freeze**. See §3 for the rules and the stop condition.
 
 Sex in the sim is **18+ only**. Infant/child plates are non-sexual DNA
 portraits. Salad's container does **not** 422 those infant DNA plates
@@ -58,92 +58,41 @@ HOUSE for Flux faces: photoreal DSLR 85mm string **first**, then `Portrait of a 
 
 ## 2. Probe outcomes by kind
 
-**Chosen model for each kind: TBD.** The freeze exists *until* those four
-picks are written here as chosen, not merely "working in a probe."
+**Chosen model for each kind: TBD.** The freeze exists *until* those four picks are written here as chosen, not merely "working in a probe."
 
-### Faces
-
-Working photoreal house on **this** pod: **Flux.1-dev fp8 + UltraRealPhoto LoRA**
-(Civitai **796382**, version **1026423**, strength ~0.65). Age×sex probes:
-`art/salad_probe_ultrareal_{sex}_{stage}.jpg`.
-
-| Tried | Civitai | Result | Re-download? |
-|---|---|---|---|
-| Flux-dev fp8 (recipe) | n/a (baked `flux1-dev-fp8.safetensors`) | Photoreal HOUSE after prompt-order fix; infants OK; no 422 | Keep; already on pod |
-| UltraRealPhoto LoRA | **796382** @ 1026423 | **Working photoreal house** on Flux-dev | No need to re-pull if cached |
-| UltraReal Fine-Tune ckpt | **978314** @ 1413133 fp8 | Downloaded; **OOM** as second ~12 GB Flux | **Do not re-download** |
-| Stock Flux Dev (Civitai) | **618692** @ **691639** | Same family as the recipe (fp32 16–23 GB). Not a new look | **Do not re-download** |
-| Golden Hour (Illustrious) | **2433139** @ 3302765 | Semi-real illustration, sparkle, age collapse, androgynous males | Do not use as face house |
-| PhotoStyle Sean Archer LoRA | **1632416** @ 2548590 (Flux.1 D only) | Glam female portraits; **male plates are women**; infants are toddlers | Not a DNA house |
-| Art Nouveau LoRA | **562604** | MJ/Mucha **style** LoRA, not a face model. Flux variant exists (~18 MB) | **Do not use as face house** |
-| KreaKult LoRA | **2758431** (Krea 2 only) | Silent no-op on Flux-dev | **Do not re-download on this Flux pod** |
-| FasciumKROMA ckpt | **2888019** (Krea 2 ~12.5 GB) | Cannot load; would OOM even if forced | **Do not re-download on this Flux pod** |
-
-### Bodies
-
-Catalog spec (not yet met as a chosen house): front-facing, collarbone–mid-shin
-**or** full figure head-to-feet if that is the signed crop; male = male;
-pregnant bump; magenta; cream linen, **not** green gowns / back views.
-
-| Tried | Civitai | Result | Re-download? |
-|---|---|---|---|
-| Golden Hour | **2433139** | **Failed** front/crop/male: back views, "male" is a woman, half-head + full-leg clip, green dress, interiors | Do not use for body plates |
-| Flux-dev + UltraRealPhoto | **796382** | Front-facing, magenta, males are male, pregnant mid/late bump. **768×1024** still showed heads/feet. **768×1408 full-body** keeps **legs in frame**; identity is **phenotype-only** (not the face plate) | Working probe, not a chosen house |
-| Sean Archer LoRA | **1632416** @ 2548590 | Female glamour/lingerie; male is a woman; pregnant legs cropped | Not a body house |
-
-### Sex (18+ adults only)
-
-| Tried | Civitai | Result | Re-download? |
-|---|---|---|---|
-| Flux-dev fp8 | baked | Adult nudes **without** visible insertion; host does **not** 422 | Wrong checkpoint for explicit plates |
-| Pony Diffusion V6 XL | **257749** @ 290640 | Explicit genitals/insertion; illustrated; `source_pony` = MLP | Illustrated only |
-| WAI-illustrious-SDXL v17 | **827184** @ 2883731 | Explicit, cleanest anatomy of the illustrated set; anime | Illustrated only |
-| Illustrious Realism Enhancer LoRA | **1115090** @ 1253047 | Semi-real 3D on WAI; still not Lustify photoreal | Optional style LoRA |
-| XXMix_9realistic SDXL | **124421** @ 163192 | Public photoreal SDXL; **refused sex** (clothed glamour) | Skip |
-| Lustify V7 GGWP | **573152** / version **2155386** | **Draws explicit adult insertion** (doggy + missionary probes). Civitai **401** without token | Working sex probe; needs token. **Not a chosen house until signed off** |
-| Lustify later (V8–V10) | same 573152 | V10 is **Krea 2**, not SDXL | Do not load V10 on this Flux/SDXL graph |
+| Kind | Tried | Civitai | Result | Re-download? |
+|---|---|---|---|---|
+| Faces | Flux-dev fp8 (recipe) | n/a (baked `flux1-dev-fp8.safetensors`) | Photoreal HOUSE after prompt-order fix; infants OK; no 422 | Keep; already on pod |
+| Faces | UltraRealPhoto LoRA | **796382** @ 1026423 | **Working photoreal house** on Flux-dev | No need to re-pull if cached |
+| Faces | UltraReal Fine-Tune ckpt | **978314** @ 1413133 fp8 | Downloaded; **OOM** as second ~12 GB Flux | **Do not re-download** |
+| Faces | Stock Flux Dev (Civitai) | **618692** @ **691639** | Same family as the recipe (fp32 16–23 GB). Not a new look | **Do not re-download** |
+| Faces | Golden Hour (Illustrious) | **2433139** @ 3302765 | Semi-real illustration, sparkle, age collapse, androgynous males | Do not use as face house |
+| Faces | PhotoStyle Sean Archer LoRA | **1632416** @ 2548590 (Flux.1 D only) | Glam female portraits; **male plates are women**; infants are toddlers | Not a DNA house |
+| Faces | Art Nouveau LoRA | **562604** | MJ/Mucha **style** LoRA, not a face model. Flux variant exists (~18 MB) | **Do not use as face house** |
+| Faces | KreaKult LoRA | **2758431** (Krea 2 only) | Silent no-op on Flux-dev | **Do not re-download on this Flux pod** |
+| Faces | FasciumKROMA ckpt | **2888019** (Krea 2 ~12.5 GB) | Cannot load; would OOM even if forced | **Do not re-download on this Flux pod** |
+| Bodies | Golden Hour | **2433139** | **Failed** front/crop/male: back views, "male" is a woman, half-head + full-leg clip, green dress, interiors | Do not use for body plates |
+| Bodies | Flux-dev + UltraRealPhoto | **796382** | Front-facing, magenta, males are male, pregnant mid/late bump. **768×1024** still showed heads/feet. **768×1408 full-body** keeps **legs in frame**; identity is **phenotype-only** (not the face plate) | Working probe, not a chosen house |
+| Bodies | Sean Archer LoRA | **1632416** @ 2548590 | Female glamour/lingerie; male is a woman; pregnant legs cropped | Not a body house |
+| Sex | Flux-dev fp8 | baked | Adult nudes **without** visible insertion; host does **not** 422 | Wrong checkpoint for explicit plates |
+| Sex | Pony Diffusion V6 XL | **257749** @ 290640 | Explicit genitals/insertion; illustrated; `source_pony` = MLP | Illustrated only |
+| Sex | WAI-illustrious-SDXL v17 | **827184** @ 2883731 | Explicit, cleanest anatomy of the illustrated set; anime | Illustrated only |
+| Sex | Illustrious Realism Enhancer LoRA | **1115090** @ 1253047 | Semi-real 3D on WAI; still not Lustify photoreal | Optional style LoRA |
+| Sex | XXMix_9realistic SDXL | **124421** @ 163192 | Public photoreal SDXL; **refused sex** (clothed glamour) | Skip |
+| Sex | Lustify V7 GGWP | **573152** / version **2155386** | **Draws explicit adult insertion** (doggy + missionary probes). Civitai **401** without token | Working sex probe; needs token. **Not a chosen house until signed off** |
+| Sex | Lustify later (V8–V10) | same 573152 | V10 is **Krea 2**, not SDXL | Do not load V10 on this Flux/SDXL graph |
+| Events | Klein 9B probes | `salad_probe_klein.py` | Wedding, funeral, harvest, tavern, storm, birth (non-sexual midwife). Harvest strongest. Painterly landscape, readable scene. Not signed off | Catalog/fal aquarelle path stays until chosen |
 
 Grok Imagine **content-moderated** the same explicit doggy prompt (400). Salad did not.
 
-### Events
-
-**Not a chosen house.** Klein 9B event probes this session
-(`salad_probe_klein.py` → `art/salad_probe_klein_event_*.jpg`):
-wedding, funeral, harvest, tavern, storm, birth (non-sexual midwife).
-Harvest is the strongest. Painterly landscape, readable scene. Not
-signed off as event house. Catalog/fal aquarelle path stays until chosen.
-
 ### Klein 9B probes (flux2-klein group, 2026-09-19)
 
-Gateway `~/.config/salad/gateway-klein`. Graph: UNET 9B-Base fp8 +
-Qwen3-8B CLIP type `flux2` + flux2 VAE + Detail Slider + Impressionism
-Klein9B. **27/27 HTTP 200** in ~4 min. Prefix
-`art/salad_probe_klein_`. Mass catalog still frozen.
-
-| Kind | Files | Notes |
-|---|---|---|
-| Faces | 12 (sex × infants/children/minors/young_adult/adults/elderly) | Impressionist + pack magenta chroma. Adult male is male. Infant reads toddler more than newborn. Some signatures. |
-| Bodies | 6 (sex × front/45/side, adults) | Magenta. Male front is male but cropped above the feet; older than thirties. |
-| Pregnancies | 3 (late front/45/side) | Bump visible. Cropped (not head-to-feet). |
-| Events | 6 | See ### Events. Harvest strongest. |
-
-**Retry** (postfix cream paper / full-figure / newborn / thirties): 27/27 again, pack **magenta chroma still wins** on faces/bodies (compose `#FF00FF`), events stay cream. **Not chosen.**
-
-**Bodies are unusable as catalog paperdolls (2026-09-19, 150-plate
-batch).** Root cause: the catalog body frame is **headless by design**
-(`face_prompt_pack.json` `body_style.frame` = collarbone-to-shin, face
-out of frame; `global_must` = "headless"). Stacking that with
-Impressionism Klein9B + `FULL_FIG` (crown-to-soles) made Klein resolve
-the contradiction as smeared/ghost faces, cropped skulls, white oval
-faces on males, and pregnancy as a brown sphere on the dress. Infants
-stood as toddlers.
-
-A/B `art/salad_probe_klein_bodyfix_*.jpg`: **plain (no LoRA) female
-thirties front is a usable full figure** with a painted face. LoRA
-plates melt. Male plain still blanked the face because the pack still
-said headless.
-
-Rounds 2–3 (`…bodyfix2_*.jpg`, `…bodyfix3_*.jpg`) and the rest of the probe record: `salad_probe_klein.py`.
+- Gateway `~/.config/salad/gateway-klein`. Graph: UNET 9B-Base fp8 + Qwen3-8B CLIP type `flux2` + flux2 VAE + Detail Slider + Impressionism Klein9B. **27/27 HTTP 200** in ~4 min. Prefix `art/salad_probe_klein_`.
+- Kinds: 12 faces (sex × infants/children/minors/young_adult/adults/elderly), 6 bodies (sex × front/45/side, adults), 3 pregnancies (late front/45/side), 6 events. Adult male is male; infant reads toddler; male front is cropped above the feet; pregnancies are cropped.
+- Retry (postfix cream paper / full-figure / newborn / thirties): 27/27 again. Pack **magenta chroma still wins** on faces/bodies (compose `#FF00FF`), events stay cream. **Not chosen.**
+- **Bodies are unusable as catalog paperdolls (2026-09-19, 150-plate batch).** Root cause: the catalog body frame is **headless by design** (`face_prompt_pack.json` `body_style.frame` = collarbone-to-shin, face out of frame; `global_must` = "headless"). Stacking that with Impressionism Klein9B + `FULL_FIG` (crown-to-soles) made Klein resolve the contradiction as smeared/ghost faces, cropped skulls, white oval faces on males, and pregnancy as a brown sphere on the dress. Infants stood as toddlers.
+- A/B `art/salad_probe_klein_bodyfix_*.jpg`: **plain (no LoRA) female thirties front is a usable full figure** with a painted face. LoRA plates melt. Male plain still blanked the face because the pack still said headless.
+- Rounds 2–3 (`…bodyfix2_*.jpg`, `…bodyfix3_*.jpg`) and the rest of the probe record: `salad_probe_klein.py`.
 
 ---
 
@@ -194,15 +143,7 @@ Euler/CFG/steps/seed is **not** a pixel clone: [doc 15 §Matching Civitai](15-sa
 
 ## 4b. Flux.2 Klein, not a drop-in on this Flux.1 group
 
-The live recipe graph is `CheckpointLoaderSimple` (`flux1-dev-fp8.safetensors`) + `FluxGuidance` +
-`EmptySD3LatentImage` + `KSampler`; Klein T2I is a different graph: `UNETLoader` + `CLIPLoader` type
-`flux2` (`qwen_3_8b_fp8mixed`) + `VAELoader` + `EmptyFlux2LatentImage` + `Flux2Scheduler` +
-`SamplerCustomAdvanced`. Liked CivitAI style https://civitai.com/images/135504982 is **Flux.2 Klein
-9B-Base** (**2322332** @ **2612548**) + Klein Detail Slider (**2334190** @ **2625692**) + Impressionism
-Klein9B (**545264** @ **2763568**, trigger `ArsMJStyle, Impressionism`), Euler, 832×1216 — not Flux.1
-Impressionism **545264@755598**. Do **not** POST a Klein graph at the live Flux.1 replica (a second
-~12–17 GB unet next to baked Flux.1 **OOMs** a 24 GB 4090 / Cloudflare **524**). The Klein graph, the
-recipe list and how to build the separate group: [doc 15 §Graph](15-salad-flux2-klein-group.md).
+Klein T2I is a different graph: `UNETLoader` + `CLIPLoader` type `flux2` (`qwen_3_8b_fp8mixed`) + `VAELoader` + `EmptyFlux2LatentImage` + `Flux2Scheduler` + `SamplerCustomAdvanced`. Do **not** POST a Klein graph at the live Flux.1 replica (a second ~12–17 GB unet next to baked Flux.1 **OOMs** a 24 GB 4090 / Cloudflare **524**). The liked recipe is Flux.2 Klein 9B-Base (**2322332** @ **2612548**) + Klein Detail Slider (**2334190** @ **2625692**) + Impressionism Klein9B (**545264** @ **2763568**, trigger `ArsMJStyle, Impressionism`), Euler, 832×1216, not Flux.1 Impressionism **545264@755598**. Graph, recipe list, and the separate group: [doc 21 §2](21-klein-image-handoff.md).
 
 ---
 

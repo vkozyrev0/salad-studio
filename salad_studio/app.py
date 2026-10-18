@@ -315,6 +315,10 @@ class SaladStudio(tk.Tk):
         self._scroll_canvases: dict[tk.Frame, tk.Canvas] = {}
         self._scroll_bodies: dict[tk.Frame, ttk.Frame] = {}
         self._scroll_wheel_page: tk.Frame | None = None
+        # The grid the pointer is over. Tk's class wheel binding follows
+        # keyboard focus, so a widget binding takes the event first and routes
+        # it by pointer instead (see _wheel_tree).
+        self._scroll_wheel_tree: ttk.Treeview | None = None
         self.bind_all("<MouseWheel>", self._on_page_wheel, add="+")
         self.bind_all("<FocusIn>", self._on_page_focus, add="+")
 
@@ -660,6 +664,26 @@ class SaladStudio(tk.Tk):
         if self._scroll_wheel_page is page:
             self._scroll_wheel_page = None
 
+    def _claim_wheel_tree(self, tree) -> None:
+        """The pointer is on ``tree``: the grid owns the wheel while it is there."""
+        self._scroll_wheel_tree = tree
+
+    def _release_wheel_tree(self, tree) -> None:
+        """The pointer left ``tree``: it hands the wheel back, and only its own."""
+        if self._scroll_wheel_tree is tree:
+            self._scroll_wheel_tree = None
+
+    def _wheel_tree(self, tree) -> None:
+        """Route the wheel by pointer instead of by Tk's focus-following class binding.
+
+        A widget binding runs before the class binding. Returning ``"break"``
+        from it disarms the class binding, so the grid under the pointer scrolls
+        and a focused grid elsewhere does not.
+        """
+        tree.bind("<Enter>", lambda _e: self._claim_wheel_tree(tree), add="+")
+        tree.bind("<Leave>", lambda _e: self._release_wheel_tree(tree), add="+")
+        tree.bind("<MouseWheel>", self._on_page_wheel)
+
     def _keep_grid_filling(self, page, tree, columns) -> None:
         """Grow a grid's room-taking columns to fill a page wider than the grid.
 
@@ -725,11 +749,16 @@ class SaladStudio(tk.Tk):
         if steps:
             canvas.yview_scroll(steps, "units")
 
-    def _on_page_wheel(self, event) -> None:
-        """Scroll whichever scrollable page the pointer is over, and no other."""
-        page = self._scroll_wheel_page
-        if page is not None:
-            self._scroll_page(page, event)
+    def _on_page_wheel(self, event) -> str:
+        """Scroll the grid or page the pointer is over, and always consume the event."""
+        steps = int(-getattr(event, "delta", 0) / 120) if getattr(event, "delta", 0) else 0
+        if steps:
+            tree = self._scroll_wheel_tree
+            if tree is not None:
+                tree.yview_scroll(steps, "units")
+            elif self._scroll_wheel_page is not None:
+                self._scroll_page(self._scroll_wheel_page, event)
+        return "break"
 
     def _on_page_focus(self, event=None) -> None:
         """Scroll the page that owns the control taking focus, into view."""
@@ -907,6 +936,7 @@ class SaladStudio(tk.Tk):
         self.checkpoint_tree = ttk.Treeview(
             box, columns=("checkpoint", "family"), show="headings", height=7
         )
+        self._wheel_tree(self.checkpoint_tree)
         for col, heading, width, stretch in (
             ("checkpoint", "Checkpoint", 420, True),
             ("family", "Family", 120, False),
@@ -2180,6 +2210,7 @@ class SaladStudio(tk.Tk):
             box, columns=("use", "label", "endpoint", "image", "state", "gpu"),
             show="headings", height=7,
         )
+        self._wheel_tree(self.vast_tree)
         for col, heading, width, _fill in VAST_GRID_COLUMNS:
             self.vast_tree.heading(col, text=heading)
             self.vast_tree.column(col, width=width, stretch=False, anchor="w")
@@ -2288,6 +2319,7 @@ class SaladStudio(tk.Tk):
             show="headings",
             height=8,
         )
+        self._wheel_tree(self.vast_offer_tree)
         for col, heading, width, _fill in VAST_OFFER_GRID_COLUMNS:
             self.vast_offer_tree.heading(col, text=heading)
             self.vast_offer_tree.column(col, width=width, stretch=False, anchor="w")
@@ -3038,6 +3070,7 @@ class SaladStudio(tk.Tk):
         box.columnconfigure(0, weight=1)
         cols = ("name", "value", "source", "note")
         self.image_env_tree = ttk.Treeview(box, columns=cols, show="headings", height=7)
+        self._wheel_tree(self.image_env_tree)
         for col, heading, width, stretch in (
             ("name", "Variable", 190, False),
             ("value", "Value", 210, False),
@@ -3369,6 +3402,7 @@ class SaladStudio(tk.Tk):
         self.lora_tree = ttk.Treeview(
             body, columns=LORA_COLUMNS, show="headings", height=12
         )
+        self._wheel_tree(self.lora_tree)
         for col, heading, width in (
             ("verified", "Verified", 80),
             ("id", "Id", 200),
@@ -3985,6 +4019,7 @@ class SaladStudio(tk.Tk):
         self.catalog_tree = ttk.Treeview(
             self._catalog, columns=cols, show="headings", height=16
         )
+        self._wheel_tree(self.catalog_tree)
         for col, heading, width, _fill in CATALOG_GRID_COLUMNS:
             self.catalog_tree.heading(col, text=heading)
             self.catalog_tree.column(col, width=width, stretch=False)
@@ -4618,6 +4653,7 @@ class SaladStudio(tk.Tk):
             height=16,
             style="Hist.Treeview",
         )
+        self._wheel_tree(self.prompt_hist_tree)
         self.prompt_hist_tree.heading("#0", text="")
         self.prompt_hist_tree.column("#0", width=56, minwidth=52, stretch=False, anchor="center")
         for col, heading, width, _fill in HISTORY_GRID_COLUMNS:
@@ -4828,6 +4864,7 @@ class SaladStudio(tk.Tk):
         )
         cols = ("id", "profile", "state", "attempts", "status", "reason", "request", "finished")
         self.queue_tree = ttk.Treeview(self._queue, columns=cols, show="headings", height=14)
+        self._wheel_tree(self.queue_tree)
         for col, heading, width, _fill in QUEUE_GRID_COLUMNS:
             self.queue_tree.heading(col, text=heading)
             self.queue_tree.column(col, width=width, stretch=False, anchor="w")

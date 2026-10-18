@@ -839,11 +839,11 @@ def offer_cells(offer: Any) -> dict[str, str]:
     if _num(data.get("dlperf_per_dphtotal")) > 0 or (
         _num(data.get("dlperf")) > 0 and _num(data.get("dph_total")) > 0
     ):
-        value = f"{offer_value(data):g}"
+        value = f"{offer_value(data):.0f}"
     return {
         "gpu": str(data.get("gpu_name") or "").strip(),
         "price": f"${_num(data.get('dph_total')):.3f}" if shown("dph_total") else "",
-        "perf": f"{_num(data.get('dlperf')):g}" if shown("dlperf") else "",
+        "perf": f"{_num(data.get('dlperf')):.0f}" if shown("dlperf") else "",
         "value": value,
         "vram": (
             str(round(_num(data.get("gpu_ram")) / 1024))

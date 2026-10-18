@@ -465,7 +465,7 @@ This folder was moved out of the Eldermark repo, so the paths that used to be re
 Three test commands, and the later ones are not part of the first:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1190 tests, ~15-30 min
+python -m unittest discover -s tests -p "test_*.py"    # 1191 tests, ~15-30 min
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```

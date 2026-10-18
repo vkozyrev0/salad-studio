@@ -334,10 +334,12 @@ the unfiltered `/api/v1/instances/` records and reconciles the stored list:
 - an id-bearing row absent from a complete listing becomes `destroyed`, keeps
   its id and image, and loses its address; a truncated listing destroys nothing;
 - the endpoint-less row a create left behind becomes the active target when its
-  ComfyUI port finally maps, and a vast-mode profile that held a gone address
-  is repointed at the new active endpoint or cleared.
+  ComfyUI port finally maps, unless another instance is already active; a
+  vast-mode profile that held a gone address is repointed at the new active
+  endpoint or cleared.
 
-A created contract appears as a `creating` row immediately. There is no separate `pending` slot any more.
+When the rent returns without a mapped port, the contract appears as a `creating`
+row. There is no separate `pending` slot.
 
 ---
 
@@ -371,7 +373,7 @@ The wrapper answers `GET /health` and `GET /ready` on the mapped host port for c
 
 On **Config**, **Vast.ai**, add the address or press **Fetch instances from Vast.ai**, then select the row (the dot in **Use** marks it). On **Config**, **Profile**, set the target to **Vast.ai instance**, set the URL, and press **Save profile**; **Use the selected instance** fills it from the active row. Press **Generate** and the request queues on the profile's line.
 
-The app derives the endpoint from the mapped ports. It prefers the wrapper on 3000, which resolves Civitai LoRA URLs, and falls back to Comfy on 8188. §5.8 explains why.
+The app derives the endpoint from the mapped ports. It prefers the wrapper on 3000, which resolves Civitai LoRA URLs, and falls back to Comfy on 8188 or 18188, or to the instance's only other non-ssh port. §5.8 explains why.
 
 ---
 

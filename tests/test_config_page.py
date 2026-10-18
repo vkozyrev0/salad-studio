@@ -569,6 +569,51 @@ class ConfigPage(unittest.TestCase):
             "and the config keeps its own stored policy",
         )
 
+    def test_a_vast_profile_never_rechecks_the_salad_group(self) -> None:
+        """A vast target has no Salad group; the switch must not ask Salad for one."""
+        app = self.app
+        prof = profiles.default_profile("vast-test")
+        prof.mode = "vast"
+        prof.gateway = "http://203.0.113.9:31234"
+        profiles.upsert(prof)
+        tok.write_token("salad", "vast-policy-key")
+        calls: list[str] = []
+
+        def _load(gw, key):
+            calls.append(str(gw))
+            return None, "No container group matches this gateway DNS."
+
+        with mock.patch.object(
+            self.app_mod.salad_status, "load_policy", side_effect=_load
+        ), mock.patch("salad_studio.app.threading.Thread", _Inline):
+            self._select(prof.name)
+            _pump(app, lambda: False, 0.5)
+        self.assertNotIn(
+            "http://203.0.113.9:31234", calls, "a vast target has no Salad group to read"
+        )
+        self.assertNotIn(
+            "Policy re-check for 'vast-test'", app.log_text.get("1.0", "end")
+        )
+        self.assertTrue(app.var_pol_image.get(), "the stored policy still fills the fields")
+
+    def test_applying_a_salad_policy_to_a_vast_target_is_refused(self) -> None:
+        """The Apply button must not POST a Salad policy to a vast endpoint."""
+        app = self.app
+        prof = profiles.load_all()["klein"]
+        prof.mode = "vast"
+        prof.gateway = "http://203.0.113.9:31234"
+        profiles.upsert(prof)
+        self._select(prof.name)
+        with mock.patch.object(
+            self.app_mod.salad_status, "apply_policy"
+        ) as apply, mock.patch.object(
+            self.app_mod.messagebox, "showinfo"
+        ) as info:
+            app._apply_salad_policy()
+        self.assertFalse(apply.called, "no Salad policy may go to a vast host")
+        self.assertTrue(info.called, "the refusal says why")
+        self.assertIn("Salad target", app.status.get())
+
     def test_a_new_config_is_seeded_with_the_documents_image(self) -> None:
         """Adding a config stores the metadata document's image for its family."""
         app = self.app
@@ -1077,8 +1122,8 @@ class ConfigPage(unittest.TestCase):
             "a callback that could not be scheduled must release the create lock",
         )
 
-    def test_a_created_instance_without_an_endpoint_is_remembered(self) -> None:
-        """A contract that has not mapped an endpoint must not be created again."""
+    def test_a_created_instance_without_an_endpoint_is_a_creating_row(self) -> None:
+        """The contract is a durable row, not a one-slot pending shadow."""
         app = self.app
         app._vast_create_busy = True
         app._apply_vast_rent(
@@ -1090,11 +1135,17 @@ class ConfigPage(unittest.TestCase):
                 "image": "docker.io/example/klein:tag",
                 "message": "created instance 777; it has not mapped an endpoint yet",
             },
-            None,
         )
         self.assertFalse(app._vast_create_busy)
-        self.assertEqual(app._vast_doc["pending"]["contract"], 777)
-        self.assertEqual(vast.load_doc()["pending"]["contract"], 777)
+        row = app._vast_doc["instances"][0]
+        self.assertEqual(row["id"], 777)
+        self.assertEqual(row["endpoint"], "")
+        self.assertEqual(row["state"], "creating")
+        self.assertEqual(row["label"], "salad-studio-klein")
+        self.assertEqual(row["image"], "docker.io/example/klein:tag")
+        self.assertEqual(app._vast_doc["pending"], {})
+        self.assertEqual(vast.load_doc()["pending"], {})
+        self.assertEqual(vast.load_doc()["instances"][0]["state"], "creating")
         self.assertIn("not mapped", app.status.get())
 
     # -- the rent panel --------------------------------------------------
@@ -1225,7 +1276,7 @@ class ConfigPage(unittest.TestCase):
             profiles.load_all()[name].gateway, "http://203.0.113.55:40111"
         )
 
-    def test_an_unmapped_rent_is_pending_and_a_second_rent_is_refused(self) -> None:
+    def test_an_unmapped_rent_adds_a_creating_row_immediately(self) -> None:
         app = self.app
         tok.write_token("vast", "vast-key")
         app.var_vast_image.set("docker.io/example/klein:tag")
@@ -1244,11 +1295,12 @@ class ConfigPage(unittest.TestCase):
         ), mock.patch("salad_studio.app.threading.Thread", _Inline):
             app._on_vast_rent()
             self.assertTrue(_pump(app, lambda: not app._vast_create_busy))
-        self.assertEqual(app._vast_doc["pending"]["contract"], 777)
-        self.assertEqual(vast.load_doc()["pending"]["contract"], 777)
-        with mock.patch.object(vast, "rent_offer") as second:
-            app._on_vast_rent()
-        self.assertFalse(second.called, "a pending contract blocks a second rent")
+        values = app.vast_tree.item("777", "values")
+        self.assertEqual(values[2], "#777", "the row appears before its endpoint does")
+        self.assertEqual(values[4], "creating")
+        stored = vast.load_doc()["instances"]
+        self.assertEqual([(row["id"], row["state"]) for row in stored], [(777, "creating")])
+        self.assertEqual(vast.load_doc()["pending"], {})
         self.assertIn("has not mapped", app.status.get())
 
     def test_a_failed_search_is_reported_on_the_section_the_line_and_the_logs(
@@ -1316,32 +1368,58 @@ class ConfigPage(unittest.TestCase):
             held.target()
             self.assertTrue(_pump(app, lambda: not app._vast_create_busy))
 
-    def test_a_fetch_that_maps_the_pending_contract_clears_it(self) -> None:
+    def test_a_fetch_that_maps_the_creating_row_promotes_it(self) -> None:
         app = self.app
+        name = app.var_name.get()
+        app.var_profile_mode.set("vast")
+        app._on_profile_mode()
+        prof = profiles.load_all()[name]
+        prof.mode = "vast"
+        prof.gateway = ""
+        profiles.upsert(prof)
+        app.var_gateway.set("")
         doc = dict(app._vast_doc)
-        doc["pending"] = {
-            "contract": 777,
-            "label": "salad-studio-42",
-            "image": "docker.io/example/klein:tag",
-        }
+        doc["instances"] = [
+            {
+                "id": 777,
+                "endpoint": "",
+                "label": "salad-studio-42",
+                "gpu": "RTX 5090",
+                "state": "creating",
+                "image": "docker.io/example/klein:tag",
+            }
+        ]
+        doc["active"] = ""
         app._vast_doc = doc
         app._apply_vast_fetch(
             {
                 "status": 200,
                 "instances": [
                     {
-                        "endpoint": "http://203.0.113.77:40111",
-                        "label": "salad-studio-42",
                         "id": 777,
-                        "gpu": "RTX 5090",
-                        "state": "running",
+                        "label": "salad-studio-42",
+                        "gpu_name": "RTX 5090",
+                        "actual_status": "running",
+                        "public_ipaddr": "203.0.113.77",
+                        "ports": {"8188/tcp": [{"HostPort": 40111}]},
                     }
                 ],
                 "error": "",
             }
         )
+        row = app._vast_doc["instances"][0]
+        self.assertEqual(row["endpoint"], "http://203.0.113.77:40111")
+        self.assertEqual(row["state"], "running")
+        self.assertEqual(app._vast_doc["active"], "http://203.0.113.77:40111")
+        self.assertEqual(row["image"], "docker.io/example/klein:tag")
         self.assertEqual(app._vast_doc["pending"], {})
         self.assertEqual(vast.load_doc()["pending"], {})
+        self.assertEqual(
+            profiles.load_all()[name].gateway,
+            "http://203.0.113.77:40111",
+            "the profile the user is on follows the promoted instance",
+        )
+        self.assertEqual(app.var_gateway.get(), "http://203.0.113.77:40111")
 
     # -- routing and the queue across profiles ----------------------------
     def _generate_with(self, graph_unet: str, form_profile: str) -> dict:

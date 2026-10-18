@@ -1393,6 +1393,56 @@ class LiveFieldSync(unittest.TestCase):
         app._release_wheel(page)
         self.assertTrue(app.bind_all("<MouseWheel>"), "the other page's binding is intact")
 
+    def test_a_claimed_grid_routes_the_wheel_to_the_grid_not_the_page(self) -> None:
+        """The class binding runs before the page's bind_all handler.
+
+        The widget binding must take the event first, so the pointer over the
+        grid scrolls the grid even when the page under it is also claimed; the
+        page moves only once the pointer leaves the grid.
+        """
+        app = self.app
+        page = app._config_section_pages["vast"]
+        canvas = app._scroll_canvases[page]
+        canvas.configure(yscrollincrement=40, scrollregion=(0, 0, 900, 4000))
+        tree = app.vast_tree
+        for index in range(40):
+            tree.insert("", "end", iid=f"row-{index}", values=("",) * 6)
+        tree.yview_moveto(0)
+        app.update_idletasks()
+        app._claim_wheel(page)
+        app._claim_wheel_tree(tree)
+
+        def wheel(delta: int = -120):
+            return app._on_page_wheel(type("E", (), {"delta": delta})())
+
+        self.assertEqual(wheel(), "break", "the handler always consumes the event")
+        app.update_idletasks()
+        self.assertGreater(tree.yview()[0], 0.0, "the grid under the pointer scrolls")
+        self.assertEqual(canvas.yview()[0], 0.0, "the page under it does not")
+
+        app._release_wheel_tree(tree)
+        self.assertEqual(wheel(), "break")
+        app.update_idletasks()
+        self.assertGreater(canvas.yview()[0], 0.0, "the page scrolls once the grid hands it back")
+
+    def test_every_grid_handles_its_own_wheel_event(self) -> None:
+        """No grid may keep Tk's focus-following class wheel binding."""
+        for name in (
+            "vast_tree",
+            "vast_offer_tree",
+            "queue_tree",
+            "lora_tree",
+            "catalog_tree",
+            "prompt_hist_tree",
+            "checkpoint_tree",
+            "image_env_tree",
+        ):
+            with self.subTest(widget=name):
+                self.assertTrue(
+                    getattr(self.app, name).bind("<MouseWheel>"),
+                    f"{name} must claim the wheel by pointer, not focus",
+                )
+
     def test_log_does_not_reread_tokens_once_the_cache_is_warm(self) -> None:
         """M9: log() redaction must not hit the token files per line."""
         app = self.app
@@ -3714,6 +3764,21 @@ class ContentBelowTheFoldIsReachable(unittest.TestCase):
         app.update_idletasks()
         self.assertLessEqual(
             canvas.yview()[0], before, "a control already in view moves nothing"
+        )
+
+    def test_a_focus_event_on_the_page_body_does_not_scroll_it(self) -> None:
+        """Tk fires FocusIn on every ancestor; only the control may be revealed.
+
+        Revealing the body frame scrolls its bottom edge into view, which is the
+        Rent a machine panel below the instance list on the Vast.ai page.
+        """
+        app = self.app
+        page = app._config_section_pages["vast"]
+        body = app._scroll_bodies[page]
+        with mock.patch.object(app, "_reveal") as reveal:
+            app._on_page_focus(type("E", (), {"widget": body})())
+        self.assertFalse(
+            reveal.called, "the page body is a container, not a control taking focus"
         )
 
     # -- the sideways scroll -----------------

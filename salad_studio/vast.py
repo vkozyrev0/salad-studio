@@ -31,12 +31,13 @@ INSTANCES_URL = f"{VAST_API}/instances/"
 # Past that the listing stops and sets ``truncated``: a short list that looks
 # complete is worse than one that says it was cut off.
 MAX_PAGES = 4
-# The container ports a ComfyUI template publishes, most likely first: the
-# vast.ai ComfyUI template serves 8188 (some images 18188), and the Salad images
-# run Comfy on 3000. A request has to reach the host port the instance maps to
-# one of these, which is why the endpoint is derived from the instance record
-# rather than typed in.
-COMFY_PORTS: tuple[int, ...] = (8188, 18188, 3000)
+# The container ports an instance may publish for a render, most useful first.
+# The Salad wrapper on 3000 is the endpoint this app's images answer on: it
+# resolves Civitai LoRA URLs and returns the plate as base64. A native vast.ai
+# ComfyUI template serves 8188 (some images 18188), which is the fallback. A
+# request has to reach the host port the instance maps to one of these, which is
+# why the endpoint is derived from the instance record rather than typed in.
+COMFY_PORTS: tuple[int, ...] = (3000, 8188, 18188)
 # Never a ComfyUI port: ssh is mapped by every template, so it cannot be the one
 # a render should reach.
 SSH_PORTS: tuple[int, ...] = (22, 2222)
@@ -143,12 +144,15 @@ def _host_port(ports: Any, port: int) -> int | None:
 def instance_endpoint(
     instance: dict[str, Any], ports: tuple[int, ...] = COMFY_PORTS
 ) -> str:
-    """The URL ComfyUI on this instance answers on, or "" when it maps none.
+    """The URL this instance's render API answers on, or "" when it maps none.
 
-    The ComfyUI template's own port is preferred, in order. A template that
-    publishes ComfyUI somewhere else is still usable when it maps exactly one
-    other non-ssh port, because that is the only thing a render could reach; a
-    stopped instance maps nothing at all, which is the honest "".
+    The Salad wrapper's port (3000) is preferred when it is mapped: it resolves
+    Civitai LoRA URLs and answers with base64 images, and it serves a graph with
+    no Civitai URL just as well. A native ComfyUI template's 8188 (some images
+    18188) is the fallback. A template that publishes ComfyUI somewhere else is
+    still usable when it maps exactly one other non-ssh port, because that is
+    the only thing a render could reach; a stopped instance maps nothing at all,
+    which is the honest "".
     """
     if not isinstance(instance, dict):
         return ""
@@ -219,34 +223,35 @@ def view_url(endpoint: str, info: dict[str, Any]) -> str:
 
 
 def instance_row(instance: dict[str, Any]) -> dict[str, Any] | None:
-    """One API instance as a stored row, or None when it has no endpoint."""
+    """One API record as a stored row, including one that maps no endpoint.
+
+    A record that exists but has not mapped its ComfyUI port is a real instance:
+    the page shows it as loading rather than hiding it. ``endpoint`` is empty
+    until the port maps, and the API's own state says why.
+    """
     if not isinstance(instance, dict):
         return None
-    endpoint = instance_endpoint(instance)
-    if not endpoint:
-        return None
-    label = str(instance.get("label") or instance.get("instance_name") or "").strip()
-    return {
-        "endpoint": endpoint,
-        "label": label,
-        "id": instance.get("id"),
-        "gpu": str(instance.get("gpu_name") or instance.get("gpu") or "").strip(),
-        "state": str(
-            instance.get("actual_status")
+    return clean_row(
+        {
+            "id": instance.get("id"),
+            "endpoint": instance_endpoint(instance),
+            "label": instance.get("label") or instance.get("instance_name") or "",
+            "gpu": instance.get("gpu_name") or instance.get("gpu") or "",
+            "state": instance.get("actual_status")
             or instance.get("status")
             or instance.get("cur_state")
-            or ""
-        ).strip(),
-    }
+            or "",
+        }
+    )
 
 
 def parse_instances(payload: Any) -> list[dict[str, Any]]:
-    """The account's instances as rows this app can use, in the API's order.
+    """The account's instances that have an endpoint, in the API's order.
 
     Accepts the API's ``{"instances": [...]}`` and a bare list, so a caller that
     already unwrapped the body works too. Instances that map no ComfyUI port
-    (stopped, or a different image) are dropped: there is no endpoint to render
-    on, and a row with no endpoint could only fail later.
+    (stopped, loading, or a different image) are dropped here and kept by
+    :func:`fetch_records`; a waiter for a new instance has no use for either.
     """
     rows = payload.get("instances") if isinstance(payload, dict) else payload
     if not isinstance(rows, list):
@@ -254,7 +259,7 @@ def parse_instances(payload: Any) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for it in rows:
         row = instance_row(it)
-        if row is not None:
+        if row is not None and row["endpoint"]:
             out.append(row)
     return out
 
@@ -413,8 +418,32 @@ def get_url(
     return (sender or _send)(request, timeout)
 
 
+def _row_id(value: Any) -> int | None:
+    """A positive instance id, or None when the value is not one."""
+    try:
+        ident = int(value)
+    except (TypeError, ValueError):
+        return None
+    return ident if ident > 0 else None
+
+
+def row_key(row: dict[str, Any]) -> str:
+    """The identity one row is stored and shown under: its id, else endpoint."""
+    clean = row if isinstance(row, dict) else {}
+    ident = _row_id(clean.get("id"))
+    if ident is not None:
+        return str(ident)
+    return normalize_endpoint(clean.get("endpoint"))
+
+
 def clean_row(row: Any) -> dict[str, Any] | None:
-    """A stored row as this app uses it, or None when it names no endpoint.
+    """A stored row as this app uses it, or None when it names no instance.
+
+    A row is an instance identity. ``id`` is that identity when the account
+    assigned one; a hand-typed row has only its endpoint. The endpoint itself is
+    optional user state, because a created instance exists before its ComfyUI
+    port maps. A destroyed row keeps its id and loses its address, so nothing
+    can POST to it again.
 
     ``image`` is a reference, not a fact this client checks: it records which
     container image the instance runs, so the row points at the entry the
@@ -422,15 +451,19 @@ def clean_row(row: Any) -> dict[str, Any] | None:
     """
     if not isinstance(row, dict):
         return None
+    ident = _row_id(row.get("id"))
     endpoint = normalize_endpoint(row.get("endpoint"))
-    if not endpoint:
+    state = str(row.get("state") or "").strip().lower()
+    if state == "destroyed":
+        endpoint = ""
+    if ident is None and not endpoint:
         return None
     return {
+        "id": ident,
         "endpoint": endpoint,
         "label": str(row.get("label") or "").strip(),
-        "id": row.get("id"),
         "gpu": str(row.get("gpu") or "").strip(),
-        "state": str(row.get("state") or "").strip(),
+        "state": state,
         "image": str(row.get("image") or "").strip(),
     }
 
@@ -470,11 +503,38 @@ def load_doc(path: Path | None = None) -> dict[str, Any]:
     mode = str(data.get("mode") or MODE_SALAD).strip().lower()
     doc["mode"] = mode if mode in MODES else MODE_SALAD
     rows = [row for row in (clean_row(r) for r in data.get("instances") or []) if row]
+    # The old build kept a created contract in one `pending` slot until a
+    # listing showed it. Fold that legacy record into the row model once, so
+    # the same instance is not both a row and a shadow of itself.
+    pending = clean_pending(data.get("pending"))
+    if pending and not any(row["id"] == pending["contract"] for row in rows):
+        row = clean_row(
+            {
+                "id": pending["contract"],
+                "endpoint": "",
+                "state": "creating",
+                "label": pending["label"],
+                "image": pending["image"],
+            }
+        )
+        if row is not None:
+            rows.append(row)
+    # A hand-edited file may repeat an id or an address; two rows with one key
+    # would collide as Treeview iids. The first spelling wins.
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for row in rows:
+        key = row_key(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(row)
+    rows = unique
     doc["instances"] = rows
     doc["replace"] = clean_replace(data.get("replace"))
-    doc["pending"] = clean_pending(data.get("pending"))
+    doc["pending"] = {}
     active = normalize_endpoint(data.get("active"))
-    if active and active in {row["endpoint"] for row in rows}:
+    if active and active in {row["endpoint"] for row in rows if row["endpoint"]}:
         doc["active"] = active
     return doc
 
@@ -490,7 +550,9 @@ def save_doc(doc: dict[str, Any], path: Path | None = None) -> Path:
             row for row in (clean_row(r) for r in doc.get("instances") or []) if row
         ],
         "replace": clean_replace(doc.get("replace")),
-        "pending": clean_pending(doc.get("pending")),
+        # Written empty for forward compatibility only. The creating row is the
+        # durable record; nothing reads this field any more.
+        "pending": {},
     }
     if payload["mode"] not in MODES:
         payload["mode"] = MODE_SALAD
@@ -525,32 +587,195 @@ def add_instance(
     return out, ""
 
 
-def remove_instance(doc: dict[str, Any], endpoint: str) -> tuple[dict[str, Any], bool]:
-    """Drop one instance. Returns ``(doc, removed)``.
+def _key_text(key: Any) -> str:
+    """A tree iid or store key as one spelling: an id, or a normalized endpoint."""
+    raw = str(key or "").strip()
+    return normalize_endpoint(raw) or raw
 
-    Removing the active instance makes the next listed one active, so the
-    selection keeps pointing at a row the page shows; removing the last one
-    leaves nothing active and Generate has to refuse until one is added.
+
+def _clean_rows(doc: dict[str, Any]) -> list[dict[str, Any]]:
+    return [row for row in (clean_row(r) for r in doc.get("instances") or []) if row]
+
+
+def upsert_instance(
+    doc: dict[str, Any], row: dict[str, Any]
+) -> tuple[dict[str, Any], str]:
+    """Insert or update one row, matched by id first and endpoint second.
+
+    The incoming endpoint, state and gpu win, because they come from the
+    account. The stored image survives when the incoming row names none, and a
+    stored non-empty label survives an empty incoming one, because both are user
+    state. Returns ``(doc, "added" | "updated" | "unchanged")``.
     """
-    url = normalize_endpoint(endpoint)
-    rows = [row for row in (clean_row(r) for r in doc.get("instances") or []) if row]
-    kept = [row for row in rows if row["endpoint"] != url]
-    removed = len(kept) != len(rows)
+    incoming = clean_row(row)
     out = dict(doc)
-    out["instances"] = kept
-    if out.get("active") == url:
-        out["active"] = kept[0]["endpoint"] if kept else ""
-    return out, removed
+    rows = _clean_rows(doc)
+    out["instances"] = rows
+    if incoming is None:
+        return out, "unchanged"
+    index: int | None = None
+    if incoming["id"] is not None:
+        for i, stored in enumerate(rows):
+            if stored["id"] == incoming["id"]:
+                index = i
+                break
+    if index is None and incoming["endpoint"]:
+        for i, stored in enumerate(rows):
+            if stored["endpoint"] == incoming["endpoint"]:
+                index = i
+                break
+    if index is None:
+        rows.append(incoming)
+        return out, "added"
+    stored = rows[index]
+    merged = {
+        "id": incoming["id"] if incoming["id"] is not None else stored["id"],
+        "endpoint": incoming["endpoint"],
+        "label": incoming["label"] or stored["label"],
+        "gpu": incoming["gpu"],
+        "state": incoming["state"],
+        "image": incoming["image"] or stored["image"],
+    }
+    rows[index] = merged
+    return out, ("unchanged" if merged == stored else "updated")
 
 
-def set_active(doc: dict[str, Any], endpoint: str) -> dict[str, Any]:
-    """Point Generate at one listed instance; an unknown one is ignored."""
-    url = normalize_endpoint(endpoint)
-    rows = [row for row in (clean_row(r) for r in doc.get("instances") or []) if row]
+def reconcile(
+    doc: dict[str, Any], records: list[dict[str, Any]], *, complete: bool
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Fold one unfiltered listing into the store. Returns ``(doc, summary)``.
+
+    A complete listing is the account's whole truth: every id-bearing row it
+    does not mention is destroyed, and destruction keeps the row as history.
+    A truncated listing proves nothing is missing, so it destroys nothing. A row
+    with no id is the user's own and is never modified, marked or removed.
+
+    ``active`` stays only while it names a row that still maps an endpoint. When
+    a row that had no endpoint is reached for the first time, its endpoint
+    becomes active, because that instance is the one the create was for. A row
+    that arrives already mapped is not promoted. The summary carries the ids
+    that were added, updated and destroyed, the endpoints that went away, and
+    the promoted id.
+    """
+    rows = _clean_rows(doc)
+    before = {row["endpoint"] for row in rows if row["endpoint"]}
+    original_rows = [dict(row) for row in rows]
+    original_active = normalize_endpoint(doc.get("active"))
+    # The row the active target names, so an endpoint that moves (the wrapper
+    # port winning after a preference change) keeps the user's selection.
+    active_id = ""
+    if original_active:
+        for row in rows:
+            if row["endpoint"] == original_active and row["id"] is not None:
+                active_id = str(row["id"])
+                break
+    manual_endpoints = {
+        row["endpoint"] for row in rows if row["id"] is None and row["endpoint"]
+    }
+    # The rows a create owns: they existed without an endpoint before this
+    # listing. The first one that maps is the instance this Fetch promoted, so
+    # it becomes active once nothing else is. A row that arrives already mapped
+    # was not created by this app and is never promoted on its own.
+    awaiting = {
+        str(row["id"]) for row in rows if row["id"] is not None and not row["endpoint"]
+    }
+    added: list[str] = []
+    updated: list[str] = []
+    live_ids: set[str] = set()
     out = dict(doc)
     out["instances"] = rows
-    if any(row["endpoint"] == url for row in rows):
-        out["active"] = url
+    for record in records if isinstance(records, list) else []:
+        incoming = instance_row(record)
+        if incoming is None or incoming["id"] is None:
+            # Without an id a record cannot be reconciled against a managed row.
+            continue
+        ident = str(incoming["id"])
+        live_ids.add(ident)
+        if incoming["endpoint"] and incoming["endpoint"] in manual_endpoints:
+            # A hand-typed row owns that address. Reconciliation never touches
+            # it, and two rows must not share one endpoint.
+            continue
+        out, status = upsert_instance(out, incoming)
+        if status == "added":
+            added.append(ident)
+        elif status == "updated":
+            updated.append(ident)
+
+    rows = out["instances"]
+    destroyed: list[str] = []
+    if complete:
+        for row in rows:
+            ident = row["id"]
+            if ident is None or str(ident) in live_ids:
+                continue
+            if row["state"] != "destroyed" or row["endpoint"]:
+                row["state"] = "destroyed"
+                row["endpoint"] = ""
+                destroyed.append(str(ident))
+
+    endpoints = {row["endpoint"] for row in rows if row["endpoint"]}
+    active = original_active if original_active in endpoints else ""
+    if not active and active_id:
+        for row in rows:
+            if str(row["id"]) == active_id and row["endpoint"]:
+                active = row["endpoint"]
+                break
+    promoted = ""
+    if not active:
+        for row in rows:
+            if str(row["id"]) in awaiting and row["endpoint"]:
+                active = row["endpoint"]
+                promoted = str(row["id"])
+                break
+
+    out["instances"] = rows
+    out["active"] = active
+    out["pending"] = {}
+    after = {row["endpoint"] for row in rows if row["endpoint"]}
+    summary = {
+        "added": added,
+        "updated": updated,
+        "destroyed": destroyed,
+        "gone_endpoints": sorted(before - after),
+        "promoted": promoted,
+    }
+    summary["changed"] = bool(
+        rows != original_rows or active != original_active or doc.get("pending")
+    )
+    return out, summary
+
+
+def remove_instance(doc: dict[str, Any], key: Any) -> tuple[dict[str, Any], bool]:
+    """Drop the row named by ``key`` (an id or an endpoint). Returns ``(doc, removed)``.
+
+    Removing the active instance makes the next row that has an endpoint
+    active, so the selection keeps pointing at a row the page can POST to;
+    removing the last one leaves nothing active and Generate has to refuse
+    until one is added.
+    """
+    want = _key_text(key)
+    rows = _clean_rows(doc)
+    removed_row = next((row for row in rows if row_key(row) == want), None)
+    kept = [row for row in rows if row_key(row) != want]
+    out = dict(doc)
+    out["instances"] = kept
+    active = normalize_endpoint(doc.get("active"))
+    if removed_row is not None and active and removed_row["endpoint"] == active:
+        out["active"] = next(
+            (row["endpoint"] for row in kept if row["endpoint"]), ""
+        )
+    return out, removed_row is not None
+
+
+def set_active(doc: dict[str, Any], key: Any) -> dict[str, Any]:
+    """Point Generate at one listed row; a row with no endpoint is refused."""
+    want = _key_text(key)
+    rows = _clean_rows(doc)
+    target = next((row for row in rows if row_key(row) == want), None)
+    out = dict(doc)
+    out["instances"] = rows
+    if target is not None and target["endpoint"]:
+        out["active"] = target["endpoint"]
     return out
 
 
@@ -563,21 +788,31 @@ def set_mode(doc: dict[str, Any], mode: str) -> dict[str, Any]:
 
 
 def active_row(doc: dict[str, Any]) -> dict[str, Any] | None:
-    """The instance Generate will POST to, or None when none is selected."""
+    """The instance Generate will POST to, or None when none can be reached."""
     endpoint = normalize_endpoint(doc.get("active"))
     if not endpoint:
         return None
     for row in doc.get("instances") or []:
         clean = clean_row(row)
-        if clean and clean["endpoint"] == endpoint:
+        if (
+            clean
+            and clean["endpoint"] == endpoint
+            and clean["state"] != "destroyed"
+        ):
             return clean
     return None
 
 
 def row_label(row: dict[str, Any]) -> str:
-    """What the page calls one instance: its label, else its address."""
+    """What the page calls one instance: its label, else address, else ``#id``."""
     label = str((row or {}).get("label") or "").strip()
-    return label or str((row or {}).get("endpoint") or "")
+    if label:
+        return label
+    endpoint = str((row or {}).get("endpoint") or "").strip()
+    if endpoint:
+        return endpoint
+    ident = (row or {}).get("id")
+    return f"#{ident}" if ident is not None else ""
 
 
 def _num(value: Any, default: float = 0.0) -> float:
@@ -1138,11 +1373,15 @@ def replace_destroyed(
                 or live.get("cur_state")
                 or "not running"
             ).strip()
+            hint = (
+                "wait for it to finish, then Generate again"
+                if state.lower() in {"loading", "created", "scheduling", "queued", "starting"}
+                else "start it in the vast.ai console, then Generate again"
+            )
             return {
-                "action": "stopped",
+                "action": "not_ready",
                 "message": (
-                    f"instance {live.get('id')} is {state}, not destroyed; "
-                    "start it in the vast.ai console, then Generate again"
+                    f"instance {live.get('id')} is {state}, not destroyed; {hint}"
                 ),
             }
         return {

@@ -474,9 +474,9 @@ for Comfy inside the container, so it does not answer before Comfy does.
 4. Press **Generate**. The request is queued on the profile's line, like a Salad
    render.
 
-The app's fetch derives the Comfy port (`8188`) when it builds a row. For graphs
-that carry Civitai LoRA URLs, edit the address to the wrapper port. Section 7
-explains why.
+The app derives the endpoint from the instance's mapped ports. It prefers the
+wrapper on 3000, which resolves Civitai LoRA URLs, and falls back to Comfy on
+8188 when the wrapper is not mapped. Section 7 explains why.
 
 ---
 

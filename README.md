@@ -24,8 +24,7 @@ python -m salad_studio
 
 Run from the repo root. `python salad_studio/app.py` also works.
 
-Tests are `unittest`. Three commands, and the later ones are not part of the
-first:
+Tests are `unittest`. Run the commands separately:
 
 ```
 python -m unittest discover -s tests -p "test_*.py"    # 1222 tests, ~15-30 min
@@ -41,7 +40,8 @@ WebView2 for the graph pane, `%LOCALAPPDATA%\SaladStudio\WebView2` for the
 browser cache, and `os.startfile` to open plates.
 
 Generation needs a running SaladCloud ComfyUI container group and a Salad API
-key. Building the container needs Docker.
+key, or a rented vast.ai instance and a Vast.ai key. Building the container
+needs Docker.
 
 ## Layout
 
@@ -50,9 +50,9 @@ key. Building the container needs Docker.
 | `salad_studio/` | The Tkinter app. [`salad_studio/README.md`](salad_studio/README.md) is the real manual, tabs, knobs, and the import rules in detail. |
 | `tests/` | The suite, one module per area, run from the repo root. |
 | `salad_klein/` | Docker image, `prefetch.py` entrypoint, and Klein prompt recipes. [`salad_klein/README.md`](salad_klein/README.md) is the build-context short form. |
-| `docs/workflow/` | Five playbooks: [23](docs/workflow/23-salad-container-group-deployment.md) deployment (containers and vast.ai), [21](docs/workflow/21-klein-image-handoff.md) the Klein handoff and two-body prompt playbook, [15](docs/workflow/15-salad-flux2-klein-group.md) the Klein group, [14](docs/workflow/14-salad-comfy-live-findings.md) live findings, and [22](docs/workflow/22-two-body-correctness-research.md) the anatomy and SDXL research. The graph pane is in [the manual](salad_studio/README.md#prompt-graph-pane-jointjs-in-webview2). |
+| `docs/workflow/` | Five playbooks: [23](docs/workflow/23-salad-container-group-deployment.md) deployment (containers and vast.ai), [21](docs/workflow/21-klein-image-handoff.md) the Klein handoff, [15](docs/workflow/15-salad-flux2-klein-group.md) the Klein group, [14](docs/workflow/14-salad-comfy-live-findings.md) live findings, and [22](docs/workflow/22-two-body-correctness-research.md) anatomy and SDXL research. The graph pane is in [the manual](salad_studio/README.md#prompt-graph-pane-jointjs-in-webview2). |
 | `docs/history/` | Dated records of the studio: audits [57](docs/history/57-salad-studio-audit-2026-09.md), [58](docs/history/58-salad-studio-audit-2026-09-22.md), [59](docs/history/59-salad-studio-audit-2026-09-26.md), [61](docs/history/61-salad-studio-audit-2026-10-13.md), [62](docs/history/62-salad-studio-audit-2026-10-14.md), [63](docs/history/63-salad-studio-audit-2026-10-16.md), the [2026-10-17 issue pass](docs/history/64-salad-studio-issue-pass-2026-10-17.md), and the container-restart investigation [60](docs/history/60-salad-container-restart-2026-09-27.md). |
-| `docs/` | The consolidated issue record for [2026-10-14 to 2026-10-16](docs/issue-records.md): the two top-five lists and the four sweeps, each with the drive and the check that keeps it fixed. |
+| `docs/` | The [consolidated issue record](docs/issue-records.md) for 2026-10-14 to 2026-10-16, one entry per issue with its drive and check. |
 | `model_catalog.py` | Local LoRA/checkpoint cache with Civitai provenance. `fetch-klein --stage` warms the Docker build. |
 | `salad_gen.py` | One-shot SaladCloud ComfyUI Flux generate. |
 | `salad_probe_klein.py`, `salad_probe_sdxl.py` | Probe faces, bodies, pregnancies, and events on a Salad group. |

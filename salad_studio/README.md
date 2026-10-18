@@ -82,51 +82,44 @@ the left and right.
   blank or whitespace-only value counts as absent, so a field saved empty cannot hide the one behind it. The window's saved state names the config it was last on, so that config's policy and
   checkpoints are what the page shows even when the store's active config differs; there is one policy per config, no window-wide copy.
 
-  **Vast.ai**. **Vast.ai instances**: the vast.ai instances a profile may render on.
-  The list holds **one or more** addresses: type an address (`http://1.2.3.4:31234`, or
-  several comma-separated), pick the **Image** the instance runs (a tag from **Container images**)
-  and press **Add instance**; **Fetch instances from Vast.ai** reads the account's own machines with
-  the stored key — the unfiltered Bearer call to `https://console.vast.ai/api/v1/instances/` — and
-  reconciles the whole list. A record that maps no ComfyUI port (loading, stopped, or another image)
-  is still a row: its Address column shows `#<id>` and its State column says why. An id-bearing row
-  the account no longer lists becomes **destroyed**, keeps its id and history, and loses its address;
-  a truncated listing marks nothing destroyed. Selecting a row that has an endpoint points Generate
-  at that instance (the row is marked); a row with no endpoint cannot be the target and says so.
-  **Set image for selected** records what a row runs, **New profile for this
-  instance** creates a profile named for it with the target and the image's checkpoint family already
-  set, **Remove selected** drops one, and **Save list** writes them to
-  `~/.config/salad/studio-vast.json`, so nothing about a vast account lands in the repo. **Rent a machine**
-  searches that same offer list with the criteria above the table. **GPU models** defaults to
-  `RTX 5090, RTX 4090`, first is preferred, and an empty box restores those two instead of meaning
-  "any GPU": the measured unfiltered search's cheapest 24 GB offer is a Tesla P40 at $0.108/hr. The
-  other floors are max $/hr, download and upload Mbps, CUDA, and reliability. **Find offers** uses
-  the stored key to `POST https://console.vast.ai/api/v0/bundles/` ordered by
-  `dlperf_per_dphtotal` descending, then the table re-sorts by images per dollar (`dlperf` divided by
-  $/hr), then the GPU preference, then price. Select a row and press **Create instance on selected
-  offer**: one `PUT` to that offer's ask, with the image and optional label from the row above. The
-  contract appears immediately as a **creating** row, and **Fetch instances from Vast.ai** promotes
-  it to the active target once its ComfyUI port maps. There is no separate pending slot. A vast-mode
-  profile that held a destroyed instance's address is repointed at the new active endpoint (or
-  cleared), so Generate refuses instead of POSTing to a dead host. The key authenticates the vast.ai control API only and is never sent to
-  an instance; a render is queued on the profile's line, like a Salad render, and POSTs the same body
-  to the instance's own `/prompt`, so the plate lands in the gallery and the prompt history like any
-  other. Both answers an instance can give are handled: a Salad-style wrapper (port **3000**) answers
-  with base64 JPEGs in `images[]`, while a plain ComfyUI (port **8188**) answers with a `prompt_id`,
-  so the app polls `/history/<id>` and fetches the plate from `/view`. The wrapper is the endpoint
-  that resolves Civitai LoRA URLs, so a graph that carries one needs the wrapper's port; the app
-  therefore prefers the wrapper's **3000** whenever the instance maps it and falls back to the
-  native ComfyUI port. A `LoraLoader` URL otherwise fails validation on 8188 with
-  `value_not_in_list`. An accepted POST whose answer carries no plate is reported by name instead
-  of being retried. For the host
-  choice, the CUDA and driver requirement, and what each failure means, see
-  [the vast.ai deployment guide](../docs/workflow/23-salad-container-group-deployment.md#5-vastai-instances). The plate's
-  extension follows its own bytes - `studio_<ms>.jpg` from a wrapper, PNG from native ComfyUI - and
-  the gallery, the history strip and **Clean gallery** read both; the strip shows an explicit empty
-  state when nothing has been rendered. When the selected instance is gone, the
-  **If the selected instance is destroyed** option uses the same criteria: it rents the best value
-  offer that clears them, with RTX 5090 before RTX 4090 on a tie. The create and the wait for its
-  endpoint run off the Tk thread, and the press asks for Generate again once the new instance is
-  ready.
+  **Vast.ai**. **Vast.ai instances**: the vast.ai instances a profile may render on. Type one
+  address (`http://1.2.3.4:31234`, or several comma-separated), pick the **Image** the instance
+  runs, and press **Add instance**. **Fetch instances from Vast.ai** reads the account with the
+  stored Bearer key from `https://console.vast.ai/api/v1/instances/` and reconciles the list. A
+  record that maps no ComfyUI port (loading, stopped) is still a row, with `#<id>` in Address and
+  its state. An id-bearing row the account no longer lists becomes **destroyed**, keeps its id and
+  image, and loses its address. A truncated listing marks nothing destroyed. Selecting a row with an
+  endpoint points Generate at it; a row with no endpoint cannot be the target and says why. **Set
+  image for selected** records the image, **New profile for this instance** creates a profile with
+  that target and the image's checkpoint family, **Remove selected** drops one, and **Save list**
+  writes to `~/.config/salad/studio-vast.json`. Nothing about the account lands in the repo.
+
+  **Rent a machine** searches the same offer list. **GPU models** defaults to `RTX 5090, RTX 4090`
+  in preference order. An empty box restores those two, not "any GPU", because the measured
+  unfiltered search's cheapest 24 GB offer is a Tesla P40 at $0.108/hr. The floors are max $/hr,
+  download and upload Mbps, CUDA, and reliability. **Find offers** posts to
+  `https://console.vast.ai/api/v0/bundles/` ordered by `dlperf_per_dphtotal` descending. The table
+  re-sorts by images per dollar (`dlperf` divided by $/hr), then GPU preference, then price. Select
+  a row and press **Create instance on selected offer** for one `PUT` to that ask. The contract
+  appears immediately as a **creating** row; Fetch promotes it to the active target when its
+  ComfyUI port maps. No separate pending slot exists. A vast-mode profile that held a destroyed
+  instance's address is repointed at the new active endpoint or cleared, so Generate refuses rather
+  than POSTing to a dead host.
+
+  The key authenticates the vast.ai control API only and is never sent to an instance. A render is
+  queued on the profile's line and POSTs to the instance's `/prompt`, so the plate lands in the
+  gallery and prompt history. Both answers are handled. The Salad wrapper on port **3000** returns
+  base64 JPEGs in `images[]`; a plain ComfyUI on **8188** returns a `prompt_id`, so the app polls
+  `/history/<id>` and fetches the plate from `/view`. The wrapper resolves Civitai LoRA URLs, so the
+  app prefers its **3000** whenever the instance maps it and falls back to 8188. A `LoraLoader` URL
+  on 8188 fails with `value_not_in_list`. An accepted POST with no plate is reported by name, not
+  retried. See [the deployment guide](../docs/workflow/23-salad-container-group-deployment.md#5-vastai-instances)
+  for host choice, CUDA and driver requirements, and each failure. The plate's extension follows
+  its bytes (`studio_<ms>.jpg` from a wrapper, PNG from native ComfyUI), and the gallery, history
+  strip, and **Clean gallery** read both. When the selected instance is gone, **If the selected
+  instance is destroyed** rents the best-value offer that clears the criteria, RTX 5090 before RTX
+  4090 on a tie. The create and endpoint wait run off the Tk thread. Generate again when the new
+  instance is ready.
 - **Prompt Settings**. **Width**, **Height**, **Steps**, **CFG**, **Seed**,
   **Graph** (Flux.2 Klein / Flux.1 Dev), **Scheduler** (Flux2 (Klein) / Simple
   (Civitai)), the **Checkpoint** (Base 9B / Distilled 9B / SNOFS 9B) and the
@@ -457,7 +450,7 @@ and the reason is carried in the document's `error` field.
 
 This folder was moved out of the Eldermark repo, so the paths that used to be relative walk-ups are environment settings with machine defaults; the three settings, their defaults and the Known-limitation paragraph beside them are in the root [`README.md`](../README.md) (Configuration, Known limitations).
 
-Three test commands, and the later ones are not part of the first:
+Run the three commands separately:
 
 ```
 python -m unittest discover -s tests -p "test_*.py"    # 1222 tests, ~15-30 min

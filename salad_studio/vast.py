@@ -515,6 +515,17 @@ def load_doc(path: Path | None = None) -> dict[str, Any]:
         )
         if row is not None:
             rows.append(row)
+    # A hand-edited file may repeat an id or an address; two rows with one key
+    # would collide as Treeview iids. The first spelling wins.
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for row in rows:
+        key = row_key(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(row)
+    rows = unique
     doc["instances"] = rows
     doc["replace"] = clean_replace(data.get("replace"))
     doc["pending"] = {}
@@ -1345,11 +1356,15 @@ def replace_destroyed(
                 or live.get("cur_state")
                 or "not running"
             ).strip()
+            hint = (
+                "wait for it to finish, then Generate again"
+                if state.lower() in {"loading", "created", "scheduling", "queued", "starting"}
+                else "start it in the vast.ai console, then Generate again"
+            )
             return {
                 "action": "not_ready",
                 "message": (
-                    f"instance {live.get('id')} is {state}, not destroyed; "
-                    "start it in the vast.ai console, then Generate again"
+                    f"instance {live.get('id')} is {state}, not destroyed; {hint}"
                 ),
             }
         return {

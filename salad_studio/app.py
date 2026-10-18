@@ -315,9 +315,9 @@ class SaladStudio(tk.Tk):
         self._scroll_canvases: dict[tk.Frame, tk.Canvas] = {}
         self._scroll_bodies: dict[tk.Frame, ttk.Frame] = {}
         self._scroll_wheel_page: tk.Frame | None = None
-        # The grid the pointer is over. Tk's class wheel binding follows
-        # keyboard focus, so a widget binding takes the event first and routes
-        # it by pointer instead (see _wheel_tree).
+        # The grid the pointer is over. Tk's class wheel binding runs before the
+        # page's bind_all handler, so a widget binding takes the event first and
+        # routes it by pointer instead (see _wheel_tree).
         self._scroll_wheel_tree: ttk.Treeview | None = None
         self.bind_all("<MouseWheel>", self._on_page_wheel, add="+")
         self.bind_all("<FocusIn>", self._on_page_focus, add="+")
@@ -674,11 +674,11 @@ class SaladStudio(tk.Tk):
             self._scroll_wheel_tree = None
 
     def _wheel_tree(self, tree) -> None:
-        """Route the wheel by pointer instead of by Tk's focus-following class binding.
+        """Route the wheel to the grid under the pointer, not to the class binding.
 
         A widget binding runs before the class binding. Returning ``"break"``
         from it disarms the class binding, so the grid under the pointer scrolls
-        and a focused grid elsewhere does not.
+        and a grid elsewhere does not.
         """
         tree.bind("<Enter>", lambda _e: self._claim_wheel_tree(tree), add="+")
         tree.bind("<Leave>", lambda _e: self._release_wheel_tree(tree), add="+")
@@ -2743,12 +2743,12 @@ class SaladStudio(tk.Tk):
                 result = vast.rent_offer(key, offer, image=image, label=label, env=env)
             except Exception as e:  # noqa: BLE001 - the button must come back
                 result = {"action": "error", "message": f"{type(e).__name__}: {e}"}
-            if self._later(0, lambda: self._apply_vast_rent(result, None)) is None:
+            if self._later(0, lambda: self._apply_vast_rent(result)) is None:
                 self._vast_create_busy = False
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _apply_vast_rent(self, result: dict, old_row: dict | None = None) -> None:
+    def _apply_vast_rent(self, result: dict) -> None:
         """Show what a rent or replacement check did, and keep the row it returned."""
         self._vast_create_busy = False
         buttons = (
@@ -2881,7 +2881,7 @@ class SaladStudio(tk.Tk):
                 )
             except Exception as e:  # noqa: BLE001 - the button must come back
                 result = {"action": "error", "message": f"{type(e).__name__}: {e}"}
-            if self._later(0, lambda: self._apply_vast_rent(result, row)) is None:
+            if self._later(0, lambda: self._apply_vast_rent(result)) is None:
                 self._vast_create_busy = False
 
         threading.Thread(target=work, daemon=True).start()
@@ -6817,7 +6817,7 @@ class SaladStudio(tk.Tk):
                 except Exception as e:  # noqa: BLE001 - end the press, not the app
                     result = {"action": "error", "message": f"{type(e).__name__}: {e}"}
                 action = str(result.get("action") or "")
-                if self._later(0, lambda: self._apply_vast_rent(result, row)) is None:
+                if self._later(0, lambda: self._apply_vast_rent(result)) is None:
                     self._vast_create_busy = False
                 if action == "alive":
                     endpoint = str(

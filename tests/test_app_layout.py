@@ -1394,10 +1394,11 @@ class LiveFieldSync(unittest.TestCase):
         self.assertTrue(app.bind_all("<MouseWheel>"), "the other page's binding is intact")
 
     def test_a_claimed_grid_routes_the_wheel_to_the_grid_not_the_page(self) -> None:
-        """On Windows the class binding follows focus, so the widget claims it.
+        """The class binding runs before the page's bind_all handler.
 
-        The pointer over the grid must scroll the grid even when the page under
-        it is also claimed; the page moves only once the pointer leaves the grid.
+        The widget binding must take the event first, so the pointer over the
+        grid scrolls the grid even when the page under it is also claimed; the
+        page moves only once the pointer leaves the grid.
         """
         app = self.app
         page = app._config_section_pages["vast"]

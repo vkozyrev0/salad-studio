@@ -1090,7 +1090,6 @@ class ConfigPage(unittest.TestCase):
                 "image": "docker.io/example/klein:tag",
                 "message": "created instance 777; it has not mapped an endpoint yet",
             },
-            None,
         )
         self.assertFalse(app._vast_create_busy)
         row = app._vast_doc["instances"][0]

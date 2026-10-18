@@ -19,7 +19,7 @@ corrected in place, each pointing here:
 | `salad_klein/README.md` → recipe paragraph | same claim, plus "the prompt architecture is the quality lever" | corrected; points here |
 | `tests/test_klein_recipes.py` → module docstring | asserted "the prompt architecture is the quality lever" as the module's subject | rewritten against the verified entry (§2) |
 
-The research documents (14, 17, 18, 19) are the **record of how this was
+The research documents (14 and 22) are the **record of how this was
 learned**, not the current state. Where they disagree with this document, this
 document wins, and §8 says which of their claims re-verified.
 
@@ -140,7 +140,7 @@ Measured dead ends. Do not retry these.
 | Enumerating defects in the positive prompt (`four legs and four feet … no more and no fewer`) | Present in **16/16** plates, good and bad alike; the strongest form appeared only in the plates that *worked*. Not the cause. |
 | Enumerating defects in the negative (3,649 chars) | **Proven inert** at CFG 1, and it listed `cowgirl, doggy style, rear entry, spooning` as suppressed, forbidding the positions that render. |
 | Raising CFG to 1.2 / 1.3 / 1.5 to make the negative bite | Artifact survived. (Those runs also carried the position blacklist, so they are not evidence about negatives in general.) |
-| Anatomy fixer LoRA at 2.0 / 3.0 | Artifact survived. |
+| Anatomy fixer LoRA at 2.0 / 3.0 | 2.0 did not help. 3.0 ran only on the bad missionary prompt; it is untested with the trimmed prompt. |
 | Stripping the LoRA stack (`full` 4 LoRAs vs `alone` none) | **Both bad.** Not the cause. |
 | Longer, more detailed prompts (5,049 chars, bullet sections) | The bullet-format, scene-heavy rewrite is where failures clustered (7/7), collinear with a castle setting block (6/6) and with shot scale. Plates that rendered put the figures at 40–53 % of frame, failing ones at 25–30 %. |
 | Adding a **medieval setting clause** to the verified prompt | User verdict 2026-09-22: *"medievil is disterted - two knees on the left and missing part of the leg on the right"*. Added last, everything else held, same seeds as the control which was not flagged. |
@@ -179,7 +179,7 @@ Measured dead ends. Do not retry these.
 - **The CLIP-encode rule.** Klein-native LoRAs encode *after* the last such loader; foreign stacks stay on the base `CLIPLoader` (an SDXL CLIP tensor on Qwen corrupts the encoding). Its home is the manual's Prompt Editor bullet, [`salad_studio/README.md`](../../salad_studio/README.md). Do not fight it.
 - **`LoraLoaderModelOnly` carries `lora_name` too.** The token attach, the pre-flight probe and the
   POST log keyed on `class_type == "LoraLoader"` until 2026-09-22, so a gated Civitai file there reached the replica unauthenticated; they now key on the input, `request_json.lora_name_inputs`.
-- **The `/ready` probe accepts 200 and 206.** A ranged `GET` to a Civitai CDN
+- **The LoRA reachability probe accepts 200 and 206.** A ranged `GET` to a Civitai CDN
   answers **206 Partial Content**; a plain-200 test reported every live LoRA as
   "unconfirmed".
 - **A dead origin is not "Starting".** `salad_status.short_status` now maps
@@ -436,7 +436,7 @@ arm verbs; ultra-tight crops; starting above ~2 MP before anatomy locks.
 #### 6.6 Three finds worth keeping
 
 - **Lock the pose first.** Mannequin → `matchingpose9b`: fix the pose, then describe sex/clothes in text and *do not re-describe the pose*. Add SNOFS on Base, or as an edit.
-- **Depth training** and **shot scale** are doc 21 §5's quality-level list.
+- **Depth training** is in doc 22's anatomy research. **Shot scale** is doc 21 §5's quality-level list.
 
 Stack order: §6.2 above; the same knobs are the open questions in doc 21 §6.
 

@@ -300,12 +300,16 @@ The tokens go in the instance environment:
 Filter the offer list before you rent:
 
 ```
-1 GPU, on-demand, rentable
-gpu_name in RTX 4090, RTX 5090, RTX A6000, A100
+1 GPU, on-demand, rentable, verified, rented=false
+gpu_name in RTX 5090, RTX 4090 (the app's default; add RTX A6000 or A100 PCIE)
+gpu_ram >= 24000
 cuda_max_good >= 13.0
 reliability2 >= 0.95
 disk_space >= 140
 inet_down >= 200
+inet_up >= 100
+dph_total <= 0.50
+limit 100
 ```
 
 Sort by `dlperf_per_dphtotal`, not by price alone. Measured on 2026-10-17: an

@@ -9,7 +9,7 @@ re-derive it.
 
 Companions: [`21`](21-klein-image-handoff.md) (what we run today),
 [`§9`](#9-anatomy-research) (why Klein fails at two-body acts),
-[`§10`](#10-the-sdxl-migration-premise) (the SDXL premise), [`§9`](#9-two-body-prompt-playbook).
+[`§10`](#10-the-sdxl-migration-premise) (the SDXL premise), [`21 §9`](21-klein-image-handoff.md#9-two-body-prompt-playbook).
 
 **Scope:** 18+ adults only, two adults, no minors, nothing illegal.
 

@@ -1,5 +1,9 @@
 # 15. Custom Salad container group for Flux.2 Klein 9B
 
+> **Current tags:** the Live groups table below lists the shipped
+> `...-prefetch6-klein` and `...-prefetch6-snofs` tags. The notes below record
+> the 2026-09-21 PATCH.
+>
 > **Status:** **prefetch5** is pushed and both Klein groups were PATCHed
 > (2026-09-21, HTTP 200, `pending_change: true`). Until **version** bumps,
 > GET still shows
@@ -49,7 +53,7 @@ launch; gateway files `~/.config/salad/gateway-klein` and
 | Gateway DNS | `apple-gadogado-5d0vs4l8x0j51hwy.salad.cloud` | `beet-ginger-cdz8ko9ehhmh4703.salad.cloud` |
 | GPU classes | RTX **4090**, **3090 Ti**, **3090** (24 GB) | RTX **5090** (32 GB) + **5090 Laptop** (24 GB) |
 | High $/hr | 0.33 / 0.19 / 0.17 | 0.50 / 0.235 |
-| CUDA note | Ada/Ampere; known working | Blackwell test; Salad wants CUDA ≥ 12.8 (this image is **cuda13.0**) |
+| CUDA note | Ada/Ampere; known working | Blackwell test; the host needs CUDA 13.0 and driver 580+ (this image is **cuda13.0**) |
 | Startup | `GET /health` :3000, delay 1200, period 120, fail 20 (~60 min) | same |
 | Readiness | `GET /ready` :3000 | same |
 | Created | 2026-09-18; **v7** 2026-09-20 | 2026-09-20 **v1** |
@@ -92,7 +96,7 @@ runs **our** sampler stack ([`salad_studio/README.md`](../../salad_studio/README
 `salad_klein/prompt_snofs_distilled_anatomy.json` (euler, 4 steps) and `prompt_snofs_distilled_anatomy_resms.json`
 (res_multistep, 12 steps) are the two-body plates on disk — **18+ only**, adults — same graph, same LoRA stack, two
 sampler knobs: unet `snofsSexNudesAndOther_distilledV12KleinFp8.safetensors`, CFG 1 (`CFGGuider`), 832×1216, seed
-`323175253610296` in both files. The `LoraLoader` chain 70→80→81→82→83 (each `lora_name` a Civitai URL, so the
+`323175253610296` in both files. Node 70 loads the unet, then the `LoraLoader` chain 80→81→82→83 (each `lora_name` a Civitai URL, so the
 Tokens tab's `?token=` is appended at POST; all four resolve HTTP **200**) is Detail Slider
 `civitai:2334190@2625692` −1.5, Impressionism Klein9B `civitai:545264@2763568` 0.8, Klein Anatomy / Quality Fixer v1.5
 `civitai:2324991@2615554` 2.0, Klein Fixes NSFW `civitai:2482439@2790993` 1.0; the last loader takes both

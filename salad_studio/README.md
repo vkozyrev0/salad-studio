@@ -446,7 +446,7 @@ and the reason is carried in the document's `error` field.
   Klein rules in [`docs/workflow/21-klein-image-handoff.md`](../docs/workflow/21-klein-image-handoff.md#9-two-body-prompt-playbook)
   are edited in the document, not in `ai_helper.py`.
 
-## Settings (this repo is standalone; two things live elsewhere)
+## Settings
 
 This folder was moved out of the Eldermark repo, so the paths that used to be relative walk-ups are environment settings with machine defaults; the three settings, their defaults and the Known-limitation paragraph beside them are in the root [`README.md`](../README.md) (Configuration, Known limitations).
 

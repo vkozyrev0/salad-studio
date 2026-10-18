@@ -897,6 +897,8 @@ class ReplacementSearch(unittest.TestCase):
         "min_down_mbps": 200,
         "min_up_mbps": 100,
         "cuda_min": 13.0,
+        "min_reliability": 0.95,
+        "gpu_names": ["RTX 5090", "RTX 4090"],
     }
 
     @staticmethod
@@ -911,6 +913,10 @@ class ReplacementSearch(unittest.TestCase):
             "inet_up": 200,
             "dph_total": 0.40,
             "rentable": True,
+            "reliability2": 0.99,
+            "dlperf": 97.0,
+            "dlperf_per_dphtotal": 250.0,
+            "geolocation": "Testland, TL",
         }
         offer.update(overrides)
         return offer
@@ -932,6 +938,8 @@ class ReplacementSearch(unittest.TestCase):
                 "min_down_mbps": 300,
                 "min_up_mbps": 150,
                 "cuda_min": 13.0,
+                "min_reliability": 0.97,
+                "gpu_names": ["RTX 5090"],
             }
         )
         self.assertEqual(query["dph_total"], {"lte": 0.42})
@@ -939,10 +947,67 @@ class ReplacementSearch(unittest.TestCase):
         self.assertEqual(query["inet_up"], {"gte": 150})
         self.assertEqual(query["cuda_max_good"], {"gte": 13.0})
         self.assertEqual(query["gpu_ram"], {"gte": 24000})
+        self.assertEqual(query["gpu_name"], {"in": ["RTX 5090"]})
+        self.assertEqual(query["reliability2"], {"gte": 0.97})
         self.assertEqual(query["type"], "on-demand")
-        self.assertEqual(query["order"], [["dph_total", "asc"]])
+        self.assertEqual(query["order"], [["dlperf_per_dphtotal", "desc"]])
+        self.assertEqual(query["limit"], vast.OFFER_QUERY_LIMIT)
 
-    def test_the_cheapest_offer_that_clears_every_floor_wins(self) -> None:
+    def test_an_absent_gpu_list_queries_the_defaults_not_any_gpu(self) -> None:
+        """The measured unfiltered search rents a Tesla P40 at $0.108/hr."""
+        query = vast.offer_query({})
+        self.assertEqual(
+            query["gpu_name"], {"in": ["RTX 5090", "RTX 4090"]}
+        )
+        self.assertEqual(query["reliability2"], {"gte": 0.95})
+
+    def test_clean_replace_restores_the_default_gpu_list(self) -> None:
+        default = ["RTX 5090", "RTX 4090"]
+        for raw in (None, "", " , ", [], (), set()):
+            with self.subTest(raw=raw):
+                got = vast.clean_replace({"gpu_names": raw})["gpu_names"]
+                self.assertEqual(got, default)
+                self.assertIsNot(got, vast.DEFAULT_GPU_NAMES)
+
+    def test_a_gpu_list_keeps_order_dedupes_and_canonicalizes(self) -> None:
+        got = vast.clean_replace(
+            {"gpu_names": ["rtx 5090", "A100 pcie", "RTX 5090", " RTX 4090 "]}
+        )["gpu_names"]
+        self.assertEqual(got, ["RTX 5090", "A100 PCIE", "RTX 4090"])
+
+    def test_the_reliability_floor_is_kept_only_in_range(self) -> None:
+        self.assertEqual(
+            vast.clean_replace({"min_reliability": 0.90})["min_reliability"], 0.90
+        )
+        for raw in (-0.1, 1.1, "nope"):
+            with self.subTest(raw=raw):
+                self.assertEqual(
+                    vast.clean_replace({"min_reliability": raw})["min_reliability"],
+                    0.95,
+                )
+
+    def test_a_gpu_outside_the_list_is_refused(self) -> None:
+        p40 = self._offer(
+            1, gpu_name="Tesla P40", gpu_ram=24576, dph_total=0.108
+        )
+        self.assertFalse(vast.offer_meets(p40, self.POLICY), "the reported bug")
+        only_5090 = {**self.POLICY, "gpu_names": ["RTX 5090"]}
+        self.assertFalse(vast.offer_meets(self._offer(2), only_5090))
+        self.assertTrue(vast.offer_meets(self._offer(3, gpu_name="RTX 5090"), only_5090))
+
+    def test_reliability_below_the_floor_or_missing_is_refused(self) -> None:
+        self.assertFalse(
+            vast.offer_meets(self._offer(1, reliability2=0.94), self.POLICY)
+        )
+        missing = self._offer(2)
+        missing.pop("reliability2")
+        self.assertFalse(
+            vast.offer_meets(missing, self.POLICY),
+            "a host that cannot state its reliability fails closed",
+        )
+        self.assertTrue(vast.offer_meets(self._offer(3, reliability2=0.95), self.POLICY))
+
+    def test_the_highest_value_offer_that_clears_every_floor_wins(self) -> None:
         offers = [
             self._offer(1, dph_total=0.40),
             self._offer(2, dph_total=0.30, inet_up=50),
@@ -952,7 +1017,173 @@ class ReplacementSearch(unittest.TestCase):
         picked = vast.pick_offer(offers, self.POLICY)
         self.assertIsNotNone(picked)
         assert picked is not None
-        self.assertEqual(picked["id"], 1, "the cheap ones fail a floor, not the price")
+        self.assertEqual(
+            picked["id"], 1, "value ties break by price, and the cheap ones fail a floor"
+        )
+
+    def test_the_pick_is_value_not_the_cheapest_price(self) -> None:
+        cheap = self._offer(1, dph_total=0.20, dlperf_per_dphtotal=200.0)
+        value = self._offer(2, dph_total=0.40, dlperf_per_dphtotal=500.0)
+        picked = vast.pick_offer([cheap, value], self.POLICY)
+        self.assertEqual(picked["id"], 2, "a 500 Perf/$ card buys more images")
+        self.assertGreater(vast.offer_value(value), vast.offer_value(cheap))
+
+    def test_value_outranks_price_across_gpu_tiers(self) -> None:
+        """5090 at $0.60/199 perf (331/$) before 4090 at $0.30/97 perf (323/$)."""
+        fast = self._offer(
+            1,
+            gpu_name="RTX 5090",
+            dph_total=0.60,
+            dlperf=199,
+            dlperf_per_dphtotal=None,
+        )
+        cheap = self._offer(
+            2,
+            gpu_name="RTX 4090",
+            dph_total=0.30,
+            dlperf=97,
+            dlperf_per_dphtotal=None,
+        )
+        ranked = vast.matching_offers(
+            [cheap, fast], {**self.POLICY, "max_price": 0.70}
+        )
+        self.assertEqual([offer["id"] for offer in ranked], [1, 2])
+
+    def test_within_one_gpu_tier_the_higher_value_offer_comes_first(self) -> None:
+        good = self._offer(1, dlperf_per_dphtotal=300.0)
+        better = self._offer(2, dph_total=0.45, dlperf_per_dphtotal=400.0)
+        ranked = vast.matching_offers([good, better], self.POLICY)
+        self.assertEqual([offer["id"] for offer in ranked], [2, 1])
+
+    def test_the_gpu_preference_breaks_an_equal_value_tie(self) -> None:
+        a4090 = self._offer(1, gpu_name="RTX 4090", dph_total=0.30, dlperf_per_dphtotal=300.0)
+        a5090 = self._offer(2, gpu_name="RTX 5090", dph_total=0.60, dlperf_per_dphtotal=300.0)
+        ranked = vast.matching_offers(
+            [a4090, a5090], {**self.POLICY, "max_price": 0.70}
+        )
+        self.assertEqual([offer["id"] for offer in ranked], [2, 1])
+
+    def test_the_offer_cells_match_the_contracts_formats(self) -> None:
+        offer = self._offer(
+            55818626,
+            gpu_name="RTX 5090",
+            dph_total=0.402,
+            dlperf=199,
+            dlperf_per_dphtotal=495,
+            gpu_ram=24576,
+            disk_space=338,
+            cuda_max_good=13.0,
+            inet_down=868,
+            inet_up=722,
+            reliability2=0.96,
+            geolocation="Romania, RO",
+        )
+        self.assertEqual(
+            vast.offer_cells(offer),
+            {
+                "gpu": "RTX 5090",
+                "price": "$0.402",
+                "perf": "199",
+                "value": "495",
+                "vram": "24",
+                "disk": "338",
+                "cuda": "13.0",
+                "down": "868",
+                "up": "722",
+                "reliability": "0.960",
+                "location": "Romania, RO",
+                "offer": "55818626",
+            },
+        )
+        missing = vast.offer_cells({"id": 7})
+        self.assertEqual(missing["gpu"], "")
+        self.assertEqual(missing["price"], "")
+        self.assertEqual(missing["value"], "")
+        self.assertEqual(missing["location"], "unknown")
+        self.assertEqual(missing["offer"], "7")
+
+    def test_a_manual_rent_is_one_put_to_the_chosen_offer(self) -> None:
+        puts: list[str] = []
+        live: list[dict] = []
+
+        def sender(request, timeout):
+            if request.get_method() == "PUT":
+                puts.append(request.full_url)
+                live.append(self._live(777))
+                return 200, json.dumps({"success": True, "new_contract": 777}).encode()
+            if request.full_url.endswith("/instances/"):
+                return 200, json.dumps({"instances": live}).encode()
+            raise AssertionError(request.full_url)
+
+        chosen = self._offer(42, gpu_name="RTX 5090")
+        result = vast.rent_offer(
+            "vast-key",
+            chosen,
+            image="docker.io/example/klein:tag",
+            label="salad-studio-42",
+            sender=sender,
+            sleep=lambda _s: None,
+            tries=2,
+        )
+        self.assertEqual(result["action"], "created")
+        self.assertEqual(result["contract"], 777)
+        self.assertEqual(puts, ["https://console.vast.ai/api/v0/asks/42/"])
+        self.assertEqual(result["row"]["label"], "salad-studio-42")
+        self.assertEqual(result["row"]["image"], "docker.io/example/klein:tag")
+
+    def test_an_unmapped_rent_is_created_with_no_row(self) -> None:
+        def sender(request, timeout):
+            if request.get_method() == "PUT":
+                return 200, json.dumps({"success": True, "new_contract": 777}).encode()
+            return 200, json.dumps({"instances": []}).encode()
+
+        result = vast.rent_offer(
+            "vast-key",
+            self._offer(42),
+            image="docker.io/example/klein:tag",
+            sender=sender,
+            sleep=lambda _s: None,
+            tries=1,
+        )
+        self.assertEqual(result["action"], "created")
+        self.assertIsNone(result["row"])
+        self.assertIn("not mapped", result["message"])
+
+    def test_a_refused_rent_is_an_error_with_no_second_put(self) -> None:
+        asked: list[str] = []
+
+        def sender(request, timeout):
+            asked.append(request.full_url)
+            return 410, json.dumps(
+                {"success": False, "error": "no_such_ask", "msg": "taken"}
+            ).encode()
+
+        result = vast.rent_offer(
+            "vast-key", self._offer(42), image="img", sender=sender
+        )
+        self.assertEqual(result["action"], "error")
+        self.assertEqual(len(asked), 1, "a manual rent must never fall through")
+
+    def test_a_rent_without_an_offer_id_is_refused(self) -> None:
+        result = vast.rent_offer("vast-key", {"gpu_name": "RTX 5090"}, image="img")
+        self.assertEqual(result["action"], "error")
+        self.assertIn("no id", result["message"])
+
+    def test_the_new_policy_fields_round_trip_through_the_document(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "studio-vast.json"
+            doc = vast.empty_doc()
+            doc["replace"] = {
+                **self.POLICY,
+                "min_reliability": 0.97,
+                "gpu_names": ["RTX A6000", "rtx 5090"],
+            }
+            vast.save_doc(doc, path)
+            loaded = vast.load_doc(path)
+        self.assertEqual(loaded["replace"]["min_reliability"], 0.97)
+        self.assertEqual(
+            loaded["replace"]["gpu_names"], ["RTX A6000", "RTX 5090"]
+        )
 
     def test_no_offer_meets_the_floors(self) -> None:
         self.assertIsNone(
@@ -1022,7 +1253,7 @@ class ReplacementSearch(unittest.TestCase):
         )
         self.assertEqual(result["action"], "missing")
 
-    def test_a_gone_instance_is_replaced_by_the_cheapest_offer(self) -> None:
+    def test_a_gone_instance_is_replaced_by_the_best_value_offer(self) -> None:
         calls: list[tuple[str, str]] = []
         live: list[dict] = []
 
@@ -1111,7 +1342,7 @@ class ReplacementSearch(unittest.TestCase):
         self.assertEqual(loaded["pending"]["image"], "docker.io/example/klein:tag")
         self.assertEqual(vast.clean_pending({"contract": "nope"}), {})
 
-    def test_a_refused_offer_falls_through_to_the_next_cheapest(self) -> None:
+    def test_a_refused_offer_falls_through_to_the_next_best_value(self) -> None:
         """The create endpoint can refuse an offer the search still lists."""
         live: list[dict] = []
         asked: list[str] = []

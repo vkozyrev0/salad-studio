@@ -46,17 +46,25 @@ TIMEOUT_S = 45
 UA = "SaladStudio/1.0"
 
 # The replacement search: a cheap 24 GB host that can run the klein image and
-# pull its weights. The user edits the price and the two link floors; CUDA 13 is
-# the image's hard floor (docs/workflow/23 section 5).
+# pull its weights. The user edits the GPU list, the price, reliability and the
+# two link floors; CUDA 13 is the image's hard floor (docs/workflow/23 section 5).
 INSTANCE_DISK_GB = 100
 SEARCH_DISK_GB = 140
 SEARCH_GPU_RAM_MB = 24000
+# An empty GPU list must not mean "any GPU": the measured unfiltered search's
+# cheapest 24 GB offer is a Tesla P40 at $0.108/hr. The order is the preference
+# order, so a 5090 wins a tie against a 4090.
+DEFAULT_GPU_NAMES: tuple[str, ...] = ("RTX 5090", "RTX 4090")
+GPU_CHOICES: tuple[str, ...] = ("RTX 5090", "RTX 4090", "RTX A6000", "A100 PCIE")
+OFFER_QUERY_LIMIT = 100
 REPLACE_DEFAULTS: dict[str, Any] = {
     "enabled": False,
     "max_price": 0.50,
     "min_down_mbps": 200,
     "min_up_mbps": 100,
     "cuda_min": 13.0,
+    "min_reliability": 0.95,
+    "gpu_names": DEFAULT_GPU_NAMES,
 }
 REPLACE_WAIT_TRIES = 20
 REPLACE_WAIT_S = 15.0
@@ -579,14 +587,46 @@ def _num(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _gpu_names(raw: Any) -> list[str]:
+    """The GPU models a search accepts, in preference order.
+
+    A list, tuple, set or comma string is accepted, so the stored record and the
+    page's entry box speak the same shape. A known name is canonicalized
+    case-insensitively, blanks and duplicates are dropped, and an empty list
+    restores :data:`DEFAULT_GPU_NAMES` rather than meaning "any GPU".
+    """
+    if isinstance(raw, str):
+        items: list[Any] = raw.split(",")
+    elif isinstance(raw, (list, tuple, set)):
+        items = list(raw)
+    else:
+        items = []
+    canonical = {name.casefold(): name for name in GPU_CHOICES}
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        name = canonical.get(text.casefold(), text)
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(name)
+    return out or list(DEFAULT_GPU_NAMES)
+
+
 def clean_replace(raw: Any) -> dict[str, Any]:
     """The replacement policy, clamped to values the search can use.
 
     ``enabled`` is off unless the stored document says otherwise: creating an
     instance spends money, so the option is opt-in. A hand-edited or missing
     field falls back to the defaults instead of turning the search unusable.
+    ``gpu_names`` always comes back as a fresh, non-empty list, because the
+    search that ran with an empty list rents a Tesla P40.
     """
-    out = dict(REPLACE_DEFAULTS)
+    out = {**REPLACE_DEFAULTS, "gpu_names": list(DEFAULT_GPU_NAMES)}
     if not isinstance(raw, dict):
         return out
     out["enabled"] = bool(raw.get("enabled"))
@@ -594,6 +634,10 @@ def clean_replace(raw: Any) -> dict[str, Any]:
         value = _num(raw.get(key), -1.0)
         if value >= 0:
             out[key] = value
+    reliability = _num(raw.get("min_reliability"), -1.0)
+    if 0.0 <= reliability <= 1.0:
+        out["min_reliability"] = reliability
+    out["gpu_names"] = _gpu_names(raw.get("gpu_names"))
     return out
 
 
@@ -618,8 +662,32 @@ def clean_pending(raw: Any) -> dict[str, Any]:
     }
 
 
+def offer_value(offer: Any) -> float:
+    """Images per dollar: vast.ai's perf index divided by the hourly price.
+
+    ``dlperf_per_dphtotal`` is the API's own answer when it carries one; the
+    division is the fallback for an older or partial record. A missing or zero
+    input yields 0.0 rather than a division by zero.
+    """
+    if not isinstance(offer, dict):
+        return 0.0
+    stated = _num(offer.get("dlperf_per_dphtotal"))
+    if stated > 0:
+        return stated
+    price = _num(offer.get("dph_total"))
+    perf = _num(offer.get("dlperf"))
+    if price > 0 and perf > 0:
+        return perf / price
+    return 0.0
+
+
 def offer_query(replace: Any) -> dict[str, Any]:
-    """The vast.ai offer search for a replacement, cheapest first."""
+    """The vast.ai offer search, highest images per dollar first.
+
+    The server's order avoids the price-window starvation of a 100-offer limit:
+    a cheap-but-slow page can hide every card that actually buys more images.
+    The client re-sorts with the full key as a safety net.
+    """
     policy = clean_replace(replace)
     return {
         "num_gpus": {"eq": 1},
@@ -629,12 +697,14 @@ def offer_query(replace: Any) -> dict[str, Any]:
         "inet_down": {"gte": policy["min_down_mbps"]},
         "inet_up": {"gte": policy["min_up_mbps"]},
         "dph_total": {"lte": policy["max_price"]},
+        "gpu_name": {"in": policy["gpu_names"]},
+        "reliability2": {"gte": policy["min_reliability"]},
         "rentable": {"eq": True},
         "verified": {"eq": True},
         "rented": {"eq": False},
         "type": "on-demand",
-        "order": [["dph_total", "asc"]],
-        "limit": 100,
+        "order": [["dlperf_per_dphtotal", "desc"]],
+        "limit": OFFER_QUERY_LIMIT,
     }
 
 
@@ -696,7 +766,11 @@ def search_offers(
 
 
 def offer_meets(offer: Any, replace: Any) -> bool:
-    """Whether one offer clears every floor the policy names."""
+    """Whether one offer clears every floor the policy names.
+
+    ``reliability2`` fails closed when the record omits it: a host that cannot
+    state its reliability is not the host the floor was meant to allow.
+    """
     if not isinstance(offer, dict) or offer.get("id") is None:
         return False
     policy = clean_replace(replace)
@@ -708,34 +782,86 @@ def offer_meets(offer: Any, replace: Any) -> bool:
         and _num(offer.get("inet_down")) >= policy["min_down_mbps"]
         and _num(offer.get("inet_up")) >= policy["min_up_mbps"]
         and _num(offer.get("dph_total"), 1e9) <= policy["max_price"]
+        and str(offer.get("gpu_name") or "").strip() in set(policy["gpu_names"])
+        and _num(offer.get("reliability2"), 0.0) >= policy["min_reliability"]
         and offer.get("rentable") is not False
     )
 
 
-def pick_offers(
-    offers: list[dict[str, Any]], replace: Any, *, limit: int = 3
-) -> list[dict[str, Any]]:
-    """The offers that clear the floors, cheapest first, up to ``limit``.
+def matching_offers(offers: list[dict[str, Any]], replace: Any) -> list[dict[str, Any]]:
+    """Every offer that clears the floors, best value first.
 
-    The create endpoint can refuse an offer that the search still lists (another
-    renter took it, or the host cannot start the container), so the caller keeps
-    a short queue of alternatives instead of giving up on the first refusal.
+    The order is the contract's ranking: images per dollar descending, then the
+    GPU preference list, then price, then the faster links. No cap: this is the
+    list the results table shows, and the user picks from all of it.
     """
-    good = [offer for offer in offers if offer_meets(offer, replace)]
+    policy = clean_replace(replace)
+    rank = {name: index for index, name in enumerate(policy["gpu_names"])}
+    good = [offer for offer in offers if offer_meets(offer, policy)]
     good.sort(
         key=lambda offer: (
+            -offer_value(offer),
+            rank.get(str(offer.get("gpu_name") or "").strip(), len(rank)),
             _num(offer.get("dph_total"), 1e9),
             -_num(offer.get("inet_down")),
             -_num(offer.get("inet_up")),
         )
     )
-    return good[: max(0, int(limit))]
+    return good
+
+
+def pick_offers(
+    offers: list[dict[str, Any]], replace: Any, *, limit: int = 3
+) -> list[dict[str, Any]]:
+    """The best-value offers that clear the floors, up to ``limit``.
+
+    The create endpoint can refuse an offer that the search still lists (another
+    renter took it, or the host cannot start the container), so the caller keeps
+    a short queue of alternatives instead of giving up on the first refusal.
+    """
+    return matching_offers(offers, replace)[: max(0, int(limit))]
 
 
 def pick_offer(offers: list[dict[str, Any]], replace: Any) -> dict[str, Any] | None:
-    """The cheapest offer that clears the floors, ties broken by download speed."""
+    """The highest-value offer that clears the floors, or None."""
     options = pick_offers(offers, replace, limit=1)
     return options[0] if options else None
+
+
+def offer_cells(offer: Any) -> dict[str, str]:
+    """One offer as the results table's cell text, keyed by the page's columns."""
+    data = offer if isinstance(offer, dict) else {}
+
+    def shown(key: str) -> bool:
+        return data.get(key) is not None
+
+    value = ""
+    if _num(data.get("dlperf_per_dphtotal")) > 0 or (
+        _num(data.get("dlperf")) > 0 and _num(data.get("dph_total")) > 0
+    ):
+        value = f"{offer_value(data):g}"
+    return {
+        "gpu": str(data.get("gpu_name") or "").strip(),
+        "price": f"${_num(data.get('dph_total')):.3f}" if shown("dph_total") else "",
+        "perf": f"{_num(data.get('dlperf')):g}" if shown("dlperf") else "",
+        "value": value,
+        "vram": (
+            str(round(_num(data.get("gpu_ram")) / 1024))
+            if shown("gpu_ram")
+            else ""
+        ),
+        "disk": f"{_num(data.get('disk_space')):g}" if shown("disk_space") else "",
+        "cuda": str(_num(data.get("cuda_max_good"))) if shown("cuda_max_good") else "",
+        "down": f"{_num(data.get('inet_down')):g}" if shown("inet_down") else "",
+        "up": f"{_num(data.get('inet_up')):g}" if shown("inet_up") else "",
+        "reliability": (
+            f"{_num(data.get('reliability2')):.3f}"
+            if shown("reliability2")
+            else ""
+        ),
+        "location": str(data.get("geolocation") or "").strip() or "unknown",
+        "offer": str(data.get("id")) if shown("id") else "",
+    }
 
 
 def offer_label(offer: Any) -> str:
@@ -858,6 +984,113 @@ def wait_for_instance(
     return None
 
 
+def _create_and_wait(
+    key: str,
+    offers: list[dict[str, Any]],
+    *,
+    image: str,
+    label: str = "",
+    env: str = "",
+    sender: Any | None = None,
+    sleep: Any = time.sleep,
+    tries: int = REPLACE_WAIT_TRIES,
+    interval: float = REPLACE_WAIT_S,
+) -> dict[str, Any]:
+    """Create the first offer that accepts, then wait for its endpoint.
+
+    The offers are tried in order, so an automatic replacement keeps its short
+    fallback queue. A manual rent passes one offer and therefore issues exactly
+    one PUT. ``row`` is None when the contract exists but has not mapped an
+    endpoint yet, and the message says so.
+    """
+    created: dict[str, Any] = {}
+    offer: dict[str, Any] = {}
+    refused: list[str] = []
+    for candidate in offers:
+        attempt = create_instance(
+            key,
+            int(candidate["id"]),
+            image=image,
+            env=env,
+            label=label,
+            sender=sender,
+        )
+        if attempt.get("contract") is not None:
+            created = attempt
+            offer = candidate
+            break
+        refused.append(str(attempt.get("error") or "the create failed"))
+    if created.get("contract") is None:
+        return {
+            "action": "error",
+            "message": "could not create the instance: " + "; ".join(refused),
+        }
+    contract = int(created["contract"])
+    row = wait_for_instance(
+        key,
+        contract,
+        sender=sender,
+        sleep=sleep,
+        tries=tries,
+        interval=interval,
+    )
+    message = f"created instance {contract} on {offer_label(offer)}"
+    clean_label = str(label or "").strip()
+    clean_image = str(image or "").strip()
+    if row is None:
+        return {
+            "action": "created",
+            "contract": contract,
+            "row": None,
+            "offer": offer,
+            "label": clean_label,
+            "image": clean_image,
+            "message": message + "; it has not mapped an endpoint yet",
+        }
+    row = {**row, "label": clean_label, "image": clean_image}
+    return {
+        "action": "created",
+        "contract": contract,
+        "row": row,
+        "offer": offer,
+        "label": clean_label,
+        "image": clean_image,
+        "message": message + f" at {row['endpoint']}",
+    }
+
+
+def rent_offer(
+    key: str,
+    offer: dict[str, Any],
+    *,
+    image: str,
+    label: str = "",
+    env: str = "",
+    sender: Any | None = None,
+    sleep: Any = time.sleep,
+    tries: int = REPLACE_WAIT_TRIES,
+    interval: float = REPLACE_WAIT_S,
+) -> dict[str, Any]:
+    """Rent the offer the user selected, and never another one.
+
+    Exactly one PUT: a refusal is reported, not answered with a second offer.
+    That is what makes the button's row the machine the user chose.
+    """
+    if not isinstance(offer, dict) or offer.get("id") is None:
+        return {"action": "error", "message": "the selected offer has no id"}
+    return _create_and_wait(
+        key,
+        [offer],
+        image=image,
+        label=label,
+        env=env,
+        sender=sender,
+        sleep=sleep,
+        tries=tries,
+        interval=interval,
+    )
+
+
 def replace_destroyed(
     *,
     key: str,
@@ -872,7 +1105,7 @@ def replace_destroyed(
     tries: int = REPLACE_WAIT_TRIES,
     interval: float = REPLACE_WAIT_S,
 ) -> dict[str, Any]:
-    """Keep the instance, or rent the cheapest offer that meets the policy.
+    """Keep the instance, or rent the best value offer that meets the policy.
 
     ``action`` is ``alive`` (nothing to do), ``created`` (a contract exists; the
     row is present once the endpoint maps), ``missing`` (gone, replacement off),
@@ -929,63 +1162,23 @@ def replace_destroyed(
             "action": "error",
             "message": f"could not search offers: {found.get('error')}",
         }
-    offer = pick_offer(found["offers"], policy)
-    if offer is None:
+    offers = pick_offers(found["offers"], policy)
+    if not offers:
         return {
             "action": "no_offer",
             "message": (
-                "no offer meets the price, CUDA and link limits; "
-                "widen them and press Replace again"
+                "no offer meets the GPU, price, reliability, CUDA and link "
+                "limits; widen them and press Replace again"
             ),
         }
-    created: dict[str, Any] = {}
-    refused: list[str] = []
-    for candidate in pick_offers(found["offers"], policy):
-        attempt = create_instance(
-            key,
-            int(candidate["id"]),
-            image=image,
-            env=env,
-            label=label,
-            sender=sender,
-        )
-        if attempt.get("contract") is not None:
-            created = attempt
-            offer = candidate
-            break
-        refused.append(str(attempt.get("error") or "the create failed"))
-    if created.get("contract") is None:
-        return {
-            "action": "error",
-            "message": "could not create the instance: " + "; ".join(refused),
-        }
-    contract = int(created["contract"])
-    row = wait_for_instance(
+    return _create_and_wait(
         key,
-        contract,
+        offers,
+        image=image,
+        label=label,
+        env=env,
         sender=sender,
         sleep=sleep,
         tries=tries,
         interval=interval,
     )
-    message = f"created instance {contract} on {offer_label(offer)}"
-    if row is None:
-        return {
-            "action": "created",
-            "contract": contract,
-            "row": None,
-            "offer": offer,
-            "label": str(label or "").strip(),
-            "image": str(image or "").strip(),
-            "message": message + "; it has not mapped an endpoint yet",
-        }
-    row = {**row, "label": str(label or "").strip(), "image": str(image or "").strip()}
-    return {
-        "action": "created",
-        "contract": contract,
-        "row": row,
-        "offer": offer,
-        "label": str(label or "").strip(),
-        "image": str(image or "").strip(),
-        "message": message + f" at {row['endpoint']}",
-    }

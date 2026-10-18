@@ -125,7 +125,7 @@ VAST_OFFER_GRID_COLUMNS: tuple[tuple[str, str, int, bool], ...] = (
     ("price", "$/hr", 70, False),
     ("perf", "Perf", 60, False),
     ("value", "Perf/$", 75, False),
-    ("vram", "VRAM GB", 70, False),
+    ("vram", "VRAM GB", 82, False),
     ("disk", "Disk GB", 70, False),
     ("cuda", "CUDA", 55, False),
     ("down", "Down", 70, False),
@@ -2281,9 +2281,6 @@ class SaladStudio(tk.Tk):
         )
         self.vast_search_btn.pack(side="left", padx=(6, 0))
         self.var_vast_offer_status = tk.StringVar(value="")
-        ttk.Label(
-            pick, textvariable=self.var_vast_offer_status, style="Status.TLabel"
-        ).pack(side="left", padx=(12, 0))
 
         self.vast_offer_tree = ttk.Treeview(
             rent,
@@ -2306,8 +2303,16 @@ class SaladStudio(tk.Tk):
         self.vast_offer_tree.grid(row=3, column=0, sticky="nsew")
         offer_scroll.grid(row=3, column=1, sticky="ns")
 
+        ttk.Label(
+            rent,
+            textvariable=self.var_vast_offer_status,
+            style="Status.TLabel",
+            wraplength=900,
+            justify="left",
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))
+
         actions = ttk.Frame(rent)
-        actions.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        actions.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         self.vast_rent_btn = ttk.Button(
             actions,
             text="Create instance on selected offer",

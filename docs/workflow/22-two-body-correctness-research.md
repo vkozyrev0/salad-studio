@@ -1,7 +1,7 @@
 # 22. Can we get anatomically correct two-body scenes *every time*?
 
 **Status: an external research record, not a decision.** Two independent
-deep-research passes ran on **2026-09-23** against the question *"we need our sex
+deep-research passes ran on **2026-09-22** against the question *"we need our sex
 scenes to be perfect, anatomically correct, every time"*. Both returned
 **Partial**. Coverage gaps remain and are listed in §7. This document records
 what they found, with the sources they cite, so the next session does not
@@ -34,9 +34,9 @@ Three findings, and both passes converge on all three.
    composite), or an engine with hand-keyed penetration. Diffusion is then
    reserved for styling and aftereffects.
 3. **The one code-verified mechanism for keeping two partners' features from
-   bleeding together targets our current family, not SDXL.** Masking each
-   regional LoRA's activation delta to its own box, so it multiplies to zero
-   everywhere else, is implemented for **Krea 2 / Flux.2-Klein** and explicitly
+   bleeding together is Krea 2 only; it refuses SDXL and Klein adapters.**
+   Masking each regional LoRA's activation delta to its own box, so it
+   multiplies to zero everywhere else, is implemented for Krea 2 and explicitly
    refuses adapters trained for a different base architecture [18]. An
    SDXL/Illustrious stack therefore **cannot** use it and is left with regional
    prompting, which reduces cross-contamination rather than eliminating it.
@@ -53,8 +53,8 @@ diffusion config. It is either *accept the seed lottery and select* (what doc 21
 
 What Salad stocks and the custom-image escape hatch: the official Comfy recipe list is doc 14 §1 —
 the `Official Salad Comfy recipes` row at `docs/workflow/14-salad-comfy-live-findings.md:37`
-(Dreamshaper 8, FLUX.1-Dev, FLUX.1-Schnell, SDXL, SD 3.5 Medium, **not** Krea 2); the custom image
-that carries the rest is doc 23 §1.
+(Dreamshaper 8, FLUX.1-Dev, FLUX.1-Schnell, SDXL, SD 3.5 Medium, **not** Krea 2) [7]; the custom
+image that carries the rest is doc 23 §1.
 
 ### 3.2 Illustrious-family reliability for two-body scenes
 
@@ -68,10 +68,10 @@ that carries the rest is doc 23 §1.
   users as unreliable for two-body scenes: extra people appear, `hugging` produces "sandwich
   hugging", **~20 % of couple generations gain an unwanted second male**, the second character is
   cut off even with `FULL BODY`, and extra or deformed limbs appear [6].
-- **Orifice placement is a known base-model failure**: without a helper LoRA, SDXL-family
-  checkpoints return vaginal anatomy when anal was requested **about half the time** — why
-  genital/pose LoRAs exist (Subtle Poses AnalSex XL3; Anus/Vulva Helper XL, best at LoRA 0.2 then
-  img2img at 0.5–0.8) [4].
+- **Orifice placement is a known base-model failure**: users report that without a helper LoRA,
+  SDXL-family checkpoints return vaginal anatomy when anal was requested **about half the
+  time**. That is why genital/pose LoRAs exist (Subtle Poses AnalSex XL3; Anus/Vulva Helper XL,
+  best at LoRA 0.2 then img2img at 0.5–0.8) [4].
 
 ### 3.3 Separating two partners
 
@@ -90,7 +90,7 @@ identity and layout; it combines with LoRA or InstantID without extra tuning [23
 
 - **No concrete two-skeleton OpenPose recipe for SDXL at 1024 was verified** by either pass — no
   node pack, preprocessor, handler, or documented limit for overlapping interlocked bodies. Both
-  passes name this the single highest-value unanswered operational question [13].
+  passes name this the single highest-value unanswered operational question.
 - What does exist: an SDXL ControlNet trained on **DWPose** conditioning at 1024 for 15,000 steps
   [14]; preprocessors that emit **multi-skeleton** hints, returning a list of poses in an OpenPose
   JSON `people` list [15]; an editor node pack with documented multi-person support, a configurable
@@ -107,11 +107,12 @@ identity and layout; it combines with LoRA or InstantID without extra tuning [23
 
 ### 3.5 What SDXL has no verified answer for
 
-Per-partner DNA/identity, camera angle, style aftereffects, and
-medieval/other backgrounds. This document's §3.5 already recorded four of the nine
-required
-outputs as having zero surviving evidence; both passes re-confirm the negative
-stands and is *"no verified tool"*, not *"verified to be none"* [13][34][35].
+Four of the nine required outputs have zero surviving evidence: fixer LoRAs
+(requirement 3), genital-act correctness (requirement 4), camera control
+(requirement 6), and style aftereffects (requirement 7). Both passes re-confirm
+that the negative stands as *"no verified tool"*, not *"verified to be none"*.
+Per-partner identity (requirement 5) has a verified failure mode and a
+Krea-2-only fix, so it is not zero-evidence.
 
 ---
 
@@ -147,7 +148,7 @@ Two viable engine paths: a **procedural** one (penis-tip bone depth/direction ma
 
 ## 5. Operational constraints that apply whichever route is chosen
 
-- Gateway and control-plane behaviour, including what cannot be changed after creation: §10, its §3's table and doc 23 §2.2/§3. Salad's product default is **3 replicas** [9]. This repo's group recipe is **1 replica** until `/ready` is green (doc 23 §2.2). At least 3 for testing and **at least 5 for production**, since nodes are **interruptible without warning** [9].
+- Gateway and control-plane behaviour, including what cannot be changed after creation: §10, its §3's table and doc 23 §2.2/§3 [11]. Salad's product default is **3 replicas** [9]. This repo's group recipe is **1 replica** until `/ready` is green (doc 23 §2.2). At least 3 for testing and **at least 5 for production**, since nodes are **interruptible without warning** [9].
 - Hardware sizing as published for this family (generic model-class figures, not two-body measurements):
 
   | Target | Min VRAM | GPU class | System RAM |
@@ -158,7 +159,7 @@ Two viable engine paths: a **procedural** one (penis-tip bone depth/direction ma
 
   Published SDXL figures: 5–15 s/image at 12 GB, 15–30 s at 24 GB with refiner; the SDXL-with-Refiner recipe is benchmarked at ~**3,405 images/$** (~$0.000294/image, ~9.6 s at 18 virtual users, 1024×1024, 20 base + 5 refiner steps, single-person workload), so it does not price the target workload [12].
 - The manifest downloads models **before** the instance serves traffic (`/ready` 503 until the warmup workflow completes); recipe images range 6 GB (Dreamshaper 8) to 16 GB (Flux) and can take tens of minutes to pull [9].
-- **Repo rule still applies:** one unet family per container group, so repurposing `flux2-klein2`/`flux2-klein-5090` for SDXL may be an operational no-go and a new group is the practical choice [34].
+- **Repo rule still applies:** one unet family per container group, so repurposing `flux2-klein2`/`flux2-klein-5090` for SDXL may be an operational no-go and a new group is the practical choice.
 
 ---
 
@@ -167,7 +168,7 @@ Two viable engine paths: a **procedural** one (penis-tip bone depth/direction ma
 1. **A measured two-skeleton OpenPose recipe for SDXL at 1024**, including control weights and behaviour on overlapping interlocked bodies. Both passes name this the highest-value gap.
 2. **Per-region LoRA-delta masking that accepts SDXL/Illustrious adapters.** Today the implementations refuse them.
 3. **Any published per-scene seed hit rate** for a diffusion configuration on two-body interlock, from any family. Nothing measured exists.
-4. **A head-to-head of the three routes** — SDXL/Illustrious (§3), 3D (§4: DAZ/Blender, Unreal+MetaHuman, Unity/Unreal procedural) and the current family (§1 finding 3), the third route in the comparison — on still quality, cost and complexity. No source ranks them; the 3D evidence is per-technique testimony from individual developers, not a benchmark.
+4. **A head-to-head of the three routes** — SDXL/Illustrious (§3), 3D (§4: DAZ/Blender, Unreal+MetaHuman, Unity/Unreal procedural) and the current Klein family (doc 21), the third route in the comparison — on still quality, cost and complexity. No source ranks them; the 3D evidence is per-technique testimony from individual developers, not a benchmark.
 
 ---
 
@@ -176,17 +177,17 @@ Two viable engine paths: a **procedural** one (penis-tip bone depth/direction ma
 Both reports returned **Partial**. The gaps that matter here:
 
 - No primary-source quantified two-body reliability report for realistic SDXL merges (Juggernaut XL, RealVisXL); **WAI-Illustrious-SDXL v17 and Pony Diffusion V6** not verified from their own model cards; `dw_openpose_full` / DWPose as *the* full-body preprocessor appeared only in secondary guides; and no dedicated benchmark for "penetration in the wrong orifice" exists.
-- Salad sources are master-branch files and docs pages dated 2026-01-08 with **no live API call**; only the five recipe Dockerfiles/manifests in `salad-recipes/recipes/comfyui` were enumerated; and `salad.com/models` omits flux1dev and stablediffusion35medium that the docs recipe page lists.
+- Salad sources are master-branch files and docs pages dated 2026-01-08 with **no live API call**; only the five recipe Dockerfiles/manifests in `salad-recipes/recipes/comfyui` were enumerated; and `salad.com/models` omits flux1dev and stablediffusion35medium that the docs recipe page lists [8].
 - **No Reddit source was inspected** (r/adultgamedev, r/nsfwdev), so no Reddit recommendation is claimed; `docs.blender.org` was **Cloudflare-blocked** (the Cryptomatte standard was used instead); the Diffeomorphic addon's own wiki rendered only a navigation stub; and cloth/soft-body coupling and genital physics in engines had no inspected source.
 - One claim was **excluded by verification** (camera angle on Qwen-Image-Edit-2509; §10, its §2.2).
 
-Full gap list of the two passes: retained above in condensed form; the binding ones are §1 finding 1 and §6 item 3.
+The full gap list is condensed here; the binding gaps are §1 finding 1 and §6 item 3.
 
 ---
 
 ## 8. Sources
 
-Numbered in citation order. All fetched **2026-09-23**.
+Numbered in citation order. All fetched **2026-09-22** and re-fetched **2026-09-23**.
 
 | # | Source |
 |---|---|
@@ -199,10 +200,8 @@ Numbered in citation order. All fetched **2026-09-23**.
 | 7 | Salad recipe `form.json` + `manifests/sdxl-with-refiner.yml`; ComfyUI API Recipes. https://raw.githubusercontent.com/SaladTechnologies/salad-recipes/master/recipes/comfyui/form.json ; https://raw.githubusercontent.com/SaladTechnologies/salad-recipes/master/recipes/comfyui/manifests/sdxl-with-refiner.yml ; https://docs.salad.com/container-engine/reference/recipes/comfyui |
 | 8 | Recipes & Models. https://salad.com/models |
 | 9 | Deploy Image and Video Generation with ComfyUI. https://docs.salad.com/container-engine/how-to-guides/ai-machine-learning/deploy-stable-diffusion-comfy |
-| 10 | In-repo: `salad_klein/manifest.yaml`; `salad_klein/test_prefetch.py`; §10, its §3.1 |
 | 11 | Salad. Load Balancing Options; Long-Running Tasks. https://docs.salad.com/container-engine/explanation/gateway/load-balancer-options ; https://docs.salad.com/container-engine/explanation/job-processing/long-running-tasks |
 | 12 | Salad SDXL benchmark; hardware table from [9]. https://blog.salad.com/sdxl-benchmark/ |
-| 13 | §10, its §2.3 (two-person pose conditioning: unverified but not unavailable) |
 | 14 | dimitribarbot/controlnet-dwpose-sdxl-1.0. https://huggingface.co/dimitribarbot/controlnet-dwpose-sdxl-1.0 |
 | 15 | Fannovel16/comfyui_controlnet_aux (DWPose source + README). https://github.com/Fannovel16/comfyui_controlnet_aux |
 | 16 | westNeighbor/ComfyUI-ultimate-openpose-editor. https://github.com/westNeighbor/ComfyUI-ultimate-openpose-editor |
@@ -223,8 +222,6 @@ Numbered in citation order. All fetched **2026-09-23**.
 | 31 | F95zone. "About DazToUnreal workflow (+ gens tests)". https://f95zone.to/threads/about-daztounreal-workflow-gens-tests.135115/ |
 | 32 | PRIMAL BONE MetaHuman nude female / bundle; Lewd Metahuman Creator. https://primalbone.itch.io/metahuman-nude-female ; https://primalbone.itch.io/metahuman-nude-male-and-female ; https://fireblade185.itch.io/lewd-metahuman-creator |
 | 33 | JANKU (Civitai 1277670); HomoSimile XL (Civitai 964011). https://civitai.com/models/1277670 ; https://civitai.com/models/964011 |
-| 34 | In-repo: `salad_studio/salad_status.py`; doc 15 (group facts, one unet family per group) |
-| 35 | this document's §3.5 (style aftereffects, genital-act correctness, camera control, medieval backgrounds: zero surviving evidence) |
 
 ## 9. Anatomy research
 
@@ -246,8 +243,8 @@ whole content domain here and nothing outside it is considered.
 
 ### 1. Executive summary, what changed
 
-Three things we believed last session did not survive verification, and two things we had
-never suspected turned out to be the actual cause.
+Three things we believed last session did not survive verification, and two causes we had not
+suspected did.
 
 **Our hypotheses that were refuted:** the 5049-char prompt is over budget (**refuted 0-3** — prompt
 *length* is not why the missionary plate failed); "FLUX does not support negative prompts at all"
@@ -263,6 +260,8 @@ only the optimizer-blindness mechanism survived, and it does not apply to our pl
    cowgirl *"95% chance of getting reverse"*, spooning *"nothing but amputee body horrors"*.
    Other reports on the same model: a doubled object in the mouth of an oral scene,
    anatomy emerging from the navel or knee, feet deforming (see §4).
+2. **Shot scale tracks failure.** Plates that rendered put the figures at **40 to 53 % of
+   frame**, failing ones at **25 to 30 %** (§3.1).
 The position blacklist and why it was inert at CFG 1: doc 21 §4.
 
 **Our own best measured result, corrected.** A short affirmative
@@ -508,8 +507,8 @@ do not rebuild it (doc 21 §6.7).
 
 #### 5.1 Tested prototype, measured negative result
 
-A prototype was scored against a **labelled set of 15 plates (12 BAD, 3 GOOD)** (one entry a
-byte-identical duplicate, so 12 distinct BAD). Deliverable: `target/klein_ab/qc/anatomy_qc.py`,
+A prototype was scored against a **labelled set of 15 plates (12 BAD, 3 GOOD)**. One GOOD entry
+duplicates another, so the set holds **12 distinct BAD and 2 distinct GOOD**. Deliverable: `target/klein_ab/qc/anatomy_qc.py`,
 raw per-plate JSON `target/klein_ab/qc/eval_*.jsonl`. The label set was miscalibrated; rebuild it
 before scoring again — §10, its §5.
 
@@ -581,7 +580,7 @@ gitignored `target/`.
 
 ### 7. Work that this doc invalidates
 
-- Every site this section named is listed, with its correction, in doc 21's "What this supersedes" table and §7. Commit `1c1ac38a` on `salad-studio-audit-catalog-assist` is **wrong on the branch** (cuddle prompt, penis LoRA at 81, 6 steps); PR #61's §4 body describes the disproven recipe and needs a third rewrite.
+The corrections that superseded earlier statements are in doc 21's "What this supersedes" table.
 
 ---
 
@@ -717,9 +716,8 @@ The four zero-evidence outputs (fixer LoRAs, genital-act correctness, camera con
 | **Job Queue path** | **no timeout**, handles multi-minute generation |
 | Async option | **webhooks** while still using the gateway |
 
-This **fully explains our production failure**: any ComfyUI graph whose handler must download a
-LoRA at request time cannot be relied on to return inside 100 s, which is exactly what broke
-every LoRA-bearing graph after the replica restart. Our 120 s figure is a separate client/proxy
+This is **consistent with the 524 we reproduced**: a graph that must download a LoRA at request
+time cannot be relied on to return inside 100 s. Our 120 s figure is a separate client/proxy
 read timeout, not a Salad value.
 
 #### 3.1 But do NOT reach for `models.before_start`, our repo already rejected it, for a reason
@@ -728,7 +726,7 @@ The research recommends `manifest.yaml` `models.before_start` (vendor-documented
 `comfyui-api` OSS README numbers it as startup steps 4/5). **Our repo deliberately keeps it
 empty**, `salad_klein/manifest.yaml`:
 
-> `# Empty: Salad's wrapper downloads before_start files one-by-one and that is what the startup probe was killing. prefetch.py pulls all three in parallel, then execs comfyui-api.` `# Civitai LoRAs stay URL-loaded.`, `models:` / `before_start: []`
+> `# Empty: Salad's wrapper downloads before_start files one-by-one and that is what the startup probe was killing. prefetch.py pulls every selected unet plus the CLIP and VAE in parallel, then execs comfyui-api. Civitai LoRAs stay URL-loaded.` `models:` / `before_start: []`
 
 Salad's **sequential** `before_start` download is what caused a 25-minute startup (doc 15,
 "Startup-probe death loop"), and `test_prefetch.py:32` asserts the file stays `before_start: []`.

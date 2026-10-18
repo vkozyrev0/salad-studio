@@ -205,6 +205,21 @@ class EndpointDerivation(unittest.TestCase):
         }
         self.assertEqual(vast.instance_endpoint(instance), "http://10.0.0.6:31234")
 
+    def test_the_salad_wrapper_port_wins_over_raw_comfyui(self) -> None:
+        """The wrapper resolves Civitai LoRA URLs; 8188 only takes local files."""
+        instance = {
+            "public_ipaddr": "10.0.0.10",
+            "ports": {
+                "3000/tcp": [{"HostPort": 31080}],
+                "8188/tcp": [{"HostPort": 31151}],
+            },
+        }
+        self.assertEqual(
+            vast.instance_endpoint(instance),
+            "http://10.0.0.10:31080",
+            "the wrapper is the port that can run a Civitai LoRA graph",
+        )
+
     def test_one_other_non_ssh_port_is_used_when_no_comfy_port_is_mapped(self) -> None:
         """A template that publishes ComfyUI elsewhere is still usable."""
         instance = {
@@ -716,6 +731,35 @@ class EvidenceReconciliation(unittest.TestCase):
         self.assertEqual(summary["promoted"], "56496191")
         self.assertEqual(row["image"], EVIDENCE_IMAGE, "the image survives the promotion")
 
+    def test_the_active_target_follows_an_endpoint_move(self) -> None:
+        """A port preference change moves the row; the selection moves with it."""
+        doc = {
+            "active": "http://1.2.3.4:31151",
+            "instances": [
+                {
+                    "id": 56507376,
+                    "endpoint": "http://1.2.3.4:31151",
+                    "label": "salad-studio-53518141",
+                    "gpu": "RTX 5090",
+                    "state": "running",
+                    "image": "",
+                }
+            ],
+        }
+        record = {
+            "id": 56507376,
+            "public_ipaddr": "1.2.3.4",
+            "actual_status": "running",
+            "ports": {
+                "3000/tcp": [{"HostPort": 31080}],
+                "8188/tcp": [{"HostPort": 31151}],
+            },
+        }
+        doc, summary = vast.reconcile(doc, [record], complete=True)
+        self.assertEqual(doc["instances"][0]["endpoint"], "http://1.2.3.4:31080")
+        self.assertEqual(doc["active"], "http://1.2.3.4:31080")
+        self.assertIn("http://1.2.3.4:31151", summary["gone_endpoints"])
+
     def test_a_complete_listing_never_deletes_a_missing_row(self) -> None:
         doc = self._evidence_doc()
         doc, _summary = vast.reconcile(doc, [EVIDENCE_RECORD], complete=True)
@@ -813,6 +857,21 @@ class VastGeneration(unittest.TestCase):
             )
         self.assertIn("401", str(caught.exception))
         self.assertEqual(list(self.out.glob("studio_*.jpg")), [], "no plate on a refusal")
+
+    def test_a_200_with_no_images_reports_the_reason_not_a_type_error(self) -> None:
+        """An accepted POST with no plate must name the empty answer."""
+        send = _Recorder(
+            200, json.dumps({"prompt": {"9": {"class_type": "SaveImage"}}}).encode()
+        )
+        with self.assertRaises(RuntimeError) as caught:
+            generator.generate_from_vast(
+                endpoint="1.2.3.4:31234",
+                payload=self.PAYLOAD,
+                out_dir=self.out,
+                sender=send,
+            )
+        self.assertIn("no images", str(caught.exception))
+        self.assertEqual(list(self.out.glob("studio_*")), [], "no plate on an empty answer")
 
     def test_a_prompt_id_answer_is_polled_on_the_same_instance(self) -> None:
         """A native Comfy answer carries no images[]; /history has them."""

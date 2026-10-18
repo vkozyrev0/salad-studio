@@ -494,7 +494,10 @@ LoRA cached. Comfy on `8188` rejected the same graph with
 LoRA node removed, Comfy returned a 2.39 MB PNG in 88 seconds.
 
 The wrapper is the right endpoint for this app's graphs, because the profiles
-carry Civitai LoRA URLs. Keep the row on the wrapper port.
+carry Civitai LoRA URLs. Keep the row on the wrapper port. The app follows this
+section: `instance_endpoint` prefers `3000` whenever the instance maps it, so a
+Salad image's row points at the wrapper even when Comfy's `8188` is also mapped.
+A 200 answer with no plate is reported by name, not retried.
 
 ---
 

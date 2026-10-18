@@ -31,12 +31,13 @@ INSTANCES_URL = f"{VAST_API}/instances/"
 # Past that the listing stops and sets ``truncated``: a short list that looks
 # complete is worse than one that says it was cut off.
 MAX_PAGES = 4
-# The container ports a ComfyUI template publishes, most likely first: the
-# vast.ai ComfyUI template serves 8188 (some images 18188), and the Salad images
-# run Comfy on 3000. A request has to reach the host port the instance maps to
-# one of these, which is why the endpoint is derived from the instance record
-# rather than typed in.
-COMFY_PORTS: tuple[int, ...] = (8188, 18188, 3000)
+# The container ports an instance may publish for a render, most useful first.
+# The Salad wrapper on 3000 is the endpoint this app's images answer on: it
+# resolves Civitai LoRA URLs and returns the plate as base64. A native vast.ai
+# ComfyUI template serves 8188 (some images 18188), which is the fallback. A
+# request has to reach the host port the instance maps to one of these, which is
+# why the endpoint is derived from the instance record rather than typed in.
+COMFY_PORTS: tuple[int, ...] = (3000, 8188, 18188)
 # Never a ComfyUI port: ssh is mapped by every template, so it cannot be the one
 # a render should reach.
 SSH_PORTS: tuple[int, ...] = (22, 2222)
@@ -143,12 +144,15 @@ def _host_port(ports: Any, port: int) -> int | None:
 def instance_endpoint(
     instance: dict[str, Any], ports: tuple[int, ...] = COMFY_PORTS
 ) -> str:
-    """The URL ComfyUI on this instance answers on, or "" when it maps none.
+    """The URL this instance's render API answers on, or "" when it maps none.
 
-    The ComfyUI template's own port is preferred, in order. A template that
-    publishes ComfyUI somewhere else is still usable when it maps exactly one
-    other non-ssh port, because that is the only thing a render could reach; a
-    stopped instance maps nothing at all, which is the honest "".
+    The Salad wrapper's port (3000) is preferred when it is mapped: it resolves
+    Civitai LoRA URLs and answers with base64 images, and it serves a graph with
+    no Civitai URL just as well. A native ComfyUI template's 8188 (some images
+    18188) is the fallback. A template that publishes ComfyUI somewhere else is
+    still usable when it maps exactly one other non-ssh port, because that is
+    the only thing a render could reach; a stopped instance maps nothing at all,
+    which is the honest "".
     """
     if not isinstance(instance, dict):
         return ""
@@ -657,6 +661,14 @@ def reconcile(
     before = {row["endpoint"] for row in rows if row["endpoint"]}
     original_rows = [dict(row) for row in rows]
     original_active = normalize_endpoint(doc.get("active"))
+    # The row the active target names, so an endpoint that moves (the wrapper
+    # port winning after a preference change) keeps the user's selection.
+    active_id = ""
+    if original_active:
+        for row in rows:
+            if row["endpoint"] == original_active and row["id"] is not None:
+                active_id = str(row["id"])
+                break
     manual_endpoints = {
         row["endpoint"] for row in rows if row["id"] is None and row["endpoint"]
     }
@@ -703,6 +715,11 @@ def reconcile(
 
     endpoints = {row["endpoint"] for row in rows if row["endpoint"]}
     active = original_active if original_active in endpoints else ""
+    if not active and active_id:
+        for row in rows:
+            if str(row["id"]) == active_id and row["endpoint"]:
+                active = row["endpoint"]
+                break
     promoted = ""
     if not active:
         for row in rows:

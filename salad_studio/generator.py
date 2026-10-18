@@ -805,6 +805,13 @@ def generate_from_vast(
         msg = attempt.error if attempt.error else _attempt_error(attempt, url, job)
         _log("error", msg)
         raise RuntimeError(msg)
+    if attempt.result is None:
+        # The instance accepted the POST (so it is not retried) but the answer
+        # carried no plate. Report the attempt's own reason instead of handing
+        # None to the image decoder, which would only raise a TypeError.
+        msg = attempt.error if attempt.error else _attempt_error(attempt, url, job)
+        _log("error", msg)
+        raise RuntimeError(msg)
     out = write_plate(attempt.result, out_dir)
     _log("ok", f"wrote {out}  {out.stat().st_size} bytes")
     return out

@@ -113,7 +113,11 @@ the left and right.
   other. Both answers an instance can give are handled: a Salad-style wrapper (port **3000**) answers
   with base64 JPEGs in `images[]`, while a plain ComfyUI (port **8188**) answers with a `prompt_id`,
   so the app polls `/history/<id>` and fetches the plate from `/view`. The wrapper is the endpoint
-  that resolves Civitai LoRA URLs, so a graph that carries one needs the wrapper's port. For the host
+  that resolves Civitai LoRA URLs, so a graph that carries one needs the wrapper's port; the app
+  therefore prefers the wrapper's **3000** whenever the instance maps it and falls back to the
+  native ComfyUI port. A `LoraLoader` URL otherwise fails validation on 8188 with
+  `value_not_in_list`. An accepted POST whose answer carries no plate is reported by name instead
+  of being retried. For the host
   choice, the CUDA and driver requirement, and what each failure means, see
   [the vast.ai deployment guide](../docs/workflow/23-salad-container-group-deployment.md#5-vastai-instances). The plate's
   extension follows its own bytes - `studio_<ms>.jpg` from a wrapper, PNG from native ComfyUI - and
@@ -456,7 +460,7 @@ This folder was moved out of the Eldermark repo, so the paths that used to be re
 Three test commands, and the later ones are not part of the first:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1219 tests, ~15-30 min
+python -m unittest discover -s tests -p "test_*.py"    # 1222 tests, ~15-30 min
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```

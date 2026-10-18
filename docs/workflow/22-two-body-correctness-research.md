@@ -255,7 +255,6 @@ does not settle the question, but it falsifies "SDXL lineage is anatomy-safe by 
 A method note: **6 of the 18 confirmed claims are scoped negatives about web pages**. They
 license *"no evidence for SDXL anatomy quality was found"*, never *"SDXL anatomy quality is
 bad."*
-
 ## 6. The 3D route: anatomy by construction
 ### 6.1 DAZ to Blender
 Genitals are added in DAZ Studio as a **geograft** plus shell and material, exported as a DBZ,
@@ -286,13 +285,16 @@ Two engine paths are viable: a **procedural** one that maps penis-tip bone depth
 to morph shapes and adds an IK system, and an **animation-sync** one, the Unity VAM plugin
 **"naturalis"** [29]. Exporting DAZ genitals to Unreal is unsolved because DazToUnreal loses
 genital morphs; the fallback is **DAZ to Blender (Diffeomorphic) to Unreal** [30].
-
 ## 7. Operational constraints, whichever route is chosen
-Salad's Container Gateway caps the server response at **100 seconds**, a Cloudflare hard limit,
-and returns **524** [31]. The Client Request Timeout defaults to and caps at 100 seconds, and
-neither can be changed after the container group is created. The Job Queue path has no timeout,
-and webhooks are the async option on the gateway [32]. Our 120-second figure is a client or
-proxy read timeout, not a Salad value.
+| Fact | Value |
+| --- | --- |
+| Container Gateway server-response cap | **100 seconds**, a Cloudflare hard limit, returns **524**. Not 120. |
+| Client Request Timeout | defaults to and caps at 100 seconds; neither can be changed after the container group is created |
+| Docs' own framing | the gateway "isn't built for long jobs" |
+| Job Queue path | **no timeout**, handles multi-minute generation |
+| Async option | **webhooks** while still using the gateway |
+
+Our 120-second figure is a client or proxy read timeout, not a Salad value [31][32].
 
 Salad's product default is **3 replicas**. This repo's group recipe is **1 replica** (doc 23 §2.2)
 until `/ready` is green. Use at least 3 for testing and at least 5 for production, since nodes
@@ -318,7 +320,6 @@ the warmup workflow completes. Recipe images range from **6 GB** (Dreamshaper 8)
 
 **One unet family per container group.** Repurposing `flux2-klein2` or `flux2-klein-5090` for
 SDXL may be an operational no-go, and a new group is the practical choice.
-
 ## 8. Decisions this record produced
 **Verify the LoRA URL; do not download.** A replica loads each LoRA from its URL when the Comfy
 graph runs, so the only thing worth checking is that the URL is correct.
@@ -359,7 +360,6 @@ back would reintroduce a bug we already fixed.
 hashes never match a filename, so it polled 40 times 8 seconds, 320 seconds. Design 2 read
 `/download`'s filename without `wait: true`, which returns the version id even when cached. The
 contract was at `GET <gateway>/docs/json`.
-
 ## 9. What would change the answer
 1. **A measured two-skeleton OpenPose recipe for SDXL at 1024**, including
 control weights and behaviour on overlapping interlocked bodies. Both passes name this the
@@ -372,7 +372,6 @@ two-body interlock, from any family.
 SDXL/Illustrious (§5), 3D (§6: DAZ and Blender, Unreal plus MetaHuman, Unity and Unreal
 procedural) [36], and the current Klein family (doc 21). No source ranks them, and the 3D
 evidence is per-technique testimony, not a benchmark.
-
 ## 10. Coverage gaps and confidence
 Both reports returned **Partial**. The gaps that matter here:
 
@@ -443,8 +442,8 @@ in the text. All checked on 2026-09-22 and re-fetched on 2026-09-23.
 | 28 | F95zone, "How do we do penetration mechanics in 3D games?" (Jun 2024). https://f95zone.to/threads/how-do-we-do-penetration-mechanics-in-3d-games.210650/ |
 | 29 | Eroticissima, LoveTriggerSDK. https://www.eroticissima.wtf/sdk.html |
 | 30 | F95zone, "About DazToUnreal workflow (+ gens tests)". https://f95zone.to/threads/about-daztounreal-workflow-gens-tests.135115/ |
-| 31 | Deploy Image and Video Generation with ComfyUI. https://docs.salad.com/container-engine/how-to-guides/ai-machine-learning/deploy-stable-diffusion-comfy |
-| 32 | Salad load balancing; long-running tasks. https://docs.salad.com/container-engine/explanation/gateway/load-balancer-options ; https://docs.salad.com/container-engine/explanation/job-processing/long-running-tasks |
+| 31 | Deploy ComfyUI. https://docs.salad.com/container-engine/how-to-guides/ai-machine-learning/deploy-stable-diffusion-comfy |
+| 32 | Salad load balancing. https://docs.salad.com/container-engine/explanation/gateway/load-balancer-options ; https://docs.salad.com/container-engine/explanation/job-processing/long-running-tasks |
 | 33 | Salad SDXL benchmark. https://blog.salad.com/sdxl-benchmark/ |
 | 34 | Recipes and Models. https://salad.com/models |
 | 35 | AbHuman: 56K images, 147K bounding-box anomalies, 18 detection classes. https://huggingface.co/datasets/Enderfga/HumanRefiner |

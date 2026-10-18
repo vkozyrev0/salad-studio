@@ -1825,6 +1825,20 @@ class SaladStudio(tk.Tk):
         policy and a missing key or a down API must not look like a blank config.
         """
         name = (prof.name if prof is not None else (self.var_name.get() or "")).strip()
+        mode = (
+            str(getattr(prof, "mode", "") or "").strip().lower()
+            if prof is not None
+            else self._profile_mode()
+        )
+        if mode != "salad":
+            # A Salad group policy belongs to a Salad gateway. Reading it for a
+            # vast.ai target asks Salad about an instance URL and logs a DNS
+            # failure that says nothing about the instance.
+            if not quiet:
+                note = "The Salad group policy applies to a Salad target only."
+                self.status.set(note)
+                self.log("info", f"Policy read skipped for {name!r}: target is {mode or 'unknown'}")
+            return
         gw = (prof.gateway if prof is not None else self.var_gateway.get()).strip()
         if not gw:
             if not quiet:
@@ -1880,6 +1894,12 @@ class SaladStudio(tk.Tk):
         threading.Thread(target=work, daemon=True).start()
 
     def _apply_salad_policy(self) -> None:
+        if self._profile_mode() != "salad":
+            note = "The Salad group policy applies to a Salad target only."
+            self.status.set(note)
+            self.log("warn", f"Policy apply refused: {note}")
+            messagebox.showinfo("Salad Studio", note)
+            return
         gw = self.var_gateway.get().strip()
         if not gw:
             self.status.set("Gateway URL is empty.")

@@ -569,6 +569,51 @@ class ConfigPage(unittest.TestCase):
             "and the config keeps its own stored policy",
         )
 
+    def test_a_vast_profile_never_rechecks_the_salad_group(self) -> None:
+        """A vast target has no Salad group; the switch must not ask Salad for one."""
+        app = self.app
+        prof = profiles.default_profile("vast-test")
+        prof.mode = "vast"
+        prof.gateway = "http://203.0.113.9:31234"
+        profiles.upsert(prof)
+        tok.write_token("salad", "vast-policy-key")
+        calls: list[str] = []
+
+        def _load(gw, key):
+            calls.append(str(gw))
+            return None, "No container group matches this gateway DNS."
+
+        with mock.patch.object(
+            self.app_mod.salad_status, "load_policy", side_effect=_load
+        ), mock.patch("salad_studio.app.threading.Thread", _Inline):
+            self._select(prof.name)
+            _pump(app, lambda: False, 0.5)
+        self.assertNotIn(
+            "http://203.0.113.9:31234", calls, "a vast target has no Salad group to read"
+        )
+        self.assertNotIn(
+            "Policy re-check for 'vast-test'", app.log_text.get("1.0", "end")
+        )
+        self.assertTrue(app.var_pol_image.get(), "the stored policy still fills the fields")
+
+    def test_applying_a_salad_policy_to_a_vast_target_is_refused(self) -> None:
+        """The Apply button must not POST a Salad policy to a vast endpoint."""
+        app = self.app
+        prof = profiles.load_all()["klein"]
+        prof.mode = "vast"
+        prof.gateway = "http://203.0.113.9:31234"
+        profiles.upsert(prof)
+        self._select(prof.name)
+        with mock.patch.object(
+            self.app_mod.salad_status, "apply_policy"
+        ) as apply, mock.patch.object(
+            self.app_mod.messagebox, "showinfo"
+        ) as info:
+            app._apply_salad_policy()
+        self.assertFalse(apply.called, "no Salad policy may go to a vast host")
+        self.assertTrue(info.called, "the refusal says why")
+        self.assertIn("Salad target", app.status.get())
+
     def test_a_new_config_is_seeded_with_the_documents_image(self) -> None:
         """Adding a config stores the metadata document's image for its family."""
         app = self.app

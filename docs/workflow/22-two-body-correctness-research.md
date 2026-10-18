@@ -236,9 +236,9 @@ ControlNet OpenPose exists.
 ### 5.5 What SDXL has no verified answer for
 Four of the nine required outputs have zero surviving evidence: **fixer LoRAs (requirement 3),
 genital-act correctness (requirement 4), camera control (requirement 6), and style aftereffects
-(requirement 7)**. Both passes re-confirm that the negative stands as *"no verified tool"*, not
-*"verified to be none"*. Per-partner identity (requirement 5) is not in that set: it has a
-verified failure mode and a Krea-2-only fix, described in §5.3.
+(requirement 7)**. Both passes re-confirm the finding as *"no verified tool"*, not *"verified to
+be none"*. Per-partner identity (requirement 5) is not in that set: it has a verified failure
+mode and a Krea-2-only fix, described in §5.3.
 
 Camera angle has no SDXL path. The only camera-control node found emits camera-movement
 instructions for an image-to-image LoRA that exists solely for **Qwen-Image-Edit-2509**; its

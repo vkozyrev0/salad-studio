@@ -2469,10 +2469,19 @@ class SaladStudio(tk.Tk):
 
     @staticmethod
     def _no_endpoint_note(row: dict) -> str:
-        """Why a row cannot be selected or posted to yet."""
+        """Why a row cannot be selected or posted to, in its own state's words."""
         ident = f"#{row['id']}" if row.get("id") is not None else vast.row_label(row)
-        state = str(row.get("state") or "not ready")
-        return f"instance {ident} is {state} and has no endpoint yet"
+        state = str(row.get("state") or "").strip().lower()
+        if state == "destroyed":
+            return f"instance {ident} is destroyed; select a running instance or replace it"
+        if state in ("loading", "creating", "starting", "scheduling", "queued"):
+            return f"instance {ident} is {state} and has no endpoint yet"
+        if state in ("stopped", "exited"):
+            return (
+                f"instance {ident} is {state} and has no endpoint; "
+                "start it in the vast.ai console"
+            )
+        return f"instance {ident} has no endpoint"
 
     def _store_vast_doc(self, doc: dict, note: str) -> None:
         """Keep an edited document in memory and on disk, then redraw the page."""

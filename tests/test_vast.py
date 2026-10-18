@@ -1092,6 +1092,30 @@ class VastTabAndGenerate(unittest.TestCase):
         self.assertIn("no endpoint", app.var_vast_status.get())
         self.assertIn("#777", app.var_vast_status.get())
 
+    def test_selecting_a_destroyed_row_does_not_say_it_is_waiting(self) -> None:
+        """A destroyed instance will never map an endpoint, so "yet" is a lie."""
+        app = self._window()
+        doc = dict(app._vast_doc)
+        doc["instances"] = [
+            {
+                "id": 56373341,
+                "endpoint": "",
+                "label": "gone",
+                "gpu": "RTX 4090",
+                "state": "destroyed",
+                "image": "",
+            }
+        ]
+        doc["active"] = ""
+        app._vast_doc = doc
+        app._refresh_vast_page()
+        app.vast_tree.selection_set("56373341")
+        app._on_vast_select()
+        note = app.var_vast_status.get()
+        self.assertIn("destroyed", note)
+        self.assertNotIn("yet", note, "a destroyed instance will never map an endpoint")
+        self.assertIn("replace", note.lower(), "the note names the way forward")
+
     def test_generate_refuses_when_reconciliation_left_no_active_endpoint(self) -> None:
         app = self._window()
         doc = dict(app._vast_doc)

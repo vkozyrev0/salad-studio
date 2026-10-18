@@ -102,7 +102,18 @@ Prompts + JSON, Reuse) wears the accent colour.
   is marked), **Set image for selected** records what a fetched row runs, **New profile for this
   instance** creates a profile named for it with the target and the image's checkpoint family already
   set, **Remove selected** drops one, and **Save list** writes them to
-  `~/.config/salad/studio-vast.json`, so nothing about a vast account lands in the repo. The key authenticates the vast.ai control API only and is never sent to
+  `~/.config/salad/studio-vast.json`, so nothing about a vast account lands in the repo. **Rent a machine**
+  searches that same offer list with the criteria above the table. **GPU models** defaults to
+  `RTX 5090, RTX 4090`, first is preferred, and an empty box restores those two instead of meaning
+  "any GPU": the measured unfiltered search's cheapest 24 GB offer is a Tesla P40 at $0.108/hr. The
+  other floors are max $/hr, download and upload Mbps, CUDA, and reliability. **Find offers** uses
+  the stored key to `POST https://console.vast.ai/api/v0/bundles/` ordered by
+  `dlperf_per_dphtotal` descending, then the table re-sorts by images per dollar (`dlperf` divided by
+  $/hr), then the GPU preference, then price. Select a row and press **Create instance on selected
+  offer**: one `PUT` to that offer's ask, with the image and optional label from the row above, and
+  the new instance joins the list and becomes the active target once its endpoint maps. An instance
+  that was created but has not mapped an endpoint is kept as pending, and a second rent is refused
+  until **Fetch instances from Vast.ai** sees it. The key authenticates the vast.ai control API only and is never sent to
   an instance; a render is queued on the profile's line, like a Salad render, and POSTs the same body
   to the instance's own `/prompt`, so the plate lands in the gallery and the prompt history like any
   other. Both answers an instance can give are handled: a Salad-style wrapper (port **3000**) answers
@@ -114,10 +125,10 @@ Prompts + JSON, Reuse) wears the accent colour.
   extension follows its own bytes - `studio_<ms>.jpg` from a wrapper, PNG from native ComfyUI - and
   the gallery, the history strip and **Clean gallery** read both; the strip shows an explicit empty
   state when nothing has been rendered. When the selected instance is gone, the
-  **If the selected instance is destroyed** box can rent the cheapest offer that
-  clears the price, CUDA 13, download and upload floors it names; the create and
-  the wait for its endpoint run off the Tk thread, and the press asks for Generate
-  again once the new instance is ready.
+  **If the selected instance is destroyed** option uses the same criteria: it rents the best value
+  offer that clears them, with RTX 5090 before RTX 4090 on a tie. The create and the wait for its
+  endpoint run off the Tk thread, and the press asks for Generate again once the new instance is
+  ready.
 - **Prompt Settings**. **Width**, **Height**, **Steps**, **CFG**, **Seed**,
   **Graph** (Flux.2 Klein / Flux.1 Dev), **Scheduler** (Flux2 (Klein) / Simple
   (Civitai)), the **Checkpoint** (Base 9B / Distilled 9B / SNOFS 9B) and the
@@ -454,7 +465,7 @@ This folder was moved out of the Eldermark repo, so the paths that used to be re
 Three test commands, and the later ones are not part of the first:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1189 tests, ~15-30 min
+python -m unittest discover -s tests -p "test_*.py"    # 1190 tests, ~15-30 min
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```

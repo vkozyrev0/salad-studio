@@ -308,8 +308,10 @@ disk_space >= 140
 inet_down >= 200
 ```
 
-Sort by `dph_total`. An RTX 4090 with 24 GB cost **$0.363/hr measured** on
-2026-10-17.
+Sort by `dlperf_per_dphtotal`, not by price alone. Measured on 2026-10-17: an
+RTX 5090 at $0.402/hr with `dlperf` 199 buys 495 Perf/$, while an RTX 4090 at
+$0.376/hr with `dlperf` 97 buys 258 Perf/$. An RTX 4090 with 24 GB cost
+**$0.363/hr measured** on 2026-10-17. Price alone hides that difference.
 
 The offer list does not say which container runtime the host uses. Some hosts run
 GPU containers under gvisor, and gvisor cannot inject the GPU device. The failure
@@ -356,21 +358,36 @@ third of the download.
 ### Replacing a destroyed instance
 
 The app can rent a replacement when the profile's instance is gone. It is
-opt-in, because it spends money: the Config page's **Vast.ai instances** section
-carries **Create a replacement automatically when Generate finds it gone**, plus
-the four search floors.
+opt-in, because it spends money: the Config page's **Vast.ai** sub-tab carries
+**Create a replacement automatically when Generate finds it gone**. The same
+**Rent a machine** criteria drive the automatic check, **Find offers**, and
+**Create instance on selected offer**, so the manual and automatic paths cannot
+disagree.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
+| GPU models | `RTX 5090, RTX 4090` | The `gpu_name` whitelist, in preference order. An empty box restores these two; it never means "any GPU" |
 | Max $/hr | `0.50` | The offer's `dph_total` ceiling |
 | Min down Mbps | `200` | The offer's `inet_down` floor |
 | Min up Mbps | `100` | The offer's `inet_up` floor |
 | CUDA at least | `13.0` | The offer's `cuda_max_good` floor |
+| Reliability at least | `0.95` | The offer's `reliability2` floor; a record that omits it fails |
 
-Two more floors are fixed: a 24 GB card (`gpu_ram`) and 140 GB of free disk
-(`disk_space`), the image's own requirements. The search is
-`POST /api/v0/bundles/` with those filters, ordered by `dph_total` ascending, so
-the cheapest offer that clears every floor wins; ties go to the faster download.
+The GPU default matters: the measured unfiltered search's cheapest 24 GB offer
+is a Tesla P40 at $0.108/hr, and it cannot run the image's CUDA 13 stack. Two
+more floors are fixed: a 24 GB card (`gpu_ram`) and 140 GB of free disk
+(`disk_space`), the image's own requirements.
+
+The search is `POST /api/v0/bundles/` with those filters, ordered by
+`dlperf_per_dphtotal` descending. The app then ranks by images per dollar
+(`dlperf_per_dphtotal`, or `dlperf / dph_total` when the API omits it), then the
+GPU preference order, then price. Measured on 2026-10-17: an RTX 5090 at
+$0.402/hr with `dlperf` 199 buys 495 Perf/$, while an RTX 4090 at $0.376/hr
+with `dlperf` 97 buys 258 Perf/$. Price alone hides that difference, so the
+cheapest offer is not the pick. A manual rent issues exactly one PUT to the
+selected offer and never falls through to another; the automatic path keeps a
+short fallback queue.
+
 The create is `PUT /api/v0/asks/{offer}/` with `disk: 100`, `runtype: "args"`,
 the selected row's image, and the `-p 3000:3000 -p 8188:8188` flags plus
 `HF_TOKEN` and `CIVITAI_API_TOKEN` when those tokens are saved.
@@ -380,7 +397,9 @@ An instance that is still listed is used as-is. A missing one is replaced, the
 new row becomes the active target, and the press reports the new instance
 instead of POSTing: the first boot still has to pull the image and prefetch the
 weights, so Generate again when `/ready` is green. **Replace if destroyed now**
-runs the same check and creation without waiting for a press.
+runs the same check and creation without waiting for a press. A created contract
+that has not mapped an endpoint is stored as pending, and a second rent waits
+for **Fetch instances from Vast.ai** to see it.
 
 ---
 

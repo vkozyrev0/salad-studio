@@ -1325,6 +1325,14 @@ class ConfigPage(unittest.TestCase):
 
     def test_a_fetch_that_maps_the_creating_row_promotes_it(self) -> None:
         app = self.app
+        name = app.var_name.get()
+        app.var_profile_mode.set("vast")
+        app._on_profile_mode()
+        prof = profiles.load_all()[name]
+        prof.mode = "vast"
+        prof.gateway = ""
+        profiles.upsert(prof)
+        app.var_gateway.set("")
         doc = dict(app._vast_doc)
         doc["instances"] = [
             {
@@ -1361,6 +1369,12 @@ class ConfigPage(unittest.TestCase):
         self.assertEqual(row["image"], "docker.io/example/klein:tag")
         self.assertEqual(app._vast_doc["pending"], {})
         self.assertEqual(vast.load_doc()["pending"], {})
+        self.assertEqual(
+            profiles.load_all()[name].gateway,
+            "http://203.0.113.77:40111",
+            "the profile the user is on follows the promoted instance",
+        )
+        self.assertEqual(app.var_gateway.get(), "http://203.0.113.77:40111")
 
     # -- routing and the queue across profiles ----------------------------
     def _generate_with(self, graph_unet: str, form_profile: str) -> dict:

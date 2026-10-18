@@ -2985,6 +2985,11 @@ class SaladStudio(tk.Tk):
         self._clear_gone_vast_profiles(
             summary.get("gone_endpoints") or [], str(doc.get("active") or "")
         )
+        if summary.get("promoted"):
+            # The endpoint-less row a create left behind has just become
+            # reachable. The profile the user is on must follow it, or Generate
+            # refuses to a cleared gateway even though the instance is up.
+            self._sync_vast_gateway(str(doc.get("active") or ""))
 
     def _clear_gone_vast_profiles(self, gone_endpoints: list, active: str) -> None:
         """Point every vast-mode profile that held a gone address at the live one.

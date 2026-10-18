@@ -352,9 +352,54 @@ class WindowVisibility(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td, _TempPaths(Path(td)):
             app, deiconify = self._build(env={"SALAD_STUDIO_HIDDEN": ""})
             try:
-                self.assertTrue(deiconify.called, "the default build no longer shows the window")
+                self.assertTrue(deiconify.called, "the default build no longer has the code to show the window")
+                self.assertFalse(app._hidden, "a build with show unset is not a hidden build")
             finally:
                 app.destroy()
+
+    def test_a_test_build_stays_withdrawn_even_when_a_test_maps_it(self) -> None:
+        """The suite's guard, not the test's care, keeps every window off screen."""
+        import tkinter as tk
+
+        if not _TK_OK:
+            raise unittest.SkipTest(f"Tk cannot initialize: {_TK_ERROR}")
+        import os
+
+        from salad_studio import app as app_mod
+
+        with tempfile.TemporaryDirectory() as td, _TempPaths(Path(td)):
+            app = app_mod.SaladStudio(show=False)
+            try:
+                self.assertTrue(app._hidden, "show=False is a hidden build")
+                app.deiconify()
+                self.assertEqual(int(app.winfo_ismapped()), 0, "deiconify mapped a test window")
+            finally:
+                app.destroy()
+        self.assertEqual(os.environ.get("SALAD_STUDIO_HIDDEN"), "1", "the suite sets the var")
+        self.assertIn(
+            "never shown", getattr(tk.Wm.deiconify, "__doc__", "") or "", "the guard is installed"
+        )
+
+    def test_every_drawn_text_pair_clears_wcag_aa(self) -> None:
+        """Muted and accent text on the lightest surface failed 4.5:1 before the 2026-10-18 pass."""
+        from salad_studio.theme import CONTRAST_MIN, PALETTE, TEXT_PAIRS, contrast
+
+        for fg, bg in TEXT_PAIRS:
+            with self.subTest(text=fg, on=bg):
+                ratio = contrast(PALETTE[fg], PALETTE[bg])
+                self.assertGreaterEqual(
+                    ratio, CONTRAST_MIN, f"{fg} on {bg} reads at {ratio:.2f}:1"
+                )
+
+    def test_painting_modules_read_colours_from_the_palette(self) -> None:
+        """A hex outside theme.py is a colour the theme cannot change."""
+        import re
+
+        pattern = re.compile(r"#[0-9A-Fa-f]{6}")
+        for name in ("app.py", "history_strip.py", "studio_log.py", "salad_status.py", "json_highlight.py", "tokens.py"):
+            text = (PKG / name).read_text(encoding="utf-8")
+            with self.subTest(module=name):
+                self.assertEqual(pattern.findall(text), [])
 
 
 if __name__ == "__main__":

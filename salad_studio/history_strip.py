@@ -13,7 +13,7 @@ from typing import Callable, Iterable, Optional, Sequence, Union
 
 from PIL import Image, ImageTk
 
-from salad_studio.theme import PALETTE, rgb, style_history_strip
+from salad_studio.theme import PALETTE, FONT_UI, rgb, style_history_strip
 
 PathLike = Union[str, Path]
 OpenCallback = Callable[[Path], None]
@@ -22,6 +22,10 @@ _PLACEHOLDER_RGB = rgb("border")
 _LETTERBOX_RGB = rgb("well")
 _GAP = 8
 _PAD = 8
+# The ring around the thumbnail the keyboard is on, and the mark drawn inside
+# it so "current" does not rest on colour alone.
+_RING = 3
+_MARK_RGB = rgb("accent")
 # What the strip says when there is nothing in it: two arrows over a blank band
 # reads as a broken strip rather than an empty one.
 EMPTY_TEXT = "No plates yet. A finished render appears here."
@@ -42,8 +46,12 @@ class HistoryStrip(tk.Frame):
         tw, th = int(thumb_size[0]), int(thumb_size[1])
         self.thumb_size: tuple[int, int] = (max(1, tw), max(1, th))
         self._paths: list[Path] = []
-        self._photos: list[ImageTk.PhotoImage] = []
+        self._thumbs: list[ImageTk.PhotoImage] = []
+        self._rings: list[ImageTk.PhotoImage] = []
         self._item_ids: list[int] = []
+        # The index the keyboard is on. A click moves it too, so the ring always
+        # says which thumb Enter would open.
+        self._selected: int | None = None
         self._empty_id: int | None = None
 
         self.left_btn = tk.Button(
@@ -57,9 +65,11 @@ class HistoryStrip(tk.Frame):
         self.canvas = tk.Canvas(
             self,
             height=self.thumb_size[1] + _PAD * 2,
-            highlightthickness=0,
+            highlightthickness=1,
+            highlightbackground=PALETTE["border"],
+            highlightcolor=PALETTE["accent"],
             borderwidth=0,
-            takefocus=0,
+            takefocus=1,
         )
         self.canvas.configure(xscrollincrement=1)
         self.right_btn = tk.Button(
@@ -82,6 +92,10 @@ class HistoryStrip(tk.Frame):
         self._bind_wheel(self.canvas)
         self.canvas.tag_bind("thumb", "<Enter>", self._on_thumb_enter)
         self.canvas.tag_bind("thumb", "<Leave>", self._on_thumb_leave)
+        for key in ("Left", "Right", "Home", "End"):
+            self.canvas.bind(f"<{key}>", lambda e, k=key: self._on_key(e, k))
+        self.canvas.bind("<Return>", lambda _e: self._open_selected())
+        self.canvas.bind("<space>", lambda _e: self._open_selected())
 
     def set_paths(self, paths: Iterable[PathLike]) -> None:
         """Replace the strip. Order is kept (oldest-left or newest-first)."""
@@ -90,12 +104,15 @@ class HistoryStrip(tk.Frame):
 
     def _rebuild(self) -> None:
         self.canvas.delete("thumb")
-        self._photos.clear()
+        self._thumbs.clear()
+        self._rings.clear()
         self._item_ids.clear()
-        for path in self._paths:
+        if self._selected is not None and self._selected >= len(self._paths):
+            self._selected = None
+        for index, path in enumerate(self._paths):
             photo = self._photo_for(path)
             # PhotoImage must stay referenced or Tk drops the pixels.
-            self._photos.append(photo)
+            self._thumbs.append(photo)
             iid = self.canvas.create_image(
                 0,
                 0,
@@ -105,11 +122,10 @@ class HistoryStrip(tk.Frame):
             )
             self._item_ids.append(iid)
             self.canvas.tag_bind(
-                iid,
-                "<Button-1>",
-                lambda _e, p=path: self._emit_open(p),
+                iid, "<Button-1>", lambda _e, i=index: self._click(i)
             )
         self._layout_thumbs()
+        self._paint_selection()
         self.canvas.xview_moveto(0)
 
     def _photo_for(self, path: Path) -> ImageTk.PhotoImage:
@@ -146,6 +162,91 @@ class HistoryStrip(tk.Frame):
         content_w = x - _GAP + _PAD if self._item_ids else _PAD
         self.canvas.configure(scrollregion=(0, 0, content_w, canvas_h))
         self._place_empty_state(canvas_h)
+        self._paint_selection()
+
+    # -- selection -------------------------------------------------------
+    def selected_index(self) -> int | None:
+        """The thumb the keyboard is on, or None while the strip is untouched."""
+        return self._selected
+
+    def _select(self, index: int) -> None:
+        if not self._paths:
+            return
+        self._selected = max(0, min(index, len(self._paths) - 1))
+        self._paint_selection()
+        self._reveal(self._selected)
+
+    def _click(self, index: int) -> None:
+        self._select(index)
+        self.canvas.focus_set()
+        self._emit_open(self._paths[index])
+
+    def _open_selected(self) -> str:
+        if self._selected is not None and 0 <= self._selected < len(self._paths):
+            self._emit_open(self._paths[self._selected])
+        return "break"
+
+    def _on_key(self, _event: tk.Event, key: str) -> str:
+        # The first key press only puts the ring on the first thumb; it does
+        # not also step, or the strip would skip an image on the way in.
+        if self._selected is None:
+            self._select(0)
+            return "break"
+        start = self._selected
+        if key == "Left":
+            self._select(start - 1)
+        elif key == "Right":
+            self._select(start + 1)
+        elif key == "Home":
+            self._select(0)
+        else:
+            self._select(len(self._paths) - 1)
+        return "break"
+
+    def _paint_selection(self) -> None:
+        """Ring the selected thumb in the accent, and draw a mark inside it."""
+        self._rings.clear()
+        self.canvas.delete("ring")
+        if self._selected is None or not (0 <= self._selected < len(self._item_ids)):
+            return
+        tw, th = self.thumb_size
+        x, y = self.canvas.coords(self._item_ids[self._selected])
+        # The rectangle is drawn inside the image's edge, so the tiles keep
+        # their gap and the strip does not reflow when the selection moves.
+        area = max(6, int((tw - _RING * 2) * 0.18))
+        mark = Image.new("RGB", (area, area), _MARK_RGB)
+        self._rings.append(ImageTk.PhotoImage(mark, master=self))
+        self.canvas.create_image(
+            x + _RING, y + _RING, image=self._rings[-1], anchor="nw", tags=("ring",)
+        )
+        self.canvas.create_rectangle(
+            x,
+            y,
+            x + tw - 1,
+            y + th - 1,
+            outline=PALETTE["accent_hi"],
+            width=_RING,
+            tags=("ring",),
+        )
+
+    def _reveal(self, index: int) -> None:
+        """Scroll the strip the least amount that shows thumb ``index`` whole."""
+        if not self._item_ids:
+            return
+        bbox = self.canvas.bbox("all")
+        if bbox is None:
+            return
+        total = max(1, int(bbox[2]))
+        tw = self.thumb_size[0]
+        x = _PAD + index * (tw + _GAP)
+        left = int(self.canvas.canvasx(0))
+        width = int(self.canvas.winfo_width())
+        if width <= 1:
+            return
+        if x < left:
+            self.canvas.xview_moveto(max(0, x - _PAD) / total)
+        elif x + tw > left + width:
+            self.canvas.xview_moveto(max(0, x + tw + _PAD - width) / total)
 
     def _place_empty_state(self, canvas_h: int) -> None:
         """Draw, move or drop the empty-state line, so it follows the strip's height."""
@@ -160,7 +261,7 @@ class HistoryStrip(tk.Frame):
             text=EMPTY_TEXT,
             anchor="w",
             fill=PALETTE["fg_muted"],
-            font=("Segoe UI", 10),
+            font=FONT_UI,
             tags=("empty",),
         )
 

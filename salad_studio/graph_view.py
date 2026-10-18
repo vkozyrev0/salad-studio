@@ -83,14 +83,19 @@ OUTPUT_COLOR: dict[str, str] = {
     "VAEDecode": SLOT_COLOR["image"],
 }
 
+# The web pane still paints with the LiteGraph greys the shipped viewer.html
+# and joint.min.js bundle carry; the Tk fallback and the selection ring take
+# the app's own palette so a missing WebView2 does not open a second world.
+from salad_studio.theme import PALETTE as _PALETTE
+
 _BG = "#1A1A1A"
 _GRID = "#262626"
 _CARD = "#2B2B2B"
 _HEADER = "#323232"
 _FIELD = "#1F1F1F"
 _INK = "#E6E6E6"
-_MUTED = "#9A9A9A"
-_SELECT = "#D9772A"
+_MUTED = _PALETTE["fg_muted"]
+_SELECT = _PALETTE["accent"]
 
 _NODE_W = 280.0
 _NODE_W_MAX = 560.0

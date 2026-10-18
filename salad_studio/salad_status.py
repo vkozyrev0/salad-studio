@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from salad_gen import UA, _req
 import salad_queue
 from studio_log import explain_http, ready_url
+from theme import SEMANTIC
 
 ORG = "life-sim"
 PROJECT = "default"
@@ -503,16 +504,16 @@ def check_container(gateway: str, key: str) -> dict[str, Any]:
 
 
 WORD_COLORS: dict[str, str] = {
-    "Ready": "#8FBF9A",
-    "Starting": "#E0A04A",
-    "Creating": "#E0A04A",
-    "Downloading": "#E0A04A",
-    "Allocating": "#7EB8D4",
-    "Deploying": "#E0A04A",
-    "Stopped": "#8A9AAB",
-    "Failed": "#D48A9A",
-    "Down": "#D48A9A",
-    "Unknown": "#8A9AAB",
+    "Ready": SEMANTIC["ok"],
+    "Starting": SEMANTIC["warn"],
+    "Creating": SEMANTIC["warn"],
+    "Downloading": SEMANTIC["warn"],
+    "Allocating": SEMANTIC["info"],
+    "Deploying": SEMANTIC["warn"],
+    "Stopped": SEMANTIC["neutral"],
+    "Failed": SEMANTIC["bad"],
+    "Down": SEMANTIC["bad"],
+    "Unknown": SEMANTIC["neutral"],
 }
 
 

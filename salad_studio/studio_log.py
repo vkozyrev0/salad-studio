@@ -8,17 +8,19 @@ from typing import Any, Callable
 from urllib.parse import parse_qsl, urlparse, urlunparse
 
 import request_json as rj
+from theme import SEMANTIC
 
 LogFn = Callable[[str, str], None]
 
-# Distinct from JSON-editor token colors; same dark well.
+# Distinct from JSON-editor token colors; same dark well. The palette owns
+# these values so a theme change reaches the logs too.
 LEVEL_COLORS: dict[str, str] = {
-    "debug": "#8A9AAB",
-    "info": "#E8DCC8",
-    "ok": "#8FBF9A",
-    "warn": "#E0A04A",
-    "error": "#D48A9A",
-    "http": "#7EB8D4",
+    "debug": SEMANTIC["neutral"],
+    "info": SEMANTIC["ink"],
+    "ok": SEMANTIC["ok"],
+    "warn": SEMANTIC["warn"],
+    "error": SEMANTIC["bad"],
+    "http": SEMANTIC["info"],
 }
 
 _HTTP_HINTS: dict[int, str] = {

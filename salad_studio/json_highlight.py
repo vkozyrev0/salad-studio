@@ -13,17 +13,19 @@ from typing import Any
 
 try:
     from salad_studio.generator import parse_request_json
+    from salad_studio.theme import SEMANTIC
 except ImportError:  # sibling import when run from salad_studio
     from generator import parse_request_json
+    from theme import SEMANTIC
 
 # Distinct token colors on the dark editor well. Tests compare kinds/tags,
 # not copies of these hex values.
 TOKEN_COLORS: dict[str, str] = {
-    "key": "#7EB8D4",
+    "key": SEMANTIC["info"],
     "string": "#C5D89A",
-    "number": "#E0A04A",
-    "literal": "#D48A9A",
-    "punct": "#8A9AAB",
+    "number": SEMANTIC["warn"],
+    "literal": SEMANTIC["bad"],
+    "punct": SEMANTIC["neutral"],
 }
 
 _STRING = re.compile(r'"(?:\\.|[^"\\])*"')

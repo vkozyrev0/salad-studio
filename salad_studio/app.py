@@ -96,6 +96,7 @@ CATALOG_GRID_COLUMNS: tuple[tuple[str, str, int, bool], ...] = (
 )
 HISTORY_GRID_COLUMNS: tuple[tuple[str, str, int, bool], ...] = (
     ("when", "When", 140, False),
+    ("rating", "Rating", 84, False),
     ("profile", "Profile", 100, False),
     ("preview", "Prompt", 480, True),
     ("stats", "Graph", 380, True),
@@ -131,6 +132,14 @@ LORA_COLUMNS: tuple[str, ...] = (
 )
 
 
+def _comfy_name_cell(name: str) -> str:
+    """The Comfy name as a grid cell: a file name whole, a URL as its last part."""
+    raw = str(name or "")
+    if raw.lower().startswith(("http://", "https://")):
+        return "…/" + raw.rstrip("/").rsplit("/", 1)[-1]
+    return raw
+
+
 def lora_grid_row(item: dict) -> dict:
     """One library row as the grid shows it: the cell text per column, and the row's data.
 
@@ -152,7 +161,10 @@ def lora_grid_row(item: dict) -> dict:
             "version": lora_store.version_label(item),
             "model": lora_store.family_label(item),
             "source": str(source.get("host") or ""),
-            "filename": lora_store.comfy_lora_name(item),
+            # What the row writes: a replica file name, or the last part of a
+            # download URL. The whole URL barely fits a column and its tail is
+            # what tells two Civitai versions apart.
+            "filename": _comfy_name_cell(lora_store.comfy_lora_name(item)),
         },
     }
 
@@ -221,12 +233,28 @@ def vast_refusal_note(refused: list[tuple[str, str]]) -> str:
     return " ".join(f"{', '.join(texts)}: {reason}" for reason, texts in groups.items())
 
 
+def _stars(n: int) -> str:
+    """A 0-5 rating as filled and empty stars, so a cell reads at a glance."""
+    n = max(0, min(int(n), 5))
+    return "\u2605" * n + "\u2606" * (5 - n)
+
+
 class SaladStudio(tk.Tk):
     def __init__(self, *, show: bool | None = None) -> None:
-        """``show=False`` (or SALAD_STUDIO_HIDDEN in the environment) builds the
-        whole window but never maps it, so a test run cannot flash windows."""
+        """Build the window without mapping it while the environment says hidden.
+
+        ``SALAD_STUDIO_HIDDEN`` (set for the whole test run by ``tests/__init__``)
+        or a ``show=False`` build covers every code path that would map the
+        window, its own ``deiconify`` and a test's alike: a test may press the
+        app's buttons, and one of them must never leave a window on the desktop.
+        ``show=True`` still shows the window when the variable is not set.
+        """
         super().__init__()
         self.withdraw()
+        self._hidden = bool(os.environ.get("SALAD_STUDIO_HIDDEN")) or show is False
+        if self._hidden:
+            # Late binding: the class attribute is patched after this runs.
+            self.deiconify = lambda: None  # type: ignore[method-assign]
         self._show_on_open = bool(show if show is not None else True) and not os.environ.get(
             "SALAD_STUDIO_HIDDEN"
         )
@@ -313,6 +341,22 @@ class SaladStudio(tk.Tk):
         nav.grid(row=0, column=0, sticky="nsw")
         self._nav = nav
 
+        # The keyboard's way across pages: the nav column is reachable by Tab
+        # from every page, and Ctrl+Tab / Ctrl+PgDn move the page itself, the
+        # keys a tabbed window has answered with for thirty years.
+        self.bind_all("<Control-Tab>", lambda _e: self._step_page(1))
+        self.bind_all("<Control-Key-Tab>", lambda _e: self._step_page(-1))
+        self.bind_all("<Control-Prior>", lambda _e: self._step_page(-1))
+        self.bind_all("<Control-Next>", lambda _e: self._step_page(1))
+        self.bind_all("<Control-Key-Prior>", lambda _e: self._step_page(-1))
+        self.bind_all("<Control-Key-Next>", lambda _e: self._step_page(1))
+        self.bind_all("<Control-Key-1>", lambda _e: self._goto_tab(TAB_ORDER[0]))
+        for index in range(2, 10):
+            self.bind_all(
+                f"<Control-Key-{index}>",
+                lambda _e, i=index - 1: self._goto_tab(TAB_ORDER[i]),
+            )
+        self.bind_all("<Control-Key-0>", lambda _e: self._goto_tab(TAB_ORDER[0]))
         self._build_notebook(body)
 
         self._build_config_tab()
@@ -337,6 +381,7 @@ class SaladStudio(tk.Tk):
         self.nb.add(self._prompt_hist_page, text="Prompt History")
         self.nb.add(self._queue_page, text="Queue")
         self.nb.add(self._logs, text="Logs")
+        self._build_page_notes()
         self._build_nav_buttons()
 
         self.strip = HistoryStrip(self, on_open=self._open_path, thumb_size=(140, 140))
@@ -446,9 +491,9 @@ class SaladStudio(tk.Tk):
         for i, color in enumerate(salad_status.STRIP_COLORS):
             if i:
                 tk.Label(
-                    strip, text="|", bg=p["bg"], fg=p["fg_muted"], font=("Segoe UI", 11)
+                    strip, text="|", bg=p["bg"], fg=p["fg_muted"], font=theme.FONT_UI
                 ).pack(side="left", padx=6)
-            dot = tk.Label(strip, text="●", bg=p["bg"], fg=color, font=("Segoe UI", 11))
+            dot = tk.Label(strip, text="●", bg=p["bg"], fg=color, font=theme.FONT_UI)
             dot.pack(side="left")
             var = tk.StringVar(value="0")
             tk.Label(
@@ -456,7 +501,7 @@ class SaladStudio(tk.Tk):
                 textvariable=var,
                 bg=p["bg"],
                 fg=p["fg"],
-                font=("Segoe UI Semibold", 11),
+                font=theme.FONT_TITLE,
             ).pack(side="left", padx=(3, 0))
             self._strip_dots.append(dot)
             self._strip_vars.append(var)
@@ -467,6 +512,64 @@ class SaladStudio(tk.Tk):
         counts = salad_status.strip_counts(snaps)
         for var, n in zip(getattr(self, "_strip_vars", []), counts):
             var.set(str(n))
+
+    # -- per-page notes ---------------------------------------------------
+    def _build_page_notes(self) -> None:
+        """One status line per page, the last thing its action said.
+
+        The window's status line is shared by eleven pages, so a refusal made
+        on LoRAs and read after a tab switch belonged to no page. Each page
+        that acts on its own data keeps its own line; the window's keeps its
+        short summary, and Logs keeps the full trail. Config already had this
+        (``var_config_note``), the other pages get the same mechanism here.
+        """
+        self._page_notes: dict[str, tuple[tk.StringVar, ttk.Label]] = {}
+        for page, parent in self._page_note_hosts():
+            var = tk.StringVar(value="")
+            label = ttk.Label(
+                parent, textvariable=var, style="Status.TLabel", wraplength=760
+            )
+            label.grid(sticky="ew", pady=(0, 6))
+            self._page_notes[page] = (var, label)
+
+    def _page_note_hosts(self) -> list[tuple[str, tk.Frame]]:
+        """(name, frame the note line lives in) for each page that keeps one."""
+        hosts: list[tuple[str, tk.Frame]] = [("Config", self._config)]
+        for name, page in (
+            ("Tokens", self._token_page),
+            ("LoRAs", self._loras),
+            ("Prompt Editor", self._editor),
+            ("Prompt Assist", self._helper),
+            ("Prompt Catalog", self._catalog_page),
+            ("Import", self._import),
+            ("Prompt History", self._prompt_hist_page),
+            ("Queue", self._queue_page),
+            ("Logs", self._logs),
+        ):
+            hosts.append((name, page))
+        return hosts
+
+    def _note(self, text: str, *, level: str = "info") -> None:
+        """Say ``text`` on the page that is open, and in the Studio log.
+
+        The line keeps the last thing the page did until the page does
+        something else, so a refusal is still there after a look at the Queue.
+        """
+        try:
+            page = str(self.nb.tab(self.nb.select(), "text") or "")
+        except tk.TclError:
+            page = ""
+        entry = self._page_notes.get(page)
+        if entry is not None:
+            entry[0].set(text)
+        self.log(level, text)
+
+    def _history_status(self, text: str) -> None:
+        """Say it on the History page, which is where the rating happened."""
+        entry = self._page_notes.get("Prompt History")
+        if entry is not None:
+            entry[0].set(text)
+        self.log("info", text)
 
     def _build_notebook(self, body: ttk.Frame) -> None:
         # 0 skips the hidden notebook. The string "n" is a Tcl script, and
@@ -487,7 +590,7 @@ class SaladStudio(tk.Tk):
                 anchor="w",
                 command=lambda n=name: self._goto_tab(n),
                 width=16,
-                font=("Segoe UI", 10),
+                font=theme.FONT_UI,
                 bd=0,
                 # The ring is drawn in accent_hi while the button holds focus and
                 # in the button's own colour otherwise, so the keyboard can see
@@ -525,6 +628,14 @@ class SaladStudio(tk.Tk):
         self._nav_focused = btn if focused else None
         self._refresh_nav()
 
+    def _step_page(self, delta: int) -> str:
+        try:
+            current = TAB_ORDER.index(str(self.nb.tab(self.nb.select(), "text")))
+        except (tk.TclError, ValueError):
+            return "break"
+        self._goto_tab(TAB_ORDER[(current + delta) % len(TAB_ORDER)])
+        return "break"
+
     def _goto_tab(self, name: str) -> None:
         for i, label in enumerate(TAB_ORDER):
             if label == name:
@@ -559,7 +670,7 @@ class SaladStudio(tk.Tk):
                 btn.configure(
                     background=background,
                     foreground=p["accent_fg"] if on else p["fg"],
-                    font=("Segoe UI Semibold", 10) if on else ("Segoe UI", 10),
+                    font=theme.FONT_UI_BOLD if on else theme.FONT_UI,
                     highlightbackground=p["accent_hi"] if focused else p["surface"],
                 )
             except tk.TclError:
@@ -654,6 +765,16 @@ class SaladStudio(tk.Tk):
         canvas = self._scroll_canvases.get(page)
         if canvas is None:
             return
+        # Buttons and fields share the bar under these grids, and a column that
+        # takes the page's extra room starves them: the star buttons of Rating
+        # read as empty boxes. Only a tree that reaches the page width grows,
+        # and it lets go when a sibling pushes the bar wide.
+        def may_share() -> bool:
+            """Whether no sibling shares this tree's row, so the room is the tree's."""
+            bar = tree.master
+            if bar is None or bar is page:
+                return True
+            return len(bar.grid_slaves()) == 1
         # The widths the table declares, read once: a re-fit recomputes from
         # these, never from the widths it just wrote, or each pass would grow
         # what the last one grew. ``#0`` is the tree column the History grid
@@ -678,6 +799,10 @@ class SaladStudio(tk.Tk):
                 # Not laid out yet, or the same width the last pass fitted.
                 return
             fitted["width"] = width
+            if not may_share():
+                for col, base in declared.items():
+                    tree.column(col, width=base)
+                return
             viewport = int(canvas.winfo_width())
             if viewport > 1:
                 # The room a wider page leaves can never be more than the page
@@ -785,6 +910,9 @@ class SaladStudio(tk.Tk):
         self._config = ttk.Frame(self.nb)
         self._config.columnconfigure(0, weight=1)
         self._config.rowconfigure(0, weight=1)
+        # The sub-tab book takes the height, so it no longer leaves a block of
+        # dead background under a short section before the note line.
+        self._config.rowconfigure(0, weight=1)
         self._config_tabs = ttk.Notebook(self._config, style="Section.TNotebook")
         self._config_tabs.grid(row=0, column=0, sticky="nsew")
         self._config_section_pages: dict[str, ttk.Frame] = {}
@@ -800,8 +928,12 @@ class SaladStudio(tk.Tk):
             self._config_section_pages[key] = page
             self._config_section_bodies[key] = body
             getattr(self, builder)(body)
+        # The plate the other pages' lines have; Config's was bare text on the page.
         ttk.Label(
-            self._config, textvariable=self.var_config_note, wraplength=760
+            self._config,
+            textvariable=self.var_config_note,
+            style="Status.TLabel",
+            wraplength=760,
         ).grid(row=1, column=0, sticky="ew", padx=10, pady=(4, 6))
         self._config_tabs.bind(
             "<<NotebookTabChanged>>", self._on_config_section_tab, add="+"
@@ -999,6 +1131,9 @@ class SaladStudio(tk.Tk):
         self._config_status(f"Using {url}")
 
     def _config_status(self, text: str) -> None:
+        # A failed write must be re-read on the next page open, not after the
+        # next restart: the form and the disk agree only if one of them moved.
+        studio_meta.reset_cache()
         self.var_config_note.set(text)
         self.status.set(text)
 
@@ -1078,7 +1213,6 @@ class SaladStudio(tk.Tk):
         reason = profiles.add_checkpoint(p, unet)
         if reason:
             self._config_status(reason)
-            messagebox.showinfo("Salad Studio", reason)
             return
         profiles.upsert(p)
         self.var_checkpoint.set("")
@@ -1088,8 +1222,7 @@ class SaladStudio(tk.Tk):
             # Allowed, not refused: an image that carries both families can serve
             # the list. The warning is what keeps a one-family image honest.
             self.status.set(f"{p.name} lists {len(p.checkpoints)} checkpoint(s)")
-            self.log("warn", warning)
-            messagebox.showwarning("Salad Studio", warning)
+            self._config_status(f"Added {unet}. Warning: {warning}")
         else:
             self.status.set(f"{p.name} lists {len(p.checkpoints)} checkpoint(s)")
         self.log("ok", f"profile {p.name} checkpoint added: {unet}")
@@ -1929,6 +2062,7 @@ class SaladStudio(tk.Tk):
 
     def _build_tokens_tab(self) -> None:
         self._tokens = ttk.Frame(self.nb)
+        self._token_page = self._tokens  # the note line lives on the page, like Config's
         body = self._scrollable_page(self._tokens)
         body.columnconfigure(1, weight=1)
         ttk.Label(
@@ -1943,23 +2077,29 @@ class SaladStudio(tk.Tk):
         self._token_valid_word: dict[str, tk.StringVar] = {}
         self._token_state: dict[str, str] = {}
         r = 1
-        for kind, label, _rel in tokens.TOKEN_SPECS:
+        for first, (kind, label, _rel) in enumerate(tokens.TOKEN_SPECS):
             box = ttk.LabelFrame(body, text=label, padding=8)
             box.grid(row=r, column=0, columnspan=5, sticky="ew", pady=4)
             box.columnconfigure(1, weight=1)
-            ttk.Label(box, text="Local file").grid(row=0, column=0, sticky="w")
-            ttk.Label(box, text=str(tokens.LOCAL_PATH)).grid(
-                row=0, column=1, columnspan=4, sticky="w", padx=6
-            )
-            ttk.Label(box, text="Default").grid(row=1, column=0, sticky="w")
+            # One store holds every key, so only the first card names the file;
+            # five copies of the same path say nothing the paragraph does not.
+            row = 0
+            if first == 0:
+                ttk.Label(box, text="Local file").grid(row=row, column=0, sticky="w")
+                ttk.Label(box, text=str(tokens.LOCAL_PATH)).grid(
+                    row=row, column=1, columnspan=6, sticky="w", padx=6
+                )
+                row += 1
+            ttk.Label(box, text="Default").grid(row=row, column=0, sticky="w")
             ttk.Label(box, text=tokens.default_label(kind)).grid(
-                row=1, column=1, columnspan=4, sticky="w", padx=6
+                row=row, column=1, columnspan=6, sticky="w", padx=6
             )
-            ttk.Label(box, text="Value").grid(row=2, column=0, sticky="w")
+            row += 1
+            ttk.Label(box, text="Value").grid(row=row, column=0, sticky="w")
             entry_var = tk.StringVar()
             self._token_entry[kind] = entry_var
             entry = ttk.Entry(box, textvariable=entry_var, show="*")
-            entry.grid(row=2, column=1, sticky="ew", padx=6, pady=2)
+            entry.grid(row=row, column=1, sticky="ew", padx=6, pady=2)
             self._token_widgets[kind] = entry
             show_var = tk.BooleanVar(value=False)
             self._token_show[kind] = show_var
@@ -1968,10 +2108,15 @@ class SaladStudio(tk.Tk):
                 text="Show",
                 variable=show_var,
                 command=lambda k=kind: self._toggle_token_visible(k),
-            ).grid(row=2, column=2, padx=6)
+            ).grid(row=row, column=2, padx=6)
             ttk.Button(
                 box, text="Save", command=lambda k=kind: self._save_token(k)
-            ).grid(row=2, column=3, padx=6)
+            ).grid(row=row, column=3, padx=(6, 0))
+            # One key can be re-checked without spending the other four
+            # probes' time on a slow provider.
+            ttk.Button(
+                box, text="Check", command=lambda k=kind: self._probe_tokens([k])
+            ).grid(row=row, column=4, padx=6)
             # Validity indicator: a real provider probe decides the dot colour.
             self._token_state[kind] = "unchecked"
             word = tk.StringVar(value="unchecked")
@@ -1979,13 +2124,13 @@ class SaladStudio(tk.Tk):
             dot = tk.Label(
                 box,
                 text="●",
-                font=("Segoe UI Semibold", 12),
+                font=theme.FONT_TITLE,
                 bg=theme.PALETTE["bg"],
                 fg=theme.PALETTE["unknown"],
             )
-            dot.grid(row=2, column=4, sticky="w", padx=(6, 0))
+            dot.grid(row=row, column=5, sticky="w", padx=(6, 0))
             self._token_valid_dot[kind] = dot
-            ttk.Label(box, textvariable=word).grid(row=2, column=5, sticky="w", padx=(4, 0))
+            ttk.Label(box, textvariable=word).grid(row=row, column=6, sticky="w", padx=(4, 0))
             r += 1
         bar = ttk.Frame(body)
         bar.grid(row=r, column=0, columnspan=5, sticky="ew", pady=(8, 0))
@@ -2897,7 +3042,7 @@ class SaladStudio(tk.Tk):
         if not removed:
             note = f"{name} comes from the metadata document, so remove it there."
             self.status.set(f"Refused: {note}")
-            messagebox.showinfo("Salad Studio", note)
+            self._note(f"Refused: {note}", level="warn")
             return
         self._store_image_settings(settings, f"removed {name} from {entry['key']}")
 
@@ -3081,7 +3226,7 @@ class SaladStudio(tk.Tk):
         self._editor_box = left
         left.columnconfigure(0, weight=1)
         left.rowconfigure(0, weight=1)
-        self.editor_text = tk.Text(left, wrap="none", height=16, font=("Consolas", 10))
+        self.editor_text = tk.Text(left, wrap="none", height=16, font=theme.FONT_MONO)
         theme.style_text(self.editor_text)
         yscroll = ttk.Scrollbar(left, orient="vertical", command=self.editor_text.yview)
         xscroll = ttk.Scrollbar(left, orient="horizontal", command=self.editor_text.xview)
@@ -3111,7 +3256,7 @@ class SaladStudio(tk.Tk):
         right.rowconfigure(0, weight=1)
         self.graph_pane = graph_view.GraphPane(right, on_swap=self._on_graph_swap)
         self.graph_pane.grid(row=0, column=0, sticky="nsew")
-        pane.add(left, weight=1)
+        pane.add(left, weight=2)
         pane.add(right, weight=3)
         prompts = ttk.Frame(body)
         self._editor_prompts = prompts
@@ -3230,7 +3375,10 @@ class SaladStudio(tk.Tk):
             bar, text="Refresh from Prompt Editor", command=self._refresh_prompt_helper
         ).pack(side="left", padx=(0, 6))
         self.helper_btn = ttk.Button(
-            bar, text="Help (DeepSeek)", command=self._on_prompt_help
+            bar,
+            text="Help (DeepSeek)",
+            command=self._on_prompt_help,
+            style="Accent.TButton",
         )
         self.helper_btn.pack(side="left", padx=(0, 6))
         self.helper_local_btn = ttk.Button(
@@ -3238,7 +3386,10 @@ class SaladStudio(tk.Tk):
         )
         self.helper_local_btn.pack(side="left", padx=(0, 6))
         self.helper_commit_btn = ttk.Button(
-            bar, text="Commit to Prompts + JSON", command=self._on_prompt_commit
+            bar,
+            text="Commit to Prompts + JSON",
+            command=self._on_prompt_commit,
+            style="Accent.TButton",
         )
         self.helper_commit_btn.pack(side="left")
         self.helper_state = tk.StringVar(value="Idle")
@@ -3650,9 +3801,9 @@ class SaladStudio(tk.Tk):
         )
         self.catalog_empty_lbl.grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
         self.catalog_status = tk.StringVar(value="")
-        ttk.Label(self._catalog, textvariable=self.catalog_status).grid(
-            row=5, column=0, columnspan=2, sticky="w", pady=(6, 0)
-        )
+        ttk.Label(
+            self._catalog, textvariable=self.catalog_status, style="Status.TLabel"
+        ).grid(row=5, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         self._page_keeps_its_own_size(self._catalog, self.catalog_tree)
         self._refresh_prompt_catalog()
 
@@ -3806,7 +3957,10 @@ class SaladStudio(tk.Tk):
             row=0, column=1, sticky="ew", padx=(0, 8)
         )
         ttk.Button(
-            url_box, text="Fetch from Civitai", command=self._on_fetch_civitai_image
+            url_box,
+            text="Fetch from Civitai",
+            command=self._on_fetch_civitai_image,
+            style="Accent.TButton",
         ).grid(row=0, column=2, sticky="e")
         meta_box = ttk.LabelFrame(
             body,
@@ -3816,7 +3970,7 @@ class SaladStudio(tk.Tk):
         meta_box.grid(row=1, column=0, sticky="nsew", pady=(0, 8))
         meta_box.columnconfigure(0, weight=1)
         meta_box.rowconfigure(0, weight=1)
-        self.import_meta = tk.Text(meta_box, wrap="word", height=8, font=("Segoe UI", 10))
+        self.import_meta = tk.Text(meta_box, wrap="word", height=8, font=theme.FONT_UI)
         theme.style_text(self.import_meta)
         self.import_meta.grid(row=0, column=0, sticky="nsew")
         wf_box = ttk.LabelFrame(
@@ -3829,7 +3983,7 @@ class SaladStudio(tk.Tk):
         wf_box.rowconfigure(0, weight=1)
         self._import_workflow_stash = ""
         self.import_workflow = tk.Text(
-            wf_box, wrap="word", height=12, font=("Consolas", 9), undo=False
+            wf_box, wrap="word", height=12, font=theme.FONT_MONO_SMALL, undo=False
         )
         theme.style_text(self.import_workflow)
         yscroll = ttk.Scrollbar(
@@ -3888,7 +4042,7 @@ class SaladStudio(tk.Tk):
         iss_box.columnconfigure(0, weight=1)
         iss_box.rowconfigure(0, weight=1)
         self.import_issues = tk.Text(
-            iss_box, wrap="word", height=8, font=("Segoe UI", 10), undo=False
+            iss_box, wrap="word", height=8, font=theme.FONT_UI, undo=False
         )
         theme.style_text(self.import_issues)
         self.import_issues.grid(row=0, column=0, sticky="nsew")
@@ -3899,7 +4053,10 @@ class SaladStudio(tk.Tk):
             side="left"
         )
         ttk.Button(
-            bar, text="Convert to Prompt Editor", command=self._on_import_civitai
+            bar,
+            text="Convert to Prompt Editor",
+            command=self._on_import_civitai,
+            style="Accent.TButton",
         ).pack(side="left", padx=(8, 0))
         ttk.Button(bar, text="Clear Import", command=self._clear_import).pack(
             side="left", padx=(8, 0)
@@ -4232,7 +4389,7 @@ class SaladStudio(tk.Tk):
         self._prompt_hist = self._scrollable_page(self._prompt_hist_page)
         self._prompt_hist.columnconfigure(0, weight=1)
         self._prompt_hist.rowconfigure(0, weight=1)
-        cols = ("when", "profile", "preview", "stats")
+        cols = tuple(spec[0] for spec in HISTORY_GRID_COLUMNS)  # the table is the one list
         style = ttk.Style(self)
         style.configure("Hist.Treeview", rowheight=52)
         self.prompt_hist_tree = ttk.Treeview(
@@ -4242,6 +4399,8 @@ class SaladStudio(tk.Tk):
             height=16,
             style="Hist.Treeview",
         )
+        # A rated row lights its whole rating cell; an unrated one stays muted.
+        self.prompt_hist_tree.tag_configure("rated", foreground=theme.PALETTE["accent"])
         self.prompt_hist_tree.heading("#0", text="")
         self.prompt_hist_tree.column("#0", width=56, minwidth=52, stretch=False, anchor="center")
         for col, heading, width, _fill in HISTORY_GRID_COLUMNS:
@@ -4268,11 +4427,34 @@ class SaladStudio(tk.Tk):
         self.prompt_hist_tree.bind("<Double-1>", lambda _e: self._reuse_prompt_history())
         bar = ttk.Frame(self._prompt_hist)
         bar.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Button(bar, text="Reuse", command=self._reuse_prompt_history).pack(
-            side="left", padx=(0, 6)
-        )
+        ttk.Button(
+            bar, text="Reuse", command=self._reuse_prompt_history, style="Accent.TButton"
+        ).pack(side="left", padx=(0, 6))
         ttk.Button(bar, text="Delete", command=self._delete_prompt_history).pack(
             side="left"
+        )
+        # The 1-5 keys rate the selected render without leaving the grid; the
+        # buttons do the same for a mouse, and 0 clears.
+        rating = ttk.Frame(bar)
+        rating.pack(side="left", padx=(18, 0))
+        ttk.Label(rating, text="Rating").pack(side="left", padx=(0, 6))
+        for stars in range(1, 6):
+            ttk.Button(
+                rating,
+                text=f"{stars}",
+                width=1,
+                command=lambda n=stars: self._rate_history(n),
+            ).pack(side="left", padx=(0, 2))
+        ttk.Button(
+            rating, text="No stars", width=7, command=lambda: self._rate_history(0)
+        ).pack(side="left")
+        for key in ("0", "1", "2", "3", "4", "5"):
+            self.prompt_hist_tree.bind(
+                f"<Key-{key}>", lambda _e, n=int(key): self._rate_history(n)
+            )
+        self.prompt_hist_tree.bind(
+            "<Return>",
+            lambda _e: (self._reuse_prompt_history(), "break")[1],
         )
         self.prompt_hist_empty_lbl = ttk.Label(
             self._prompt_hist, text=HISTORY_EMPTY_TEXT, style="Status.TLabel"
@@ -4314,10 +4496,12 @@ class SaladStudio(tk.Tk):
                 image=photo or "",
                 values=(
                     when,
+                    _stars(prompt_history.rating_of(row)),
                     str(row.get("profile") or ""),
                     prompt_history.preview(str(row.get("text") or "")),
                     stats,
                 ),
+                tags=("rated",) if prompt_history.rating_of(row) else (),
             )
         # After the rows: the state is shown only while there is nothing to show,
         # like the Queue page's.
@@ -4360,6 +4544,23 @@ class SaladStudio(tk.Tk):
         self.nb.select(self._editor)
         self.status.set("Reused prompt from history")
         self.log("ok", f"reused prompt history #{idx} ({len(text)} chars)")
+
+    def _rate_history(self, stars: int) -> str:
+        """Rate the selected render 1-5, or clear it with 0."""
+        idx = self._selected_history_index()
+        if idx is None:
+            self._history_status("Rate: select a render first, then press 1-5 (0 clears)")
+            return "break"
+        prompt_history.rate(idx, stars)
+        self._refresh_prompt_history()
+        try:
+            self.prompt_hist_tree.selection_set(str(idx))
+        except tk.TclError:
+            pass
+        word = f"rated {stars} star{'s' if stars != 1 else ''}" if stars else "rating cleared"
+        self._history_status(f"Render #{idx} {word}")
+        self.log("info", f"prompt history #{idx} {word}")
+        return "break"
 
     def _delete_prompt_history(self) -> None:
         idx = self._selected_history_index()
@@ -4958,7 +5159,7 @@ class SaladStudio(tk.Tk):
     def _on_add_lora(self) -> None:
         ref = self.var_lora_ref.get().strip()
         if not ref:
-            messagebox.showinfo("Salad Studio", "Paste a Civitai/HF URL, civitai:id@version, or a local path.")
+            self._note("LoRAs: paste a Civitai/HF URL, civitai:id@version, or a local path")
             return
         try:
             item = lora_store.add_lora(
@@ -4984,7 +5185,7 @@ class SaladStudio(tk.Tk):
     def _on_verify_lora(self) -> None:
         sel = self.lora_tree.selection()
         if not sel:
-            messagebox.showinfo("Salad Studio", "Select a LoRA in the list to verify.")
+            self._note("LoRAs: select a LoRA in the list to verify", level="warn")
             return
         ok_n = 0
         fail: list[str] = []
@@ -5026,12 +5227,12 @@ class SaladStudio(tk.Tk):
             return
         msg = f"Verified {ok_n} LoRA(s)" if ok_n else "Nothing unverified"
         self.status.set(msg)
-        self.log("ok", msg)
+        self._note(msg)
 
     def _on_remove_lora(self) -> None:
         sel = self.lora_tree.selection()
         if not sel:
-            messagebox.showinfo("Salad Studio", "Select a user extra in the list.")
+            self._note("LoRAs: select an extra you added; catalog LoRAs stay", level="warn")
             return
         # The neighbouring Verify acts on every selected row, so this one does
         # too: a selection of two extras is two removals, and the report says
@@ -5488,7 +5689,7 @@ class SaladStudio(tk.Tk):
             self.geometry(f"{self._opened_width}x{self._opened_height}")
 
     def _place_editor_sash(self, _e=None) -> None:
-        """Open the Prompt Editor with the JSON box at 25% and the diagram at 75%."""
+        """Open the Prompt Editor with the JSON box at 40% and the diagram at 60%."""
         if self._editor_sash_set:
             return
         # Hold the size only once the window has been laid out at least once:
@@ -5509,7 +5710,7 @@ class SaladStudio(tk.Tk):
         if width <= 1:
             return
         try:
-            pane.sashpos(0, max(1, int(width * 0.25)))
+            pane.sashpos(0, max(1, int(width * 0.40)))
         except tk.TclError:
             return
         self._editor_sash_set = True
@@ -5699,7 +5900,7 @@ class SaladStudio(tk.Tk):
             st.configure(
                 "JsonOk.TLabel",
                 background=theme.PALETTE["bg"],
-                foreground="#8FBF9A",
+                foreground=theme.PALETTE["valid"],
             )
             st.configure(
                 "JsonBad.TLabel",

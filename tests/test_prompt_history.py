@@ -51,6 +51,21 @@ class PromptHistoryStore(unittest.TestCase):
         self.assertEqual([r["text"] for r in ph.list_prompts()], ["first prompt"])
         self.assertTrue(ph.HISTORY_PATH.is_file())
 
+    def test_rating_round_trips_and_clears(self) -> None:
+        """The rating is how a render is judged; it belongs with the row."""
+        ph.add_prompt("first")
+        ph.add_prompt("second")
+        self.assertEqual([ph.rating_of(r) for r in ph.list_prompts()], [0, 0])
+        self.assertTrue(ph.rate(0, 4))
+        self.assertEqual(ph.rating_of(ph.list_prompts()[0]), 4, "index 0 is the newest")
+        self.assertEqual(ph.rating_of(ph.list_prompts()[1]), 0, "the other row is untouched")
+        self.assertTrue(ph.rate(0, 0))
+        self.assertEqual(ph.rating_of(ph.list_prompts()[0]), 0, "0 clears the rating")
+        self.assertNotIn("rating", ph.list_prompts()[0], "a cleared rating leaves no field")
+        self.assertFalse(ph.rate(9, 3), "a row that is gone is not rated")
+        self.assertEqual(ph.rating_of({"rating": "junk"}), 0, "junk reads as unrated")
+        self.assertEqual(ph.rating_of({"rating": 99}), 5, "and an out-of-range value clamps")
+
     def test_preview(self) -> None:
         self.assertEqual(ph.preview("a\nb  c"), "a b c")
 
@@ -355,11 +370,11 @@ class LivePromptHistory(unittest.TestCase):
                     kids = app.prompt_hist_tree.get_children()
                     self.assertTrue(kids)
                     vals = app.prompt_hist_tree.item(kids[0], "values")
-                    # Column order is ("when", "profile", "preview", "stats")
-                    # (app._build_prompt_history_tab / _refresh_prompt_history),
-                    # so values[1] is the profile and values[2] the prompt preview.
-                    self.assertEqual(vals[1], "")
-                    self.assertIn("history oil stallion", vals[2])
+                    # Column order is HISTORY_GRID_COLUMNS, so values[1] is the
+                    # rating, values[2] the profile and values[3] the preview.
+                    self.assertEqual(vals[1], "☆" * 5, "an unrated row shows five empty stars")
+                    self.assertEqual(vals[2], "")
+                    self.assertIn("history oil stallion", vals[3])
                     app.prompt_hist_tree.selection_set(kids[0])
                     app._reuse_prompt_history()
                     editor = app.editor_text.get("1.0", "end")

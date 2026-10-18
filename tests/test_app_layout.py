@@ -991,23 +991,50 @@ class LiveFieldSync(unittest.TestCase):
         self.assertLessEqual(width1, width0 + 48)
         self.assertLessEqual(height1, height0 + 48)
 
-    def test_editor_pane_opens_with_diagram_taking_three_quarters(self) -> None:
+    def test_editor_pane_opens_with_json_about_forty_percent(self) -> None:
         app = self.app
         app._goto_tab("Prompt Editor")
-        app.update_idletasks()
         pane = app._editor_pane
-        # A hidden toplevel never lays out, so pane.winfo_width() stays 1 and
-        # Tk clamps any sash move to the unlaid-out size. Feed the shipped
-        # placement a real width and assert the position it asks Tk for: the
-        # JSON box takes 25% of the pane, the diagram the other 75%.
+        # A hidden window never gets a real pane width, so feed the placement a
+        # real one, as the test below does for the guard, and assert the share
+        # the shipped code asks Tk for.
         app._editor_sash_set = False
         with mock.patch.object(pane, "winfo_width", return_value=1000):
             with mock.patch.object(pane, "sashpos") as sashpos:
                 app._place_editor_sash()
-        sashpos.assert_called_once_with(0, 250)
-        self.assertTrue(app._editor_sash_set)
-        # The shipped geometry guard: a degenerate width must not place the
-        # sash, and must leave the flag unset so the <Map> retry still runs.
+        sashpos.assert_called_once_with(0, 400)
+        self.assertTrue(app._editor_sash_set, "the sash was scheduled but never placed")
+
+    def test_the_primary_action_on_each_page_carries_the_accent_style(self) -> None:
+        app = self.app
+        found: dict[str, object] = {}
+
+        def walk(widget) -> None:
+            for child in widget.winfo_children():
+                if isinstance(child, ttk.Button):
+                    found.setdefault(str(child.cget("text")), child)
+                walk(child)
+
+        for page in (app._import, app._helper):
+            walk(page)
+        for label in (
+            "Fetch from Civitai",
+            "Convert to Prompt Editor",
+            "Help (DeepSeek)",
+        ):
+            with self.subTest(button=label):
+                btn = found.get(label)
+                self.assertIsNotNone(btn, f"{label!r} is not a button on its page")
+                self.assertEqual(str(btn.cget("style")), "Accent.TButton")
+        # The secondary actions on the same pages stay plain.
+        for label in ("Refresh from Prompt Editor", "Help (local)", "Fill knobs from paste"):
+            with self.subTest(button=label):
+                self.assertNotEqual(str(found[label].cget("style")), "Accent.TButton")
+
+    def test_the_sash_placement_skips_a_pane_that_has_no_width(self) -> None:
+        """The shipped geometry guard: no placement, and <Map> may retry."""
+        app = self.app
+        pane = app._editor_pane
         app._editor_sash_set = False
         with mock.patch.object(pane, "winfo_width", return_value=1):
             with mock.patch.object(pane, "sashpos") as sashpos:

@@ -406,6 +406,57 @@ class HistoryStripOnWithdrawnRoot(unittest.TestCase):
 
         self.assertEqual(self.opens, [first, second], "each thumb must open its own file")
 
+    # ---- keyboard ----------------------------------------------------
+
+    def test_the_strip_takes_focus_and_walks_with_the_arrow_keys(self) -> None:
+        """The strip was mouse-only: every widget took no focus and a thumb
+        answered only <Button-1>."""
+        first = self._jpeg("k1.jpg", (300, 180), (200, 40, 60))
+        second = self._jpeg("k2.jpg", (300, 180), (40, 200, 60))
+        self._set_paths([first, second])
+        self.assertEqual(str(self.canvas.cget("takefocus")), "1")
+        self.assertIsNone(self.strip.selected_index(), "nothing is selected before a key")
+        self.strip._on_key(None, "Right")
+        self.assertEqual(self.strip.selected_index(), 0, "Right from nothing selects the first")
+        self.strip._on_key(None, "Right")
+        self.assertEqual(self.strip.selected_index(), 1)
+        self.strip._on_key(None, "Right")
+        self.assertEqual(self.strip.selected_index(), 1, "the end is a wall")
+        self.strip._on_key(None, "Home")
+        self.assertEqual(self.strip.selected_index(), 0)
+        self.strip._on_key(None, "End")
+        self.assertEqual(self.strip.selected_index(), 1)
+
+    def test_enter_opens_the_selected_thumb(self) -> None:
+        first = self._jpeg("e1.jpg", (300, 180), (200, 40, 60))
+        second = self._jpeg("e2.jpg", (300, 180), (40, 200, 60))
+        self._set_paths([first, second])
+        self.strip._on_key(None, "End")
+        self.strip._on_key(None, "End")
+        self.assertEqual(self.strip.selected_index(), 1, "the first End only lands on the ring")
+        self.strip._open_selected()
+        self.assertEqual(self.opens, [second], "Enter opens the ringed thumb")
+
+    def test_the_selected_thumb_is_ringed_and_only_that_one(self) -> None:
+        paths = [self._jpeg(f"r{i}.jpg", (64, 64), (40 * i, 60, 90)) for i in range(3)]
+        self._set_paths(paths)
+        self.assertEqual(len(self.canvas.find_withtag("ring")), 0)
+        self.strip._on_key(None, "Home")
+        self.assertEqual(len(self.canvas.find_withtag("ring")), 2, "a mark and a ring")
+        self.strip._select(2)
+        coords = self.canvas.coords(self._thumb_items()[2])
+        ring = [c for c in self.canvas.find_withtag("ring") if self.canvas.type(c) == "rectangle"]
+        self.assertEqual(len(ring), 1, "the ring follows the selection")
+        self.assertEqual(list(self.canvas.coords(ring[0])[:2]), [coords[0], coords[1]])
+
+    def test_a_click_also_moves_the_ring_so_enter_opens_the_clicked_thumb(self) -> None:
+        first = self._jpeg("c1.jpg", (300, 180), (200, 40, 60))
+        second = self._jpeg("c2.jpg", (300, 180), (40, 200, 60))
+        self._set_paths([first, second])
+        self._click_thumb(self._thumb_items()[1])
+        self.assertEqual(self.strip.selected_index(), 1)
+        self.assertEqual(self.opens, [second])
+
     def test_emit_open_without_callback_is_silent(self) -> None:
         strip = self.HistoryStrip(self.root, thumb_size=(32, 32))
         self.addCleanup(strip.destroy)

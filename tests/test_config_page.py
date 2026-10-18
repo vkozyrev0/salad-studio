@@ -1908,6 +1908,222 @@ class TheConfigPageTellsTheUserWhatWentWrong(unittest.TestCase):
         self.assertIn("added 1 instance(s)", logs)
 
 
+class ThePagesKeepTheirOwnStatus(unittest.TestCase):
+    """2026-10-18: a refusal read after a tab switch belonged to no page.
+
+    The window has one status line and eleven pages share it. Config already
+    kept its own line (``var_config_note``); this pass gives every page that
+    acts on its own data the same one, and drives each finding on the real
+    window.
+    """
+
+    def setUp(self) -> None:
+        try:
+            probe = tk.Tk()
+            probe.withdraw()
+            probe.destroy()
+        except tk.TclError as e:
+            self.skipTest(f"Tk cannot initialize: {e}")
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.tmp = Path(self._td.name)
+        self._ctx = _TempPaths(self.tmp)
+        self._ctx.__enter__()
+        self.addCleanup(lambda: self._ctx.__exit__(None, None, None))
+        from salad_studio import app as app_mod
+        from salad_studio import prompt_history
+
+        self.app_mod = app_mod
+        self.ph = prompt_history
+        self._old_hist = prompt_history.HISTORY_PATH
+        self._old_thumbs = prompt_history.THUMBS_DIR
+        prompt_history.HISTORY_PATH = self.tmp / "history.json"
+        prompt_history.THUMBS_DIR = self.tmp / "thumbs"
+        self.addCleanup(lambda: setattr(self.ph, "HISTORY_PATH", self._old_hist))
+        self.addCleanup(lambda: setattr(self.ph, "THUMBS_DIR", self._old_thumbs))
+        self.app = app_mod.SaladStudio(show=False)
+        self.app.withdraw()
+        self.addCleanup(_destroy_quietly, self.app)
+        self.app.update_idletasks()
+        _nomodal.reset()
+
+    def _note(self, page: str) -> str:
+        entry = self.app._page_notes[page]
+        return entry[0].get()
+
+    # -- the shared line --------------------------------------------------
+    def test_each_page_that_acts_has_its_own_line(self) -> None:
+        for page in (
+            "Tokens",
+            "LoRAs",
+            "Prompt Editor",
+            "Prompt Assist",
+            "Prompt Catalog",
+            "Import",
+            "Prompt History",
+            "Queue",
+            "Logs",
+        ):
+            with self.subTest(page=page):
+                self.assertIn(page, self.app._page_notes)
+                entry = self.app._page_notes[page]
+                self.assertEqual(
+                    str(entry[1].cget("style")), "Status.TLabel", "the line wears the status plate"
+                )
+
+    def test_a_loRA_refusal_lands_on_the_loRA_line_and_in_the_log(self) -> None:
+        app = self.app
+        app._goto_tab("LoRAs")
+        app.var_lora_ref.set("")
+        self.app.update_idletasks()
+        app._on_add_lora()
+        self.assertIn("paste a Civitai/HF URL", self._note("LoRAs"))
+        self.assertEqual(_nomodal.CALLS, [], "the line is the surface; no dialog to dismiss")
+        self.assertIn("paste a Civitai/HF URL", app.log_text.get("1.0", "end"))
+
+    def test_a_refusal_stays_on_its_page_after_a_switch(self) -> None:
+        app = self.app
+        app._goto_tab("LoRAs")
+        app._on_add_lora()
+        self.assertTrue(self._note("LoRAs"))
+        app._goto_tab("Queue")
+        self.assertEqual(self._note("Queue"), "", "another page's line is not borrowed")
+        self.assertIn("paste a Civitai/HF URL", self._note("LoRAs"), "the page keeps what it said")
+        app._goto_tab("LoRAs")
+        self.assertIn("paste a Civitai/HF URL", self._note("LoRAs"))
+
+    # -- one key at a time -------------------------------------------------
+    def test_each_token_row_checks_its_own_key(self) -> None:
+        """Check keys re-probes all five, minutes when one provider hangs."""
+        app = self.app
+        found = self._buttons()
+        self.assertEqual(len(found.get("Check", [])), 5, "one Check per key row")
+        with mock.patch.object(app, "_probe_tokens") as probe:
+            found["Check"][2].invoke()
+        self.assertEqual(probe.call_count, 1, "a row's Check runs one probe, not the page's")
+        kinds = probe.call_args.args[0] if probe.call_args.args else None
+        self.assertEqual(len(kinds or []), 1, f"one key at a time, got {kinds!r}")
+        self.assertIn(kinds[0], ("salad", "huggingface", "civitai", "deepseek", "vast"))
+
+    def _buttons(self) -> dict[str, list]:
+        found: dict[str, list] = {}
+
+        def walk(widget) -> None:
+            for child in widget.winfo_children():
+                if isinstance(child, ttk.Button):
+                    found.setdefault(str(child.cget("text")), []).append(child)
+                walk(child)
+
+        walk(self.app)
+        return found
+
+    # -- rating -----------------------------------------------------------
+    def test_rating_a_render_writes_the_store_and_shows_the_stars(self) -> None:
+        app = self.app
+        self.ph.add_prompt("a rated render")
+        app._refresh_prompt_history()
+        app._goto_tab("Prompt History")
+        kids = app.prompt_hist_tree.get_children()
+        self.assertTrue(kids)
+        app.prompt_hist_tree.selection_set(kids[0])
+        app._rate_history(4)
+        self.assertEqual(self.ph.list_prompts()[0].get("rating"), 4)
+        values = app.prompt_hist_tree.item(kids[0], "values")
+        self.assertEqual(values[1], "\u2605" * 4 + "\u2606", "four filled stars")
+        self.assertEqual(app.prompt_hist_tree.item(kids[0], "tags"), ("rated",))
+        self.assertIn("rated 4 stars", self._note("Prompt History"))
+        app._rate_history(0)
+        self.assertNotIn("rating", self.ph.list_prompts()[0])
+        self.assertEqual(app.prompt_hist_tree.item(kids[0], "values")[1], "\u2606" * 5)
+        self.assertEqual(
+            app.prompt_hist_tree.item(kids[0], "tags"), "", "an unrated row carries no tag"
+        )
+
+    def test_rating_with_nothing_selected_says_so_on_the_page(self) -> None:
+        app = self.app
+        self.ph.add_prompt("something to select")
+        app._refresh_prompt_history()
+        app._goto_tab("Prompt History")
+        app.prompt_hist_tree.selection_remove(*app.prompt_hist_tree.selection())
+        app._rate_history(3)
+        self.assertIn("select a render first", self._note("Prompt History"))
+        self.assertEqual(self.ph.list_prompts()[0].get("rating"), None)
+
+    def test_the_keys_1_to_5_rate_the_selected_render(self) -> None:
+        app = self.app
+        self.ph.add_prompt("keyboard rated")
+        app._refresh_prompt_history()
+        app._goto_tab("Prompt History")
+        kids = app.prompt_hist_tree.get_children()
+        app.prompt_hist_tree.selection_set(kids[0])
+        self.assertTrue(str(app.prompt_hist_tree.bind("<Key-5>")), "the 1-5 keys are bound")
+        self.assertTrue(str(app.prompt_hist_tree.bind("<Key-0>")), "0 clears them")
+        self.assertEqual(app._rate_history(3), "break", "the key is consumed, not passed on")
+        self.assertEqual(self.ph.list_prompts()[0].get("rating"), 3)
+        app._rate_history(0)
+        self.assertEqual(self.ph.list_prompts()[0].get("rating"), None)
+
+    def test_leaving_the_editor_parses_what_was_typed(self) -> None:
+        """Typing marks the graph stale; only the click that takes focus away
+        parses it, so a click that does not move focus must still parse."""
+        from unittest import mock
+
+        app = self.app
+        app._goto_tab("Prompt Editor")
+        self.app.update_idletasks()
+        app._graph_stale = True
+        with mock.patch.object(app, "_refresh_graph") as refresh:
+            app._on_editor_focus_out(None)
+        refresh.assert_called_once_with(force=True)
+        self.assertFalse(app._graph_stale)
+        with mock.patch.object(app, "_refresh_graph") as again:
+            app._on_editor_focus_out(None)
+        again.assert_not_called()
+
+    # -- primary actions --------------------------------------------------
+    def test_each_pages_primary_action_wears_the_accent(self) -> None:
+        app = self.app
+        found = {}
+
+        def walk(widget):
+            for child in widget.winfo_children():
+                try:
+                    text = str(child.cget("text"))
+                    style = str(child.cget("style"))
+                except tk.TclError:
+                    text = style = ""
+                if text:
+                    found[text] = style
+                walk(child)
+
+        walk(app)
+        for label in ("Fetch from Civitai", "Convert to Prompt Editor", "Commit to Prompts + JSON", "Reuse"):
+            with self.subTest(button=label):
+                self.assertEqual(found.get(label), "Accent.TButton", f"{label} is a page's main action")
+
+    # -- page switching ---------------------------------------------------
+    def test_ctrl_tab_moves_to_the_next_page_and_ctrl_digit_jumps(self) -> None:
+        app = self.app
+        app._goto_tab("Config")
+        app._step_page(1)
+        self.assertEqual(str(app.nb.tab(app.nb.select(), "text")), "Prompt Settings")
+        app._step_page(-1)
+        self.assertEqual(str(app.nb.tab(app.nb.select(), "text")), "Config")
+        app._step_page(-1)
+        self.assertEqual(
+            str(app.nb.tab(app.nb.select(), "text")),
+            app_mod_tab_order()[-1],
+            "stepping back from the first page wraps to the last",
+        )
+        self.assertTrue(str(app.bind_all("<Control-Tab>")), "Ctrl+Tab is bound")
+
+
+def app_mod_tab_order() -> tuple[str, ...]:
+    from salad_studio.app import TAB_ORDER
+
+    return TAB_ORDER
+
+
 class TheImportPageAndTheHistoryDelete(unittest.TestCase):
     """This pass's issues 1 and 4, each driven on the real window.
 

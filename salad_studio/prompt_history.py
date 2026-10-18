@@ -48,6 +48,8 @@ def _load() -> list[dict[str, Any]]:
             entry["gateway"] = str(row.get("gateway"))
         if row.get("image"):
             entry["image"] = str(row.get("image"))
+        if rating_of(row):
+            entry["rating"] = rating_of(row)
         out.append(entry)
     return out
 
@@ -236,6 +238,35 @@ def add_request(
     rows.insert(0, entry)
     _save(rows[:MAX_ENTRIES])
     return entry
+
+
+def rate(index: int, stars: int) -> bool:
+    """Set a row's 0-5 star rating. 0 clears it; False when the row is gone.
+
+    The rating is the only judgement the studio keeps about a render, so it
+    travels with the row (and its thumbnail), not in a separate file that can
+    drift from the history it describes.
+    """
+    rows = _load()
+    try:
+        row = rows[int(index)]
+    except (IndexError, TypeError, ValueError):
+        return False
+    value = max(0, min(int(stars), 5))
+    if value:
+        row["rating"] = value
+    else:
+        row.pop("rating", None)
+    _save(rows)
+    return True
+
+
+def rating_of(row: dict[str, Any]) -> int:
+    """0-5. Any junk in the store reads as unrated rather than raising."""
+    try:
+        return max(0, min(int(row.get("rating") or 0), 5))
+    except (TypeError, ValueError):
+        return 0
 
 
 def remove_at(index: int) -> None:

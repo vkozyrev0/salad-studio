@@ -22,7 +22,18 @@ render is in flight is queued, not dropped), **vertical tabs** on the left
 **Prompt Editor**, **Prompt Assist**, **Prompt Catalog**, **Import**,
 **Prompt History**, **Queue**, **Logs**).
 Bottom (always visible) = horizontal history strip with a tall button on
-the left and right.
+the left and right. The strip takes keyboard focus: Left/Right walk the thumbs,
+Home/End jump, Enter or Space opens the ringed one, and a click moves the ring
+too. **Ctrl+Tab** and **Ctrl+PgDn** step the page (with Shift or Ctrl+PgUp to
+step back), and **Ctrl+1** to **Ctrl+9** jump to a page.
+
+A page that acts on its own data (LoRAs, Prompt Catalog, Import, Prompt Assist,
+Prompt History, Queue, Config) keeps its own note line under its controls: what
+the last action there said, refusals included, still readable after a look at
+another page. The window's status line keeps its one-line summary and the Logs
+page keeps the full trail. The first button of a page's main action (Generate,
+Fetch from Civitai, Convert to Prompt Editor, Help (DeepSeek), Commit to
+Prompts + JSON, Reuse) wears the accent colour.
 
 - **Config**. The deployment page, in four sub-tabs in the order a deployment
   runs them: **Profile**, **Images**, **Salad group**, **Vast.ai**. Each sub-tab
@@ -291,8 +302,11 @@ the left and right.
 - **Prompt History**. Stores the full request JSON (prompt column for
   skim, Graph column for node/LoRA/size stats). A successful Generate
   writes a 48×48 thumbnail in the first column. Double-click restores
-  JSON + prompt. The page shows an explicit empty state when nothing has been
-  generated.
+  JSON + prompt. **Rating** keeps a 1-5 star judgement on a row: the keys 1-5
+  rate the selected render and 0 clears it, the buttons say the same, and a
+  rated row is painted in the accent. The page shows an explicit empty state
+  when nothing has been generated. **Reuse** and **Delete** act on the selected
+  row; Delete asks first and says `Kept …` on No.
 - **Queue**. The Salad request queue, rendered from `salad_queue`'s own
   records: one row per request with its **Profile** (the container profile it is
   dispatched to), **State** — the human word for the request's stage: **waiting**
@@ -440,7 +454,7 @@ This folder was moved out of the Eldermark repo, so the paths that used to be re
 Three test commands, and the later ones are not part of the first:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1165 tests, ~15-30 min
+python -m unittest discover -s tests -p "test_*.py"    # 1189 tests, ~15-30 min
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```

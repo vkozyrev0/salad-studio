@@ -569,6 +569,51 @@ class ConfigPage(unittest.TestCase):
             "and the config keeps its own stored policy",
         )
 
+    def test_a_vast_profile_never_rechecks_the_salad_group(self) -> None:
+        """A vast target has no Salad group; the switch must not ask Salad for one."""
+        app = self.app
+        prof = profiles.default_profile("vast-test")
+        prof.mode = "vast"
+        prof.gateway = "http://203.0.113.9:31234"
+        profiles.upsert(prof)
+        tok.write_token("salad", "vast-policy-key")
+        calls: list[str] = []
+
+        def _load(gw, key):
+            calls.append(str(gw))
+            return None, "No container group matches this gateway DNS."
+
+        with mock.patch.object(
+            self.app_mod.salad_status, "load_policy", side_effect=_load
+        ), mock.patch("salad_studio.app.threading.Thread", _Inline):
+            self._select(prof.name)
+            _pump(app, lambda: False, 0.5)
+        self.assertNotIn(
+            "http://203.0.113.9:31234", calls, "a vast target has no Salad group to read"
+        )
+        self.assertNotIn(
+            "Policy re-check for 'vast-test'", app.log_text.get("1.0", "end")
+        )
+        self.assertTrue(app.var_pol_image.get(), "the stored policy still fills the fields")
+
+    def test_applying_a_salad_policy_to_a_vast_target_is_refused(self) -> None:
+        """The Apply button must not POST a Salad policy to a vast endpoint."""
+        app = self.app
+        prof = profiles.load_all()["klein"]
+        prof.mode = "vast"
+        prof.gateway = "http://203.0.113.9:31234"
+        profiles.upsert(prof)
+        self._select(prof.name)
+        with mock.patch.object(
+            self.app_mod.salad_status, "apply_policy"
+        ) as apply, mock.patch.object(
+            self.app_mod.messagebox, "showinfo"
+        ) as info:
+            app._apply_salad_policy()
+        self.assertFalse(apply.called, "no Salad policy may go to a vast host")
+        self.assertTrue(info.called, "the refusal says why")
+        self.assertIn("Salad target", app.status.get())
+
     def test_a_new_config_is_seeded_with_the_documents_image(self) -> None:
         """Adding a config stores the metadata document's image for its family."""
         app = self.app
@@ -943,6 +988,8 @@ class ConfigPage(unittest.TestCase):
         app.var_vast_down.set("250")
         app.var_vast_up.set("120")
         app.var_vast_cuda.set("13.1")
+        app.var_vast_reliability.set("0.97")
+        app.var_vast_gpus.set("rtx 5090, RTX A6000")
         app._on_vast_save()
         policy = vast.load_doc()["replace"]
         self.assertEqual(
@@ -953,6 +1000,8 @@ class ConfigPage(unittest.TestCase):
                 "min_down_mbps": 250.0,
                 "min_up_mbps": 120.0,
                 "cuda_min": 13.1,
+                "min_reliability": 0.97,
+                "gpu_names": ["RTX 5090", "RTX A6000"],
             },
         )
         self.assertTrue(app.var_vast_replace.get())
@@ -1041,10 +1090,43 @@ class ConfigPage(unittest.TestCase):
             _pump(app, lambda: not app._busy)
         self.assertEqual(seen.get("endpoint"), "http://203.0.113.9:31234")
 
-    def test_a_created_instance_without_an_endpoint_is_remembered(self) -> None:
-        """A contract that has not mapped an endpoint must not be created again."""
+    def test_a_dropped_apply_callback_clears_the_create_lock(self) -> None:
+        """Generate's automatic path must not wedge the lock when _later fails."""
         app = self.app
-        app._apply_vast_replace(
+        app.var_vast_image.set("docker.io/example/klein:tag")
+        self._vast_window()
+        alive = {
+            "action": "alive",
+            "row": {
+                "endpoint": "http://203.0.113.9:31234",
+                "id": 1,
+                "gpu": "RTX 4090",
+                "state": "running",
+            },
+            "message": "the instance is alive",
+        }
+        with mock.patch.object(
+            self.app_mod.vast, "replace_destroyed", return_value=alive
+        ), mock.patch.object(
+            self.app_mod.generator,
+            "generate_from_vast",
+            return_value=Path(self.tmp) / "plate.jpg",
+        ), mock.patch.object(
+            app, "_later", return_value=None
+        ), mock.patch(
+            "salad_studio.app.threading.Thread", _Inline
+        ):
+            app._on_generate()
+        self.assertFalse(
+            app._vast_create_busy,
+            "a callback that could not be scheduled must release the create lock",
+        )
+
+    def test_a_created_instance_without_an_endpoint_is_a_creating_row(self) -> None:
+        """The contract is a durable row, not a one-slot pending shadow."""
+        app = self.app
+        app._vast_create_busy = True
+        app._apply_vast_rent(
             {
                 "action": "created",
                 "contract": 777,
@@ -1053,12 +1135,291 @@ class ConfigPage(unittest.TestCase):
                 "image": "docker.io/example/klein:tag",
                 "message": "created instance 777; it has not mapped an endpoint yet",
             },
-            None,
         )
-        self.assertFalse(app._vast_replace_busy)
-        self.assertEqual(app._vast_doc["pending"]["contract"], 777)
-        self.assertEqual(vast.load_doc()["pending"]["contract"], 777)
+        self.assertFalse(app._vast_create_busy)
+        row = app._vast_doc["instances"][0]
+        self.assertEqual(row["id"], 777)
+        self.assertEqual(row["endpoint"], "")
+        self.assertEqual(row["state"], "creating")
+        self.assertEqual(row["label"], "salad-studio-klein")
+        self.assertEqual(row["image"], "docker.io/example/klein:tag")
+        self.assertEqual(app._vast_doc["pending"], {})
+        self.assertEqual(vast.load_doc()["pending"], {})
+        self.assertEqual(vast.load_doc()["instances"][0]["state"], "creating")
         self.assertIn("not mapped", app.status.get())
+
+    # -- the rent panel --------------------------------------------------
+    @staticmethod
+    def _offer(offer_id: int, **overrides) -> dict:
+        offer = {
+            "id": offer_id,
+            "gpu_name": "RTX 4090",
+            "gpu_ram": 24576,
+            "disk_space": 200,
+            "cuda_max_good": 13.0,
+            "inet_down": 500,
+            "inet_up": 200,
+            "dph_total": 0.40,
+            "rentable": True,
+            "reliability2": 0.99,
+            "dlperf": 97.0,
+            "dlperf_per_dphtotal": 250.0,
+            "geolocation": "Testland, TL",
+        }
+        offer.update(overrides)
+        return offer
+
+    def _fill_offers(self, offers: list[dict]) -> None:
+        """Put offers in the results table the way a search would."""
+        app = self.app
+        app._vast_offers = {str(offer["id"]): offer for offer in offers}
+        for offer in offers:
+            cells = vast.offer_cells(offer)
+            app.vast_offer_tree.insert(
+                "",
+                "end",
+                iid=str(offer["id"]),
+                values=tuple(
+                    cells[col]
+                    for col, _heading, _width, _fill in self.app_mod.VAST_OFFER_GRID_COLUMNS
+                ),
+            )
+
+    def test_the_rent_panel_starts_with_the_default_gpu_list(self) -> None:
+        app = self.app
+        self.assertEqual(app.var_vast_gpus.get(), "RTX 5090, RTX 4090")
+        self.assertEqual(app.var_vast_reliability.get(), "0.95")
+
+    def test_clearing_the_gpu_box_restores_the_defaults_before_the_search(self) -> None:
+        app = self.app
+        tok.write_token("vast", "vast-key")
+        app.var_vast_gpus.set("  , ")
+        seen: dict = {}
+
+        def fake_search(key, criteria, **_kwargs):
+            seen.update(criteria)
+            return {"status": 200, "offers": [], "error": ""}
+
+        with mock.patch.object(
+            vast, "search_offers", side_effect=fake_search
+        ), mock.patch("salad_studio.app.threading.Thread", _Inline):
+            app._on_vast_search()
+            self.assertTrue(_pump(app, lambda: not app._vast_search_busy))
+        self.assertEqual(app.var_vast_gpus.get(), "RTX 5090, RTX 4090")
+        self.assertEqual(seen["gpu_names"], ["RTX 5090", "RTX 4090"])
+        self.assertEqual(
+            vast.load_doc()["replace"]["gpu_names"], ["RTX 5090", "RTX 4090"]
+        )
+
+    def test_find_offers_lists_them_by_value_and_persists_the_criteria(self) -> None:
+        app = self.app
+        tok.write_token("vast", "vast-key")
+        app.var_vast_gpus.set("RTX 5090, RTX 4090")
+        low = self._offer(100, gpu_name="RTX 4090", dlperf_per_dphtotal=200.0)
+        high = self._offer(200, gpu_name="RTX 5090", dlperf_per_dphtotal=500.0)
+        result = {"status": 200, "offers": [low, high], "error": ""}
+        with mock.patch.object(
+            vast, "search_offers", return_value=result
+        ), mock.patch("salad_studio.app.threading.Thread", _Inline):
+            app._on_vast_search()
+            self.assertTrue(_pump(app, lambda: not app._vast_search_busy))
+        self.assertEqual(app.vast_offer_tree.get_children(), ("200", "100"))
+        self.assertEqual(set(app._vast_offers), {"200", "100"})
+        values = app.vast_offer_tree.item("200", "values")
+        self.assertEqual(values[0], "RTX 5090", "the best value is the first row")
+        self.assertEqual(values[3], "500")
+        stored = vast.load_doc()["replace"]
+        self.assertEqual(stored["gpu_names"], ["RTX 5090", "RTX 4090"])
+        self.assertEqual(stored["min_reliability"], 0.95)
+        self.assertIn("2 offer(s)", app.var_vast_offer_status.get())
+
+    def test_renting_the_selected_offer_appends_and_activates_it(self) -> None:
+        app = self.app
+        tok.write_token("vast", "vast-key")
+        name = app.var_name.get()
+        app.var_profile_mode.set("vast")
+        app._on_profile_mode()
+        app._save_profile()
+        app.var_vast_image.set("docker.io/example/klein:tag")
+        self._fill_offers([self._offer(55818626, gpu_name="RTX 5090")])
+        app.vast_offer_tree.selection_set("55818626")
+        created = {
+            "action": "created",
+            "contract": 777,
+            "row": {
+                "endpoint": "http://203.0.113.55:40111",
+                "id": 777,
+                "label": "salad-studio-55818626",
+                "image": "docker.io/example/klein:tag",
+                "gpu": "RTX 5090",
+                "state": "running",
+            },
+            "label": "salad-studio-55818626",
+            "image": "docker.io/example/klein:tag",
+            "message": "created instance 777 at http://203.0.113.55:40111",
+        }
+        with mock.patch.object(
+            vast, "rent_offer", return_value=created
+        ) as rent, mock.patch("salad_studio.app.threading.Thread", _Inline):
+            app._on_vast_rent()
+            self.assertTrue(_pump(app, lambda: not app._vast_create_busy))
+        self.assertEqual(rent.call_args.args[1]["id"], 55818626)
+        self.assertEqual(rent.call_args.kwargs["image"], "docker.io/example/klein:tag")
+        self.assertEqual(rent.call_args.kwargs["label"], "salad-studio-55818626")
+        self.assertEqual(vast.load_doc()["active"], "http://203.0.113.55:40111")
+        self.assertEqual(
+            [row["endpoint"] for row in vast.load_doc()["instances"]],
+            ["http://203.0.113.55:40111"],
+        )
+        self.assertEqual(app.var_gateway.get(), "http://203.0.113.55:40111")
+        self.assertEqual(
+            profiles.load_all()[name].gateway, "http://203.0.113.55:40111"
+        )
+
+    def test_an_unmapped_rent_adds_a_creating_row_immediately(self) -> None:
+        app = self.app
+        tok.write_token("vast", "vast-key")
+        app.var_vast_image.set("docker.io/example/klein:tag")
+        self._fill_offers([self._offer(42, gpu_name="RTX 5090")])
+        app.vast_offer_tree.selection_set("42")
+        unmapped = {
+            "action": "created",
+            "contract": 777,
+            "row": None,
+            "label": "salad-studio-42",
+            "image": "docker.io/example/klein:tag",
+            "message": "created instance 777; it has not mapped an endpoint yet",
+        }
+        with mock.patch.object(
+            vast, "rent_offer", return_value=unmapped
+        ), mock.patch("salad_studio.app.threading.Thread", _Inline):
+            app._on_vast_rent()
+            self.assertTrue(_pump(app, lambda: not app._vast_create_busy))
+        values = app.vast_tree.item("777", "values")
+        self.assertEqual(values[2], "#777", "the row appears before its endpoint does")
+        self.assertEqual(values[4], "creating")
+        stored = vast.load_doc()["instances"]
+        self.assertEqual([(row["id"], row["state"]) for row in stored], [(777, "creating")])
+        self.assertEqual(vast.load_doc()["pending"], {})
+        self.assertIn("has not mapped", app.status.get())
+
+    def test_a_failed_search_is_reported_on_the_section_the_line_and_the_logs(
+        self,
+    ) -> None:
+        app = self.app
+        tok.write_token("vast", "vast-key")
+        failed = {"status": 401, "offers": [], "error": "HTTP 401: invalid key"}
+        with mock.patch.object(
+            vast, "search_offers", return_value=failed
+        ), mock.patch("salad_studio.app.threading.Thread", _Inline):
+            app._on_vast_search()
+            self.assertTrue(_pump(app, lambda: not app._vast_search_busy))
+        note = app.var_vast_offer_status.get()
+        self.assertIn("rejected", note)
+        self.assertEqual(app.var_vast_status.get(), note)
+        self.assertEqual(app.status.get(), note)
+        self.assertIn("rejected", app.log_text.get("1.0", "end"))
+        self.assertEqual(app.vast_offer_tree.get_children(), ())
+
+    def test_the_offer_table_columns_are_the_cell_keys_in_order(self) -> None:
+        cells = vast.offer_cells({"id": 1})
+        self.assertEqual(
+            tuple(cells),
+            tuple(
+                col
+                for col, _heading, _width, _fill in self.app_mod.VAST_OFFER_GRID_COLUMNS
+            ),
+        )
+
+    def test_the_create_lock_is_shared_by_rent_and_replace(self) -> None:
+        app = self.app
+        tok.write_token("vast", "vast-key")
+        app.var_vast_image.set("docker.io/example/klein:tag")
+        # An active instance with an image is what Replace needs to get past
+        # its own guards, so a refusal here can only be the shared lock.
+        app.var_vast_new.set("203.0.113.9:31234")
+        app._on_vast_add()
+        self.assertIsNotNone(app._vast_active(), "replace has a row to act on")
+        self._fill_offers([self._offer(42)])
+        app.vast_offer_tree.selection_set("42")
+        unmapped = {
+            "action": "created",
+            "contract": 777,
+            "row": None,
+            "label": "salad-studio-42",
+            "image": "docker.io/example/klein:tag",
+            "message": "created instance 777; it has not mapped an endpoint yet",
+        }
+        with mock.patch.object(
+            vast, "rent_offer", return_value=unmapped
+        ), mock.patch.object(vast, "replace_destroyed") as replace, mock.patch(
+            "salad_studio.app.threading.Thread", _HeldThread
+        ):
+            _HeldThread.held = []
+            app._on_vast_rent()
+            self.assertTrue(app._vast_create_busy, "rent takes the one create lock")
+            app._on_vast_replace()
+            self.assertFalse(replace.called, "replace waits for the same lock")
+            self.assertEqual(
+                app.var_vast_status.get(),
+                "a replacement check is already running",
+            )
+            held = _HeldThread.held[-1]
+            held.target()
+            self.assertTrue(_pump(app, lambda: not app._vast_create_busy))
+
+    def test_a_fetch_that_maps_the_creating_row_promotes_it(self) -> None:
+        app = self.app
+        name = app.var_name.get()
+        app.var_profile_mode.set("vast")
+        app._on_profile_mode()
+        prof = profiles.load_all()[name]
+        prof.mode = "vast"
+        prof.gateway = ""
+        profiles.upsert(prof)
+        app.var_gateway.set("")
+        doc = dict(app._vast_doc)
+        doc["instances"] = [
+            {
+                "id": 777,
+                "endpoint": "",
+                "label": "salad-studio-42",
+                "gpu": "RTX 5090",
+                "state": "creating",
+                "image": "docker.io/example/klein:tag",
+            }
+        ]
+        doc["active"] = ""
+        app._vast_doc = doc
+        app._apply_vast_fetch(
+            {
+                "status": 200,
+                "instances": [
+                    {
+                        "id": 777,
+                        "label": "salad-studio-42",
+                        "gpu_name": "RTX 5090",
+                        "actual_status": "running",
+                        "public_ipaddr": "203.0.113.77",
+                        "ports": {"8188/tcp": [{"HostPort": 40111}]},
+                    }
+                ],
+                "error": "",
+            }
+        )
+        row = app._vast_doc["instances"][0]
+        self.assertEqual(row["endpoint"], "http://203.0.113.77:40111")
+        self.assertEqual(row["state"], "running")
+        self.assertEqual(app._vast_doc["active"], "http://203.0.113.77:40111")
+        self.assertEqual(row["image"], "docker.io/example/klein:tag")
+        self.assertEqual(app._vast_doc["pending"], {})
+        self.assertEqual(vast.load_doc()["pending"], {})
+        self.assertEqual(
+            profiles.load_all()[name].gateway,
+            "http://203.0.113.77:40111",
+            "the profile the user is on follows the promoted instance",
+        )
+        self.assertEqual(app.var_gateway.get(), "http://203.0.113.77:40111")
 
     # -- routing and the queue across profiles ----------------------------
     def _generate_with(self, graph_unet: str, form_profile: str) -> dict:

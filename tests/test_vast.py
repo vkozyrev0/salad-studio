@@ -111,6 +111,45 @@ INSTANCES_BODY = {
     ]
 }
 
+# The state measured on 2026-10-18, verbatim from the report:
+# ``~/.config/salad/studio-vast.json`` held a running row for an instance the
+# account no longer lists, plus a ``pending`` contract for the one it does.
+EVIDENCE_IMAGE = (
+    "docker.io/vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-klein"
+)
+EVIDENCE_LEGACY_DOC = {
+    "version": 1,
+    "mode": "vast",
+    "active": "http://1.193.138.161:40006",
+    "instances": [
+        {
+            "id": 56373341,
+            "endpoint": "http://1.193.138.161:40006",
+            "label": "",
+            "gpu": "RTX 5090",
+            "state": "running",
+            "image": EVIDENCE_IMAGE,
+        }
+    ],
+    "replace": {},
+    "pending": {
+        "contract": 56496191,
+        "label": "salad-studio-53483606",
+        "image": EVIDENCE_IMAGE,
+    },
+}
+# ``fetch_records`` (unfiltered) as the live account answered it: the old
+# instance is absent and the new one has no port mapping yet.
+EVIDENCE_RECORD = {
+    "id": 56496191,
+    "label": "salad-studio-53483606",
+    "actual_status": "loading",
+    "cur_state": "running",
+    "public_ipaddr": "142.252.100.192",
+    "ports": None,
+    "gpu_name": "RTX 5090",
+}
+
 
 class _Recorder:
     """A transport that records the real request and answers a canned response."""
@@ -165,6 +204,21 @@ class EndpointDerivation(unittest.TestCase):
             },
         }
         self.assertEqual(vast.instance_endpoint(instance), "http://10.0.0.6:31234")
+
+    def test_the_salad_wrapper_port_wins_over_raw_comfyui(self) -> None:
+        """The wrapper resolves Civitai LoRA URLs; 8188 only takes local files."""
+        instance = {
+            "public_ipaddr": "10.0.0.10",
+            "ports": {
+                "3000/tcp": [{"HostPort": 31080}],
+                "8188/tcp": [{"HostPort": 31151}],
+            },
+        }
+        self.assertEqual(
+            vast.instance_endpoint(instance),
+            "http://10.0.0.10:31080",
+            "the wrapper is the port that can run a Civitai LoRA graph",
+        )
 
     def test_one_other_non_ssh_port_is_used_when_no_comfy_port_is_mapped(self) -> None:
         """A template that publishes ComfyUI elsewhere is still usable."""
@@ -449,6 +503,304 @@ class InstanceStore(unittest.TestCase):
         )
 
 
+class RowModel(unittest.TestCase):
+    """A row is an instance identity: the endpoint is optional user state."""
+
+    def test_the_key_is_the_id_else_the_endpoint(self) -> None:
+        self.assertEqual(vast.row_key({"id": 56496191, "endpoint": ""}), "56496191")
+        self.assertEqual(
+            vast.row_key({"id": None, "endpoint": "1.193.138.161:40006"}),
+            "http://1.193.138.161:40006",
+            "an endpoint-only row is keyed by its one spelling",
+        )
+
+    def test_clean_row_keeps_an_id_with_no_endpoint(self) -> None:
+        row = vast.clean_row(
+            {"id": "56496191", "endpoint": "", "state": "Loading", "label": "new"}
+        )
+        self.assertEqual(
+            row,
+            {
+                "id": 56496191,
+                "endpoint": "",
+                "label": "new",
+                "gpu": "",
+                "state": "loading",
+                "image": "",
+            },
+        )
+
+    def test_clean_row_drops_a_row_with_neither_id_nor_endpoint(self) -> None:
+        for raw in ({"label": "x"}, {"id": "nope"}, {"id": 0}, {"endpoint": "  "}, "x"):
+            with self.subTest(raw=raw):
+                self.assertIsNone(vast.clean_row(raw))
+
+    def test_clean_row_clears_the_endpoint_of_a_destroyed_row(self) -> None:
+        row = vast.clean_row(
+            {
+                "id": 56373341,
+                "endpoint": "http://1.193.138.161:40006",
+                "state": "Destroyed",
+                "image": EVIDENCE_IMAGE,
+            }
+        )
+        self.assertEqual(row["endpoint"], "", "a destroyed instance has no address")
+        self.assertEqual(row["state"], "destroyed")
+        self.assertEqual(row["image"], EVIDENCE_IMAGE, "the image is user state")
+
+    def test_row_label_falls_back_to_the_id(self) -> None:
+        self.assertEqual(vast.row_label({"label": "klein"}), "klein")
+        self.assertEqual(
+            vast.row_label({"label": "", "endpoint": "http://1.2.3.4:31234"}),
+            "http://1.2.3.4:31234",
+        )
+        self.assertEqual(vast.row_label({"label": "", "id": 7}), "#7")
+
+    def test_upsert_matches_by_id_and_keeps_the_user_image_and_label(self) -> None:
+        doc = {
+            "instances": [
+                {
+                    "id": 7,
+                    "endpoint": "",
+                    "label": "my label",
+                    "gpu": "",
+                    "state": "creating",
+                    "image": EVIDENCE_IMAGE,
+                }
+            ]
+        }
+        doc, status = vast.upsert_instance(
+            doc,
+            {
+                "id": 7,
+                "endpoint": "http://1.2.3.4:31234",
+                "label": "",
+                "gpu": "RTX 5090",
+                "state": "running",
+            },
+        )
+        self.assertEqual(status, "updated")
+        row = doc["instances"][0]
+        self.assertEqual(row["endpoint"], "http://1.2.3.4:31234")
+        self.assertEqual(row["state"], "running")
+        self.assertEqual(row["gpu"], "RTX 5090")
+        self.assertEqual(row["label"], "my label", "an empty incoming label loses")
+        self.assertEqual(row["image"], EVIDENCE_IMAGE, "the incoming row has no image")
+
+    def test_upsert_matches_by_endpoint_when_the_id_is_new(self) -> None:
+        doc = {"instances": [{"endpoint": "http://1.2.3.4:31234", "label": "typed"}]}
+        doc, status = vast.upsert_instance(
+            doc, {"id": 8, "endpoint": "http://1.2.3.4:31234", "state": "running"}
+        )
+        self.assertEqual(status, "updated")
+        self.assertEqual(len(doc["instances"]), 1, "one instance, one row")
+        self.assertEqual(doc["instances"][0]["id"], 8)
+        self.assertEqual(doc["instances"][0]["label"], "typed")
+
+    def test_upsert_reports_an_identical_row_as_unchanged(self) -> None:
+        row = {
+            "id": 7,
+            "endpoint": "http://1.2.3.4:31234",
+            "label": "x",
+            "gpu": "",
+            "state": "running",
+            "image": "",
+        }
+        doc, status = vast.upsert_instance({"instances": [dict(row)]}, dict(row))
+        self.assertEqual(status, "unchanged")
+        self.assertEqual(doc["instances"], [row])
+
+    def test_remove_and_set_active_use_the_row_key(self) -> None:
+        doc = {
+            "active": "http://1.2.3.4:31234",
+            "instances": [
+                {"id": 7, "endpoint": "http://1.2.3.4:31234"},
+                {"id": 8, "endpoint": ""},
+                {"id": 9, "endpoint": "http://5.6.7.8:40000"},
+            ],
+        }
+        doc, removed = vast.remove_instance(doc, "7")
+        self.assertTrue(removed)
+        self.assertEqual([row["id"] for row in doc["instances"]], [8, 9])
+        self.assertEqual(
+            doc["active"],
+            "http://5.6.7.8:40000",
+            "the next row that has an endpoint becomes active",
+        )
+        doc = vast.set_active(doc, "8")
+        self.assertEqual(doc["active"], "http://5.6.7.8:40000", "no endpoint, no target")
+        doc = vast.set_active(doc, "http://5.6.7.8:40000")
+        self.assertEqual(doc["active"], "http://5.6.7.8:40000")
+
+    def test_active_row_is_never_a_row_without_an_endpoint(self) -> None:
+        doc = {
+            "active": "",
+            "instances": [{"id": 7, "endpoint": "", "state": "loading"}],
+        }
+        self.assertIsNone(vast.active_row(doc))
+        doc["active"] = "http://1.2.3.4:31234"
+        doc["instances"][0]["endpoint"] = "http://1.2.3.4:31234"
+        doc["instances"][0]["state"] = "destroyed"
+        self.assertIsNone(vast.active_row(doc), "a destroyed row is never active")
+
+
+class EvidenceReconciliation(unittest.TestCase):
+    """The measured 2026-10-18 state, reconciled exactly as Fetch reads it."""
+
+    def setUp(self) -> None:
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.path = Path(self._td.name) / "studio-vast.json"
+
+    def _evidence_doc(self) -> dict:
+        """The stored document as the old build left it, folded by load_doc."""
+        self.path.write_text(json.dumps(EVIDENCE_LEGACY_DOC), encoding="utf-8")
+        return vast.load_doc(self.path)
+
+    def _row(self, doc: dict, instance_id: int) -> dict:
+        for row in doc["instances"]:
+            if str(row.get("id") or "") == str(instance_id):
+                return row
+        raise AssertionError(f"no row {instance_id} in {doc['instances']}")
+
+    def test_load_doc_folds_the_legacy_pending_into_a_creating_row(self) -> None:
+        doc = self._evidence_doc()
+        self.assertEqual(
+            sorted(str(row["id"]) for row in doc["instances"]),
+            ["56373341", "56496191"],
+            "the old row and the contract the old build kept as pending",
+        )
+        self.assertEqual(
+            self._row(doc, 56496191),
+            {
+                "id": 56496191,
+                "endpoint": "",
+                "label": "salad-studio-53483606",
+                "gpu": "",
+                "state": "creating",
+                "image": EVIDENCE_IMAGE,
+            },
+        )
+        self.assertEqual(doc["pending"], {}, "the one-slot shadow is gone")
+
+    def test_a_pending_contract_that_already_has_a_row_is_not_duplicated(self) -> None:
+        legacy = {**EVIDENCE_LEGACY_DOC}
+        legacy["pending"] = {"contract": 56373341, "label": "x", "image": ""}
+        self.path.write_text(json.dumps(legacy), encoding="utf-8")
+        doc = vast.load_doc(self.path)
+        self.assertEqual(
+            [str(row["id"]) for row in doc["instances"]].count("56373341"), 1
+        )
+
+    def test_the_evidence_fetch_destroys_the_old_row_and_shows_the_new_one_loading(
+        self,
+    ) -> None:
+        doc = self._evidence_doc()
+        doc, summary = vast.reconcile(doc, [EVIDENCE_RECORD], complete=True)
+
+        old = self._row(doc, 56373341)
+        self.assertEqual(old["state"], "destroyed")
+        self.assertEqual(old["endpoint"], "", "a destroyed instance has no address")
+        self.assertEqual(old["image"], EVIDENCE_IMAGE, "the image is user state")
+
+        new = self._row(doc, 56496191)
+        self.assertEqual(new["state"], "loading")
+        self.assertEqual(new["endpoint"], "", "no Comfy port is mapped yet")
+        self.assertEqual(new["label"], "salad-studio-53483606")
+        self.assertEqual(new["gpu"], "RTX 5090")
+        self.assertEqual(new["image"], EVIDENCE_IMAGE, "the creating row's image survives")
+
+        self.assertEqual(doc["active"], "", "the active endpoint is gone")
+        self.assertEqual(sorted(summary["destroyed"]), ["56373341"])
+        self.assertIn("http://1.193.138.161:40006", summary["gone_endpoints"])
+        self.assertEqual(summary["promoted"], "")
+
+    def test_a_second_fetch_promotes_the_creating_row_once_it_maps(self) -> None:
+        doc = self._evidence_doc()
+        doc, _summary = vast.reconcile(doc, [EVIDENCE_RECORD], complete=True)
+        mapped = {
+            **EVIDENCE_RECORD,
+            "actual_status": "running",
+            "ports": {"8188/tcp": [{"HostPort": 40006}]},
+        }
+        doc, summary = vast.reconcile(doc, [mapped], complete=True)
+        row = self._row(doc, 56496191)
+        self.assertEqual(row["endpoint"], "http://142.252.100.192:40006")
+        self.assertEqual(row["state"], "running")
+        self.assertEqual(doc["active"], "http://142.252.100.192:40006")
+        self.assertEqual(summary["promoted"], "56496191")
+        self.assertEqual(row["image"], EVIDENCE_IMAGE, "the image survives the promotion")
+
+    def test_the_active_target_follows_an_endpoint_move(self) -> None:
+        """A port preference change moves the row; the selection moves with it."""
+        doc = {
+            "active": "http://1.2.3.4:31151",
+            "instances": [
+                {
+                    "id": 56507376,
+                    "endpoint": "http://1.2.3.4:31151",
+                    "label": "salad-studio-53518141",
+                    "gpu": "RTX 5090",
+                    "state": "running",
+                    "image": "",
+                }
+            ],
+        }
+        record = {
+            "id": 56507376,
+            "public_ipaddr": "1.2.3.4",
+            "actual_status": "running",
+            "ports": {
+                "3000/tcp": [{"HostPort": 31080}],
+                "8188/tcp": [{"HostPort": 31151}],
+            },
+        }
+        doc, summary = vast.reconcile(doc, [record], complete=True)
+        self.assertEqual(doc["instances"][0]["endpoint"], "http://1.2.3.4:31080")
+        self.assertEqual(doc["active"], "http://1.2.3.4:31080")
+        self.assertIn("http://1.2.3.4:31151", summary["gone_endpoints"])
+
+    def test_a_complete_listing_never_deletes_a_missing_row(self) -> None:
+        doc = self._evidence_doc()
+        doc, _summary = vast.reconcile(doc, [EVIDENCE_RECORD], complete=True)
+        self.assertEqual(len(doc["instances"]), 2, "destroyed rows stay in the list")
+
+    def test_a_truncated_listing_destroys_nothing(self) -> None:
+        doc = self._evidence_doc()
+        doc, summary = vast.reconcile(doc, [EVIDENCE_RECORD], complete=False)
+        old = self._row(doc, 56373341)
+        self.assertEqual(old["state"], "running")
+        self.assertEqual(old["endpoint"], "http://1.193.138.161:40006")
+        self.assertEqual(doc["active"], "http://1.193.138.161:40006")
+        self.assertEqual(summary["destroyed"], [], "a partial list proves nothing is gone")
+
+    def test_a_manual_row_is_never_touched(self) -> None:
+        doc = {
+            "active": "http://9.9.9.9:1",
+            "instances": [
+                {"endpoint": "http://9.9.9.9:1", "label": "typed", "state": ""}
+            ],
+        }
+        doc, summary = vast.reconcile(doc, [], complete=True)
+        self.assertEqual(
+            doc["instances"][0]["endpoint"], "http://9.9.9.9:1", "no id, no reconciliation"
+        )
+        self.assertEqual(doc["instances"][0]["state"], "")
+        self.assertEqual(doc["active"], "http://9.9.9.9:1")
+        self.assertEqual(summary["destroyed"], [])
+
+    def test_an_unmapped_record_keeps_its_real_state(self) -> None:
+        record = {
+            "id": 5,
+            "actual_status": "stopped",
+            "public_ipaddr": "192.0.2.5",
+            "ports": {},
+        }
+        doc, _summary = vast.reconcile({"instances": []}, [record], complete=True)
+        self.assertEqual(doc["instances"][0]["state"], "stopped")
+        self.assertEqual(doc["instances"][0]["endpoint"], "")
+
+
 class VastGeneration(unittest.TestCase):
     """The shipped render path, driven with an injected transport."""
 
@@ -505,6 +857,21 @@ class VastGeneration(unittest.TestCase):
             )
         self.assertIn("401", str(caught.exception))
         self.assertEqual(list(self.out.glob("studio_*.jpg")), [], "no plate on a refusal")
+
+    def test_a_200_with_no_images_reports_the_reason_not_a_type_error(self) -> None:
+        """An accepted POST with no plate must name the empty answer."""
+        send = _Recorder(
+            200, json.dumps({"prompt": {"9": {"class_type": "SaveImage"}}}).encode()
+        )
+        with self.assertRaises(RuntimeError) as caught:
+            generator.generate_from_vast(
+                endpoint="1.2.3.4:31234",
+                payload=self.PAYLOAD,
+                out_dir=self.out,
+                sender=send,
+            )
+        self.assertIn("no images", str(caught.exception))
+        self.assertEqual(list(self.out.glob("studio_*")), [], "no plate on an empty answer")
 
     def test_a_prompt_id_answer_is_polled_on_the_same_instance(self) -> None:
         """A native Comfy answer carries no images[]; /history has them."""
@@ -698,10 +1065,172 @@ class VastTabAndGenerate(unittest.TestCase):
         rows = [app.vast_tree.item(i, "values") for i in app.vast_tree.get_children()]
         self.assertEqual(
             [row[2] for row in rows],
-            ["http://203.0.113.9:31234", "http://198.51.100.7:40111"],
+            ["http://203.0.113.9:31234", "http://198.51.100.7:40111", "#333"],
+            "the stopped record is a row too; it just has no address",
         )
+        self.assertEqual(rows[2][4], "exited")
         self.assertEqual(rows[0][1], "klein-4090", "the label column shows the vast label")
+        self.assertIsNone(
+            app._vast_active(),
+            "Fetch does not promote a row it did not create; the user selects one",
+        )
+        app.vast_tree.selection_set(app.vast_tree.get_children()[0])
+        app._on_vast_select()
         self.assertEqual(app._vast_active()["endpoint"], "http://203.0.113.9:31234")
+
+    def test_fetch_reconciles_the_evidence_state_in_a_hidden_window(self) -> None:
+        """The report's exact store and account, through the page's Fetch button."""
+        tok.write_token("vast", "vast-key")
+        vast.INSTANCES_PATH.write_text(
+            json.dumps(EVIDENCE_LEGACY_DOC), encoding="utf-8"
+        )
+        old = profiles.default_profile("vast-old")
+        old.mode = "vast"
+        old.gateway = "http://1.193.138.161:40006"
+        profiles.upsert(old)
+
+        app = self._window()
+        app.var_name.set("vast-old")
+        app.var_gateway.set("http://1.193.138.161:40006")
+        self.assertEqual(
+            sorted(app.vast_tree.get_children()),
+            ["56373341", "56496191"],
+            "load_doc folds the legacy pending contract into a creating row",
+        )
+        self.assertEqual(app.vast_tree.item("56496191", "values")[4], "creating")
+
+        send = _Recorder(200, json.dumps({"instances": [EVIDENCE_RECORD]}).encode())
+        with mock.patch.object(vast, "_send", send), self._inline():
+            app._on_vast_fetch()
+            self.assertTrue(
+                self._pump(app, lambda: not app._vast_fetch_busy),
+                "the fetch never came back",
+            )
+
+        old_values = app.vast_tree.item("56373341", "values")
+        new_values = app.vast_tree.item("56496191", "values")
+        self.assertEqual(old_values[4], "destroyed", "the deleted instance is not running")
+        self.assertEqual(old_values[2], "#56373341", "a destroyed row shows its identity")
+        self.assertEqual(new_values[4], "loading")
+        self.assertEqual(new_values[2], "#56496191", "no address until Comfy maps one")
+        self.assertEqual(app.vast_tree.get_children(), ("56373341", "56496191"))
+        self.assertEqual(app._vast_doc["active"], "")
+        self.assertEqual(app._vast_doc["pending"], {})
+
+        stored = vast.load_doc()
+        self.assertEqual(
+            {str(row["id"]): row["state"] for row in stored["instances"]},
+            {"56373341": "destroyed", "56496191": "loading"},
+        )
+        self.assertEqual(
+            profiles.load_all()["vast-old"].gateway,
+            "",
+            "a vast-mode profile holding the gone endpoint is cleared",
+        )
+        self.assertEqual(app.var_gateway.get(), "")
+
+    def test_selecting_a_loading_row_does_not_change_active(self) -> None:
+        app = self._window()
+        doc = dict(app._vast_doc)
+        doc["instances"] = [
+            {
+                "id": 777,
+                "endpoint": "",
+                "label": "booting",
+                "gpu": "RTX 5090",
+                "state": "loading",
+                "image": EVIDENCE_IMAGE,
+            }
+        ]
+        doc["active"] = ""
+        app._vast_doc = doc
+        app._refresh_vast_page()
+        app.vast_tree.selection_set("777")
+        app._on_vast_select()
+        self.assertEqual(app._vast_doc["active"], "", "no endpoint, no active target")
+        self.assertIn("no endpoint", app.var_vast_status.get())
+        self.assertIn("#777", app.var_vast_status.get())
+
+    def test_selecting_a_destroyed_row_does_not_say_it_is_waiting(self) -> None:
+        """A destroyed instance will never map an endpoint, so "yet" is a lie."""
+        app = self._window()
+        doc = dict(app._vast_doc)
+        doc["instances"] = [
+            {
+                "id": 56373341,
+                "endpoint": "",
+                "label": "gone",
+                "gpu": "RTX 4090",
+                "state": "destroyed",
+                "image": "",
+            }
+        ]
+        doc["active"] = ""
+        app._vast_doc = doc
+        app._refresh_vast_page()
+        app.vast_tree.selection_set("56373341")
+        app._on_vast_select()
+        note = app.var_vast_status.get()
+        self.assertIn("destroyed", note)
+        self.assertNotIn("yet", note, "a destroyed instance will never map an endpoint")
+        self.assertIn("replace", note.lower(), "the note names the way forward")
+
+    def test_generate_refuses_when_reconciliation_left_no_active_endpoint(self) -> None:
+        app = self._window()
+        doc = dict(app._vast_doc)
+        doc["instances"] = [
+            {
+                "id": 777,
+                "endpoint": "",
+                "label": "booting",
+                "gpu": "RTX 5090",
+                "state": "loading",
+                "image": EVIDENCE_IMAGE,
+            }
+        ]
+        doc["active"] = ""
+        app._vast_doc = doc
+        app._refresh_vast_page()
+        prof = profiles.load_all()[app.var_name.get()]
+        prof.mode = "vast"
+        prof.gateway = ""
+        profiles.upsert(prof)
+        app._apply_profile(prof)
+        shown: list[str] = []
+        with mock.patch.object(
+            self.app_mod.generator, "generate_from_vast"
+        ) as post, mock.patch.object(
+            self.app_mod.messagebox, "showinfo", lambda *a, **k: shown.append(str(a))
+        ):
+            app._on_generate()
+        self.assertFalse(post.called, "a row with no endpoint has nowhere to POST")
+        self.assertTrue(shown)
+
+    def test_the_wheel_scrolls_the_claimed_tree_and_not_the_page(self) -> None:
+        app = self._window()
+        page = app._config_section_pages["vast"]
+        canvas = app._scroll_canvases[page]
+        canvas.configure(yscrollincrement=40, scrollregion=(0, 0, 900, 4000))
+        for index in range(40):
+            app.vast_tree.insert("", "end", iid=f"row-{index}", values=("",) * 6)
+        app.vast_tree.yview_moveto(0)
+        app.update_idletasks()
+        # The pointer is over the grid, which is also inside the claimed page.
+        app._claim_wheel(page)
+        app._claim_wheel_tree(app.vast_tree)
+
+        def wheel(delta: int = -120):
+            return app._on_page_wheel(type("E", (), {"delta": delta})())
+
+        self.assertEqual(wheel(), "break", "the grid handler consumes the event")
+        app.update_idletasks()
+        self.assertGreater(app.vast_tree.yview()[0], 0.0, "the grid scrolls")
+        self.assertEqual(canvas.yview()[0], 0.0, "the page stays put while the grid is claimed")
+
+        app._release_wheel_tree(app.vast_tree)
+        self.assertEqual(wheel(), "break")
+        app.update_idletasks()
+        self.assertGreater(canvas.yview()[0], 0.0, "with the pointer off the grid, the page scrolls")
 
     def test_a_rejected_key_is_reported_on_the_page(self) -> None:
         tok.write_token("vast", "stale-key")
@@ -897,6 +1426,8 @@ class ReplacementSearch(unittest.TestCase):
         "min_down_mbps": 200,
         "min_up_mbps": 100,
         "cuda_min": 13.0,
+        "min_reliability": 0.95,
+        "gpu_names": ["RTX 5090", "RTX 4090"],
     }
 
     @staticmethod
@@ -911,6 +1442,10 @@ class ReplacementSearch(unittest.TestCase):
             "inet_up": 200,
             "dph_total": 0.40,
             "rentable": True,
+            "reliability2": 0.99,
+            "dlperf": 97.0,
+            "dlperf_per_dphtotal": 250.0,
+            "geolocation": "Testland, TL",
         }
         offer.update(overrides)
         return offer
@@ -932,6 +1467,8 @@ class ReplacementSearch(unittest.TestCase):
                 "min_down_mbps": 300,
                 "min_up_mbps": 150,
                 "cuda_min": 13.0,
+                "min_reliability": 0.97,
+                "gpu_names": ["RTX 5090"],
             }
         )
         self.assertEqual(query["dph_total"], {"lte": 0.42})
@@ -939,10 +1476,67 @@ class ReplacementSearch(unittest.TestCase):
         self.assertEqual(query["inet_up"], {"gte": 150})
         self.assertEqual(query["cuda_max_good"], {"gte": 13.0})
         self.assertEqual(query["gpu_ram"], {"gte": 24000})
+        self.assertEqual(query["gpu_name"], {"in": ["RTX 5090"]})
+        self.assertEqual(query["reliability2"], {"gte": 0.97})
         self.assertEqual(query["type"], "on-demand")
-        self.assertEqual(query["order"], [["dph_total", "asc"]])
+        self.assertEqual(query["order"], [["dlperf_per_dphtotal", "desc"]])
+        self.assertEqual(query["limit"], vast.OFFER_QUERY_LIMIT)
 
-    def test_the_cheapest_offer_that_clears_every_floor_wins(self) -> None:
+    def test_an_absent_gpu_list_queries_the_defaults_not_any_gpu(self) -> None:
+        """The measured unfiltered search rents a Tesla P40 at $0.108/hr."""
+        query = vast.offer_query({})
+        self.assertEqual(
+            query["gpu_name"], {"in": ["RTX 5090", "RTX 4090"]}
+        )
+        self.assertEqual(query["reliability2"], {"gte": 0.95})
+
+    def test_clean_replace_restores_the_default_gpu_list(self) -> None:
+        default = ["RTX 5090", "RTX 4090"]
+        for raw in (None, "", " , ", [], (), set()):
+            with self.subTest(raw=raw):
+                got = vast.clean_replace({"gpu_names": raw})["gpu_names"]
+                self.assertEqual(got, default)
+                self.assertIsNot(got, vast.DEFAULT_GPU_NAMES)
+
+    def test_a_gpu_list_keeps_order_dedupes_and_canonicalizes(self) -> None:
+        got = vast.clean_replace(
+            {"gpu_names": ["rtx 5090", "A100 pcie", "RTX 5090", " RTX 4090 "]}
+        )["gpu_names"]
+        self.assertEqual(got, ["RTX 5090", "A100 PCIE", "RTX 4090"])
+
+    def test_the_reliability_floor_is_kept_only_in_range(self) -> None:
+        self.assertEqual(
+            vast.clean_replace({"min_reliability": 0.90})["min_reliability"], 0.90
+        )
+        for raw in (-0.1, 1.1, "nope"):
+            with self.subTest(raw=raw):
+                self.assertEqual(
+                    vast.clean_replace({"min_reliability": raw})["min_reliability"],
+                    0.95,
+                )
+
+    def test_a_gpu_outside_the_list_is_refused(self) -> None:
+        p40 = self._offer(
+            1, gpu_name="Tesla P40", gpu_ram=24576, dph_total=0.108
+        )
+        self.assertFalse(vast.offer_meets(p40, self.POLICY), "the reported bug")
+        only_5090 = {**self.POLICY, "gpu_names": ["RTX 5090"]}
+        self.assertFalse(vast.offer_meets(self._offer(2), only_5090))
+        self.assertTrue(vast.offer_meets(self._offer(3, gpu_name="RTX 5090"), only_5090))
+
+    def test_reliability_below_the_floor_or_missing_is_refused(self) -> None:
+        self.assertFalse(
+            vast.offer_meets(self._offer(1, reliability2=0.94), self.POLICY)
+        )
+        missing = self._offer(2)
+        missing.pop("reliability2")
+        self.assertFalse(
+            vast.offer_meets(missing, self.POLICY),
+            "a host that cannot state its reliability fails closed",
+        )
+        self.assertTrue(vast.offer_meets(self._offer(3, reliability2=0.95), self.POLICY))
+
+    def test_the_highest_value_offer_that_clears_every_floor_wins(self) -> None:
         offers = [
             self._offer(1, dph_total=0.40),
             self._offer(2, dph_total=0.30, inet_up=50),
@@ -952,7 +1546,173 @@ class ReplacementSearch(unittest.TestCase):
         picked = vast.pick_offer(offers, self.POLICY)
         self.assertIsNotNone(picked)
         assert picked is not None
-        self.assertEqual(picked["id"], 1, "the cheap ones fail a floor, not the price")
+        self.assertEqual(
+            picked["id"], 1, "value ties break by price, and the cheap ones fail a floor"
+        )
+
+    def test_the_pick_is_value_not_the_cheapest_price(self) -> None:
+        cheap = self._offer(1, dph_total=0.20, dlperf_per_dphtotal=200.0)
+        value = self._offer(2, dph_total=0.40, dlperf_per_dphtotal=500.0)
+        picked = vast.pick_offer([cheap, value], self.POLICY)
+        self.assertEqual(picked["id"], 2, "a 500 Perf/$ card buys more images")
+        self.assertGreater(vast.offer_value(value), vast.offer_value(cheap))
+
+    def test_value_outranks_price_across_gpu_tiers(self) -> None:
+        """5090 at $0.60/199 perf (331/$) before 4090 at $0.30/97 perf (323/$)."""
+        fast = self._offer(
+            1,
+            gpu_name="RTX 5090",
+            dph_total=0.60,
+            dlperf=199,
+            dlperf_per_dphtotal=None,
+        )
+        cheap = self._offer(
+            2,
+            gpu_name="RTX 4090",
+            dph_total=0.30,
+            dlperf=97,
+            dlperf_per_dphtotal=None,
+        )
+        ranked = vast.matching_offers(
+            [cheap, fast], {**self.POLICY, "max_price": 0.70}
+        )
+        self.assertEqual([offer["id"] for offer in ranked], [1, 2])
+
+    def test_within_one_gpu_tier_the_higher_value_offer_comes_first(self) -> None:
+        good = self._offer(1, dlperf_per_dphtotal=300.0)
+        better = self._offer(2, dph_total=0.45, dlperf_per_dphtotal=400.0)
+        ranked = vast.matching_offers([good, better], self.POLICY)
+        self.assertEqual([offer["id"] for offer in ranked], [2, 1])
+
+    def test_the_gpu_preference_breaks_an_equal_value_tie(self) -> None:
+        a4090 = self._offer(1, gpu_name="RTX 4090", dph_total=0.30, dlperf_per_dphtotal=300.0)
+        a5090 = self._offer(2, gpu_name="RTX 5090", dph_total=0.60, dlperf_per_dphtotal=300.0)
+        ranked = vast.matching_offers(
+            [a4090, a5090], {**self.POLICY, "max_price": 0.70}
+        )
+        self.assertEqual([offer["id"] for offer in ranked], [2, 1])
+
+    def test_the_offer_cells_match_the_contracts_formats(self) -> None:
+        offer = self._offer(
+            55818626,
+            gpu_name="RTX 5090",
+            dph_total=0.402,
+            dlperf=199.198,
+            dlperf_per_dphtotal=494.772,
+            gpu_ram=24576,
+            disk_space=338,
+            cuda_max_good=13.0,
+            inet_down=868,
+            inet_up=722,
+            reliability2=0.96,
+            geolocation="Romania, RO",
+        )
+        self.assertEqual(
+            vast.offer_cells(offer),
+            {
+                "gpu": "RTX 5090",
+                "price": "$0.402",
+                "perf": "199",
+                "value": "495",
+                "vram": "24",
+                "disk": "338",
+                "cuda": "13.0",
+                "down": "868",
+                "up": "722",
+                "reliability": "0.960",
+                "location": "Romania, RO",
+                "offer": "55818626",
+            },
+        )
+        missing = vast.offer_cells({"id": 7})
+        self.assertEqual(missing["gpu"], "")
+        self.assertEqual(missing["price"], "")
+        self.assertEqual(missing["value"], "")
+        self.assertEqual(missing["location"], "unknown")
+        self.assertEqual(missing["offer"], "7")
+
+    def test_a_manual_rent_is_one_put_to_the_chosen_offer(self) -> None:
+        puts: list[str] = []
+        live: list[dict] = []
+
+        def sender(request, timeout):
+            if request.get_method() == "PUT":
+                puts.append(request.full_url)
+                live.append(self._live(777))
+                return 200, json.dumps({"success": True, "new_contract": 777}).encode()
+            if request.full_url.endswith("/instances/"):
+                return 200, json.dumps({"instances": live}).encode()
+            raise AssertionError(request.full_url)
+
+        chosen = self._offer(42, gpu_name="RTX 5090")
+        result = vast.rent_offer(
+            "vast-key",
+            chosen,
+            image="docker.io/example/klein:tag",
+            label="salad-studio-42",
+            sender=sender,
+            sleep=lambda _s: None,
+            tries=2,
+        )
+        self.assertEqual(result["action"], "created")
+        self.assertEqual(result["contract"], 777)
+        self.assertEqual(puts, ["https://console.vast.ai/api/v0/asks/42/"])
+        self.assertEqual(result["row"]["label"], "salad-studio-42")
+        self.assertEqual(result["row"]["image"], "docker.io/example/klein:tag")
+
+    def test_an_unmapped_rent_is_created_with_no_row(self) -> None:
+        def sender(request, timeout):
+            if request.get_method() == "PUT":
+                return 200, json.dumps({"success": True, "new_contract": 777}).encode()
+            return 200, json.dumps({"instances": []}).encode()
+
+        result = vast.rent_offer(
+            "vast-key",
+            self._offer(42),
+            image="docker.io/example/klein:tag",
+            sender=sender,
+            sleep=lambda _s: None,
+            tries=1,
+        )
+        self.assertEqual(result["action"], "created")
+        self.assertIsNone(result["row"])
+        self.assertIn("not mapped", result["message"])
+
+    def test_a_refused_rent_is_an_error_with_no_second_put(self) -> None:
+        asked: list[str] = []
+
+        def sender(request, timeout):
+            asked.append(request.full_url)
+            return 410, json.dumps(
+                {"success": False, "error": "no_such_ask", "msg": "taken"}
+            ).encode()
+
+        result = vast.rent_offer(
+            "vast-key", self._offer(42), image="img", sender=sender
+        )
+        self.assertEqual(result["action"], "error")
+        self.assertEqual(len(asked), 1, "a manual rent must never fall through")
+
+    def test_a_rent_without_an_offer_id_is_refused(self) -> None:
+        result = vast.rent_offer("vast-key", {"gpu_name": "RTX 5090"}, image="img")
+        self.assertEqual(result["action"], "error")
+        self.assertIn("no id", result["message"])
+
+    def test_the_new_policy_fields_round_trip_through_the_document(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "studio-vast.json"
+            doc = vast.empty_doc()
+            doc["replace"] = {
+                **self.POLICY,
+                "min_reliability": 0.97,
+                "gpu_names": ["RTX A6000", "rtx 5090"],
+            }
+            vast.save_doc(doc, path)
+            loaded = vast.load_doc(path)
+        self.assertEqual(loaded["replace"]["min_reliability"], 0.97)
+        self.assertEqual(
+            loaded["replace"]["gpu_names"], ["RTX A6000", "RTX 5090"]
+        )
 
     def test_no_offer_meets_the_floors(self) -> None:
         self.assertIsNone(
@@ -1022,7 +1782,7 @@ class ReplacementSearch(unittest.TestCase):
         )
         self.assertEqual(result["action"], "missing")
 
-    def test_a_gone_instance_is_replaced_by_the_cheapest_offer(self) -> None:
+    def test_a_gone_instance_is_replaced_by_the_best_value_offer(self) -> None:
         calls: list[tuple[str, str]] = []
         live: list[dict] = []
 
@@ -1093,10 +1853,11 @@ class ReplacementSearch(unittest.TestCase):
             settings=self.POLICY,
             sender=sender,
         )
-        self.assertEqual(result["action"], "stopped")
-        self.assertIn("not destroyed", result["message"])
+        self.assertEqual(result["action"], "not_ready")
+        self.assertIn("is stopped, not destroyed", result["message"])
 
-    def test_a_pending_contract_survives_the_document_round_trip(self) -> None:
+    def test_save_doc_never_persists_a_pending_block(self) -> None:
+        """The creating row is the durable record; ``pending`` is written empty."""
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "studio-vast.json"
             doc = vast.empty_doc()
@@ -1106,12 +1867,11 @@ class ReplacementSearch(unittest.TestCase):
                 "image": "docker.io/example/klein:tag",
             }
             vast.save_doc(doc, path)
-            loaded = vast.load_doc(path)
-        self.assertEqual(loaded["pending"]["contract"], 777)
-        self.assertEqual(loaded["pending"]["image"], "docker.io/example/klein:tag")
-        self.assertEqual(vast.clean_pending({"contract": "nope"}), {})
+            stored = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(stored["pending"], {})
+        self.assertEqual(vast.load_doc(path)["pending"], {})
 
-    def test_a_refused_offer_falls_through_to_the_next_cheapest(self) -> None:
+    def test_a_refused_offer_falls_through_to_the_next_best_value(self) -> None:
         """The create endpoint can refuse an offer the search still lists."""
         live: list[dict] = []
         asked: list[str] = []

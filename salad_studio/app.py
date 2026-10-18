@@ -119,6 +119,22 @@ VAST_GRID_COLUMNS: tuple[tuple[str, str, int, bool], ...] = (
     ("state", "State", 90, False),
     ("gpu", "GPU", 130, True),
 )
+# The rent panel's result table: the ids are ``vast.offer_cells`` keys, in the
+# order that function writes them, so a test can pin the two together.
+VAST_OFFER_GRID_COLUMNS: tuple[tuple[str, str, int, bool], ...] = (
+    ("gpu", "GPU", 120, True),
+    ("price", "$/hr", 70, False),
+    ("perf", "Perf", 60, False),
+    ("value", "Perf/$", 75, False),
+    ("vram", "VRAM GB", 82, False),
+    ("disk", "Disk GB", 70, False),
+    ("cuda", "CUDA", 55, False),
+    ("down", "Down", 70, False),
+    ("up", "Up", 60, False),
+    ("reliability", "Reliability", 80, False),
+    ("location", "Location", 130, True),
+    ("offer", "Offer", 80, False),
+)
 # The LoRA grid's columns, in the order they are shown: the verified dot first,
 # because that is the state a row is looked up for.
 LORA_COLUMNS: tuple[str, ...] = (
@@ -280,6 +296,12 @@ class SaladStudio(tk.Tk):
         self._helper_busy = False
         self._token_probe_busy = False
         self._vast_fetch_busy = False
+        # One search lock and one create lock. The create lock is shared by the
+        # rent button, Replace if destroyed now, and Generate's automatic path,
+        # because all three spend money on the same account.
+        self._vast_search_busy = False
+        self._vast_create_busy = False
+        self._vast_offers: dict[str, dict] = {}
         # The config page owns the images and the vast.ai hosts, so both stores
         # are read before it is built: its image picker offers their tags.
         self._image_settings = image_deploy.load_settings()
@@ -321,6 +343,10 @@ class SaladStudio(tk.Tk):
         self._scroll_canvases: dict[tk.Frame, tk.Canvas] = {}
         self._scroll_bodies: dict[tk.Frame, ttk.Frame] = {}
         self._scroll_wheel_page: tk.Frame | None = None
+        # The grid the pointer is over. Tk's class wheel binding runs before the
+        # page's bind_all handler, so a widget binding takes the event first and
+        # routes it by pointer instead (see _wheel_tree).
+        self._scroll_wheel_tree: ttk.Treeview | None = None
         self.bind_all("<MouseWheel>", self._on_page_wheel, add="+")
         self.bind_all("<FocusIn>", self._on_page_focus, add="+")
 
@@ -749,6 +775,26 @@ class SaladStudio(tk.Tk):
         if self._scroll_wheel_page is page:
             self._scroll_wheel_page = None
 
+    def _claim_wheel_tree(self, tree) -> None:
+        """The pointer is on ``tree``: the grid owns the wheel while it is there."""
+        self._scroll_wheel_tree = tree
+
+    def _release_wheel_tree(self, tree) -> None:
+        """The pointer left ``tree``: it hands the wheel back, and only its own."""
+        if self._scroll_wheel_tree is tree:
+            self._scroll_wheel_tree = None
+
+    def _wheel_tree(self, tree) -> None:
+        """Route the wheel to the grid under the pointer, not to the class binding.
+
+        A widget binding runs before the class binding. Returning ``"break"``
+        from it disarms the class binding, so the grid under the pointer scrolls
+        and a grid elsewhere does not.
+        """
+        tree.bind("<Enter>", lambda _e: self._claim_wheel_tree(tree), add="+")
+        tree.bind("<Leave>", lambda _e: self._release_wheel_tree(tree), add="+")
+        tree.bind("<MouseWheel>", self._on_page_wheel)
+
     def _keep_grid_filling(self, page, tree, columns) -> None:
         """Grow a grid's room-taking columns to fill a page wider than the grid.
 
@@ -828,16 +874,37 @@ class SaladStudio(tk.Tk):
         if steps:
             canvas.yview_scroll(steps, "units")
 
-    def _on_page_wheel(self, event) -> None:
-        """Scroll whichever scrollable page the pointer is over, and no other."""
-        page = self._scroll_wheel_page
-        if page is not None:
-            self._scroll_page(page, event)
+    def _on_page_wheel(self, event) -> str:
+        """Scroll the grid or page the pointer is over, and always consume the event."""
+        steps = int(-getattr(event, "delta", 0) / 120) if getattr(event, "delta", 0) else 0
+        if steps:
+            tree = self._scroll_wheel_tree
+            if tree is not None:
+                tree.yview_scroll(steps, "units")
+            elif self._scroll_wheel_page is not None:
+                self._scroll_page(self._scroll_wheel_page, event)
+        return "break"
 
     def _on_page_focus(self, event=None) -> None:
         """Scroll the page that owns the control taking focus, into view."""
         widget = getattr(event, "widget", None)
         if widget is None:
+            return
+        # FocusIn also fires on every ancestor as focus enters its subtree.
+        # Revealing a container scrolls its far edge into view; on the Vast.ai
+        # page the body frame's far edge is the Rent a machine panel, so a click
+        # on an instance row jumped there. Only a control that took focus may
+        # move the page.
+        if widget.winfo_class() in {
+            "TFrame",
+            "Frame",
+            "TLabelframe",
+            "Labelframe",
+            "TNotebook",
+            "Notebook",
+            "TPanedwindow",
+            "Panedwindow",
+        }:
             return
         for page, canvas in self._scroll_canvases.items():
             if self._on_page(widget, page):
@@ -1017,6 +1084,7 @@ class SaladStudio(tk.Tk):
         self.checkpoint_tree = ttk.Treeview(
             box, columns=("checkpoint", "family"), show="headings", height=7
         )
+        self._wheel_tree(self.checkpoint_tree)
         for col, heading, width, stretch in (
             ("checkpoint", "Checkpoint", 420, True),
             ("family", "Family", 120, False),
@@ -1906,6 +1974,20 @@ class SaladStudio(tk.Tk):
         policy and a missing key or a down API must not look like a blank config.
         """
         name = (prof.name if prof is not None else (self.var_name.get() or "")).strip()
+        mode = (
+            str(getattr(prof, "mode", "") or "").strip().lower()
+            if prof is not None
+            else self._profile_mode()
+        )
+        if mode != "salad":
+            # A Salad group policy belongs to a Salad gateway. Reading it for a
+            # vast.ai target asks Salad about an instance URL and logs a DNS
+            # failure that says nothing about the instance.
+            if not quiet:
+                note = "The Salad group policy applies to a Salad target only."
+                self.status.set(note)
+                self.log("info", f"Policy read skipped for {name!r}: target is {mode or 'unknown'}")
+            return
         gw = (prof.gateway if prof is not None else self.var_gateway.get()).strip()
         if not gw:
             if not quiet:
@@ -1961,6 +2043,12 @@ class SaladStudio(tk.Tk):
         threading.Thread(target=work, daemon=True).start()
 
     def _apply_salad_policy(self) -> None:
+        if self._profile_mode() != "salad":
+            note = "The Salad group policy applies to a Salad target only."
+            self.status.set(note)
+            self.log("warn", f"Policy apply refused: {note}")
+            messagebox.showinfo("Salad Studio", note)
+            return
         gw = self.var_gateway.get().strip()
         if not gw:
             self.status.set("Gateway URL is empty.")
@@ -2246,12 +2334,13 @@ class SaladStudio(tk.Tk):
         self._probe_tokens([kind])
 
     def _build_vast_section(self, body) -> None:
-        """The vast.ai half of the config page: the engine choice and the instances.
+        """The vast.ai half of the config page: the instances and the rental.
 
         The key is not here: it is the ``vast`` slot on the Tokens tab, stored in
-        the gitignored token file. What this section owns is the instance list and
-        the engine choice, both in ``~/.config/salad/studio-vast.json``, so
-        closing and reopening the window keeps them.
+        the gitignored token file. What this section owns is the instance list,
+        the rental criteria and the offer results, all kept in
+        ``~/.config/salad/studio-vast.json``, so closing and reopening the window
+        keeps them.
         """
         self._vast = ttk.LabelFrame(
             body, text="Vast.ai instances", padding=8
@@ -2302,6 +2391,7 @@ class SaladStudio(tk.Tk):
             box, columns=("use", "label", "endpoint", "image", "state", "gpu"),
             show="headings", height=7,
         )
+        self._wheel_tree(self.vast_tree)
         for col, heading, width, _fill in VAST_GRID_COLUMNS:
             self.vast_tree.heading(col, text=heading)
             self.vast_tree.column(col, width=width, stretch=False, anchor="w")
@@ -2339,44 +2429,144 @@ class SaladStudio(tk.Tk):
         )
 
         policy = vast.clean_replace(self._vast_doc.get("replace"))
-        replace = ttk.LabelFrame(
-            self._vast, text="If the selected instance is destroyed", padding=8
+        rent = ttk.LabelFrame(self._vast, text="Rent a machine", padding=8)
+        rent.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        rent.columnconfigure(0, weight=1)
+
+        gpu_row = ttk.Frame(rent)
+        gpu_row.grid(row=0, column=0, columnspan=2, sticky="ew")
+        ttk.Label(gpu_row, text="GPU models").pack(side="left")
+        self.var_vast_gpus = tk.StringVar(value=", ".join(policy["gpu_names"]))
+        ttk.Entry(gpu_row, textvariable=self.var_vast_gpus, width=44).pack(
+            side="left", padx=6
         )
-        replace.grid(row=3, column=0, sticky="ew", pady=(8, 0))
-        self.var_vast_replace = tk.BooleanVar(value=bool(policy["enabled"]))
-        ttk.Checkbutton(
-            replace,
-            text="Create a replacement automatically when Generate finds it gone",
-            variable=self.var_vast_replace,
-        ).grid(row=0, column=0, columnspan=8, sticky="w")
+        ttk.Label(
+            gpu_row,
+            text=(
+                "Names: RTX 5090, RTX 4090, RTX A6000, A100 PCIE. The first "
+                "listed is preferred; clear the box to restore RTX 5090, RTX 4090."
+            ),
+            style="Status.TLabel",
+            wraplength=430,
+        ).pack(side="left", padx=(6, 0))
+
+        floors = ttk.Frame(rent)
+        floors.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         self.var_vast_price = tk.StringVar(value=f"{policy['max_price']:.2f}")
         self.var_vast_down = tk.StringVar(value=f"{policy['min_down_mbps']:.0f}")
         self.var_vast_up = tk.StringVar(value=f"{policy['min_up_mbps']:.0f}")
         self.var_vast_cuda = tk.StringVar(value=f"{policy['cuda_min']:g}")
+        self.var_vast_reliability = tk.StringVar(
+            value=f"{policy['min_reliability']:g}"
+        )
         fields = (
             ("Max $/hr", self.var_vast_price, 6),
             ("Min down Mbps", self.var_vast_down, 6),
             ("Min up Mbps", self.var_vast_up, 6),
             ("CUDA at least", self.var_vast_cuda, 5),
+            ("Reliability at least", self.var_vast_reliability, 5),
         )
         col = 0
         for label, var, width in fields:
-            ttk.Label(replace, text=label).grid(
-                row=1, column=col, sticky="w", padx=(0 if col == 0 else 10, 4), pady=(6, 0)
+            ttk.Label(floors, text=label).grid(
+                row=0, column=col, sticky="w", padx=(0 if col == 0 else 10, 4)
             )
-            ttk.Entry(replace, textvariable=var, width=width).grid(
-                row=1, column=col + 1, sticky="w", pady=(6, 0)
+            ttk.Entry(floors, textvariable=var, width=width).grid(
+                row=0, column=col + 1, sticky="w"
             )
             col += 2
+
+        pick = ttk.Frame(rent)
+        pick.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ttk.Label(pick, text="Image").pack(side="left")
+        self.vast_offer_image_box = ttk.Combobox(
+            pick, textvariable=self.var_vast_image, width=34
+        )
+        self.vast_offer_image_box.pack(side="left", padx=6)
+        ttk.Label(pick, text="Label").pack(side="left")
+        self.var_vast_rent_label = tk.StringVar(value="")
+        ttk.Entry(pick, textvariable=self.var_vast_rent_label, width=24).pack(
+            side="left", padx=6
+        )
+        self.vast_search_btn = ttk.Button(
+            pick, text="Find offers", command=self._on_vast_search
+        )
+        self.vast_search_btn.pack(side="left", padx=(6, 0))
+        self.var_vast_offer_status = tk.StringVar(value="")
+
+        self.vast_offer_tree = ttk.Treeview(
+            rent,
+            columns=tuple(col for col, _heading, _width, _fill in VAST_OFFER_GRID_COLUMNS),
+            show="headings",
+            height=8,
+        )
+        self._wheel_tree(self.vast_offer_tree)
+        for col, heading, width, _fill in VAST_OFFER_GRID_COLUMNS:
+            self.vast_offer_tree.heading(col, text=heading)
+            self.vast_offer_tree.column(col, width=width, stretch=False, anchor="w")
+        self._keep_grid_filling(
+            self._config_section_pages["vast"],
+            self.vast_offer_tree,
+            VAST_OFFER_GRID_COLUMNS,
+        )
+        offer_scroll = ttk.Scrollbar(
+            rent, orient="vertical", command=self.vast_offer_tree.yview
+        )
+        self.vast_offer_tree.configure(yscrollcommand=offer_scroll.set)
+        self.vast_offer_tree.grid(row=3, column=0, sticky="nsew")
+        offer_scroll.grid(row=3, column=1, sticky="ns")
+
+        ttk.Label(
+            rent,
+            textvariable=self.var_vast_offer_status,
+            style="Status.TLabel",
+            wraplength=900,
+            justify="left",
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))
+
+        actions = ttk.Frame(rent)
+        actions.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        self.vast_rent_btn = ttk.Button(
+            actions,
+            text="Create instance on selected offer",
+            command=self._on_vast_rent,
+        )
+        self.vast_rent_btn.pack(side="left")
+        ttk.Label(
+            actions,
+            text=(
+                "Ranks by images per dollar: Perf is vast.ai's dlperf index, not a "
+                "promise of images per hour for this graph; Perf/$ is Perf divided "
+                "by $/hr. RTX 5090 comes before RTX 4090."
+            ),
+            style="Status.TLabel",
+            wraplength=430,
+        ).pack(side="left", padx=(10, 0))
+
+        replace = ttk.LabelFrame(
+            self._vast, text="If the selected instance is destroyed", padding=8
+        )
+        replace.grid(row=4, column=0, sticky="ew", pady=(8, 0))
+        self.var_vast_replace = tk.BooleanVar(value=bool(policy["enabled"]))
+        ttk.Checkbutton(
+            replace,
+            text="Create a replacement automatically when Generate finds it gone",
+            variable=self.var_vast_replace,
+        ).grid(row=0, column=0, columnspan=2, sticky="w")
         self.vast_replace_btn = ttk.Button(
             replace, text="Replace if destroyed now", command=self._on_vast_replace
         )
-        self.vast_replace_btn.grid(row=2, column=0, sticky="w", pady=(8, 0))
+        self.vast_replace_btn.grid(row=1, column=0, sticky="w", pady=(8, 0))
         ttk.Label(
             replace,
-            text="Cheapest offer that clears all four. A 24 GB card and a 140 GB disk are fixed.",
+            text=(
+                "Uses the criteria above. Rents the best value offer that clears "
+                "them; RTX 5090 before RTX 4090 on a tie. The 24 GB card and "
+                "140 GB disk are fixed."
+            ),
             style="Status.TLabel",
-        ).grid(row=2, column=1, columnspan=7, sticky="w", padx=(10, 0), pady=(8, 0))
+            wraplength=560,
+        ).grid(row=1, column=1, sticky="w", padx=(10, 0), pady=(8, 0))
 
         self._refresh_image_refs()
         self._refresh_vast_page()
@@ -2394,28 +2584,65 @@ class SaladStudio(tk.Tk):
         """Show the stored instances and mark the one Generate uses."""
         active = str(self._vast_doc.get("active") or "")
         self.vast_tree.delete(*self.vast_tree.get_children())
+        shown = 0
         for row in self._vast_doc.get("instances") or []:
-            endpoint = str(row.get("endpoint") or "")
-            iid = self.vast_tree.insert(
+            clean = vast.clean_row(row)
+            if clean is None:
+                continue
+            iid = vast.row_key(clean)
+            if not iid:
+                continue
+            endpoint = clean["endpoint"]
+            address = endpoint or (
+                f"#{clean['id']}" if clean["id"] is not None else ""
+            )
+            marked = bool(endpoint) and endpoint == active
+            self.vast_tree.insert(
                 "",
                 "end",
+                iid=iid,
                 values=(
-                    "●" if endpoint == active else "",
-                    vast.row_label(row),
-                    endpoint,
-                    row.get("image") or "",
-                    row.get("state") or "",
-                    row.get("gpu") or "",
+                    "●" if marked else "",
+                    vast.row_label(clean),
+                    address,
+                    clean["image"],
+                    clean["state"],
+                    clean["gpu"],
                 ),
-                tags=("active",) if endpoint == active else (),
+                tags=("active",) if marked else (),
             )
-            if endpoint == active:
+            shown += 1
+            if marked:
                 self.vast_tree.selection_set(iid)
-        count = len(self._vast_doc.get("instances") or [])
         chosen = vast.row_label(self._vast_active() or {}) or "(none selected)"
         self.var_vast_mode_note.set(
-            f"{count} instance(s) saved; the active profile's target uses {chosen}"
+            f"{shown} instance(s) saved; the active profile's target uses {chosen}"
         )
+
+    def _vast_row_by_key(self, key: str) -> dict | None:
+        """The clean stored row a tree iid names, or None when it is gone."""
+        want = str(key or "")
+        for row in self._vast_doc.get("instances") or []:
+            clean = vast.clean_row(row)
+            if clean is not None and vast.row_key(clean) == want:
+                return clean
+        return None
+
+    @staticmethod
+    def _no_endpoint_note(row: dict) -> str:
+        """Why a row cannot be selected or posted to, in its own state's words."""
+        ident = f"#{row['id']}" if row.get("id") is not None else vast.row_label(row)
+        state = str(row.get("state") or "").strip().lower()
+        if state == "destroyed":
+            return f"instance {ident} is destroyed; select a running instance or replace it"
+        if state in ("loading", "creating", "starting", "scheduling", "queued"):
+            return f"instance {ident} is {state} and has no endpoint yet"
+        if state in ("stopped", "exited"):
+            return (
+                f"instance {ident} is {state} and has no endpoint; "
+                "start it in the vast.ai console"
+            )
+        return f"instance {ident} has no endpoint"
 
     def _store_vast_doc(self, doc: dict, note: str) -> None:
         """Keep an edited document in memory and on disk, then redraw the page."""
@@ -2471,12 +2698,20 @@ class SaladStudio(tk.Tk):
 
     def _on_vast_make_profile(self) -> None:
         """Create a profile whose target is the selected instance."""
-        row = self._vast_active()
+        selection = self.vast_tree.selection()
+        row = self._vast_row_by_key(str(selection[0])) if selection else None
+        if row is None:
+            row = self._vast_active()
         if row is None:
             self._config_status("Select an instance first.")
             self.log("warn", "no instance is selected")
             return
         endpoint = str(row.get("endpoint") or "")
+        if not endpoint:
+            note = self._no_endpoint_note(row)
+            self._config_status(note)
+            self.log("warn", note)
+            return
         ident = str(row.get("id") or "").strip() or endpoint.rsplit(":", 1)[-1]
         name = f"vast-{ident}"
         allp = profiles.load_all()
@@ -2513,27 +2748,41 @@ class SaladStudio(tk.Tk):
         if not selection:
             messagebox.showinfo("Salad Studio", "Select an instance row first.")
             return
-        endpoint = str(self.vast_tree.item(selection[0], "values")[2])
-        if not messagebox.askyesno(
-            "Salad Studio", f"Remove the vast.ai instance {endpoint}?"
-        ):
-            self.status.set(f"Kept {endpoint}")
-            self.log("info", f"kept the vast.ai instance {endpoint}")
+        key = str(selection[0])
+        row = self._vast_row_by_key(key)
+        if row is None:
             return
-        doc, removed = vast.remove_instance(self._vast_doc, endpoint)
+        label = vast.row_label(row)
+        if not messagebox.askyesno(
+            "Salad Studio", f"Remove the vast.ai instance {label}?"
+        ):
+            self.status.set(f"Kept {label}")
+            self.log("info", f"kept the vast.ai instance {label}")
+            return
+        doc, removed = vast.remove_instance(self._vast_doc, key)
         if not removed:
             return
-        self._store_vast_doc(doc, f"removed {endpoint}")
+        self._store_vast_doc(doc, f"removed {label}")
 
     def _on_vast_select(self, _event=None) -> None:
-        """Selecting a row points Generate at that instance."""
+        """Selecting a reachable row points Generate at that instance."""
         selection = self.vast_tree.selection()
         if not selection:
             return
-        endpoint = str(self.vast_tree.item(selection[0], "values")[2])
+        key = str(selection[0])
+        row = self._vast_row_by_key(key)
+        if row is None:
+            return
+        endpoint = str(row.get("endpoint") or "")
+        if not endpoint:
+            note = self._no_endpoint_note(row)
+            self.var_vast_status.set(note)
+            self.status.set(note)
+            self.log("info", f"vast.ai: {note}")
+            return
         if endpoint == str(self._vast_doc.get("active") or ""):
             return
-        self._store_vast_doc(vast.set_active(self._vast_doc, endpoint), f"using {endpoint}")
+        self._store_vast_doc(vast.set_active(self._vast_doc, key), f"using {endpoint}")
         if self._profile_mode() == "vast":
             # The page says this row is Generate's target, so the target box
             # must name it too; otherwise the profile's old URL still wins.
@@ -2542,11 +2791,11 @@ class SaladStudio(tk.Tk):
     def _on_vast_save(self) -> None:
         count = len(self._vast_doc.get("instances") or [])
         doc = dict(self._vast_doc)
-        doc["replace"] = self._vast_replace_settings()
+        doc["replace"] = self._vast_criteria()
         self._store_vast_doc(doc, f"saved {count} instance(s)")
 
-    def _vast_replace_settings(self) -> dict:
-        """The replacement policy as the four boxes and the checkbox state it."""
+    def _vast_criteria(self) -> dict:
+        """The rental criteria as the boxes and the checkbox state them."""
         return vast.clean_replace(
             {
                 "enabled": bool(self.var_vast_replace.get()),
@@ -2554,15 +2803,227 @@ class SaladStudio(tk.Tk):
                 "min_down_mbps": self.var_vast_down.get(),
                 "min_up_mbps": self.var_vast_up.get(),
                 "cuda_min": self.var_vast_cuda.get(),
+                "min_reliability": self.var_vast_reliability.get(),
+                "gpu_names": self.var_vast_gpus.get(),
             }
         )
 
+    def _vast_note(self, text: str, level: str = "info") -> None:
+        """Say one thing on the section, the status line, and the Logs."""
+        self.var_vast_status.set(text)
+        offer_status = getattr(self, "var_vast_offer_status", None)
+        if offer_status is not None:
+            offer_status.set(text)
+        self.status.set(text)
+        self.log(level, f"vast.ai: {text}")
+
+    def _on_vast_search(self) -> None:
+        """Find offers for the rental criteria, off the Tk thread."""
+        if self._vast_search_busy:
+            return
+        key = tokens.read_token("vast")
+        if not key:
+            messagebox.showinfo(
+                "Salad Studio",
+                "Save the Vast.ai key on the Tokens tab, then search again.",
+            )
+            self._vast_note("save the Vast.ai key on the Tokens tab first", "warn")
+            return
+        criteria = self._vast_criteria()
+        # The normalized list goes back into the box, so clearing it visibly
+        # restores the defaults instead of silently widening the search.
+        self.var_vast_gpus.set(", ".join(criteria["gpu_names"]))
+        doc = dict(self._vast_doc)
+        doc["replace"] = criteria
+        self._store_vast_doc(doc, "saved the rental criteria")
+        self._vast_search_busy = True
+        self.vast_search_btn.configure(state="disabled")
+        self.vast_offer_tree.delete(*self.vast_offer_tree.get_children())
+        self._vast_offers = {}
+        self._vast_note("searching vast.ai offers…")
+
+        def work() -> None:
+            result = vast.search_offers(key, criteria)
+            if self._later(0, lambda: self._apply_vast_search(result, criteria)) is None:
+                self._vast_search_busy = False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _apply_vast_search(self, result: dict, criteria: dict) -> None:
+        """Fill the results table, or say why the search came back empty."""
+        self._vast_search_busy = False
+        try:
+            self.vast_search_btn.configure(state="normal")
+        except tk.TclError:
+            pass
+        status = int(result.get("status") or 0)
+        if status != 200:
+            note = str(result.get("error") or f"HTTP {status}")
+            if status in (401, 403):
+                note = f"vast.ai rejected the key ({note}). Fix it on the Tokens tab."
+            self._vast_note(note, "warn")
+            return
+        offers = vast.matching_offers(result.get("offers") or [], criteria)
+        if not offers:
+            self._vast_note(
+                "no offer matches the GPU list and floors; widen them and search again.",
+                "warn",
+            )
+            return
+        for offer in offers:
+            iid = str(offer["id"])
+            cells = vast.offer_cells(offer)
+            self.vast_offer_tree.insert(
+                "",
+                "end",
+                iid=iid,
+                values=tuple(cells[col] for col, _h, _w, _f in VAST_OFFER_GRID_COLUMNS),
+            )
+            self._vast_offers[iid] = offer
+        best = vast.offer_cells(offers[0])
+        self._vast_note(
+            f"{len(offers)} offer(s), most images per dollar first; "
+            f"best {best['gpu']} {best['price']}/hr at {best['value']} Perf/$"
+        )
+
+    def _on_vast_rent(self) -> None:
+        """Create one instance on the offer the user selected, off the Tk thread."""
+        if self._vast_create_busy:
+            return
+        selection = self.vast_offer_tree.selection()
+        if not selection:
+            self._vast_note("select an offer row first.", "warn")
+            return
+        offer = self._vast_offers.get(str(selection[0]))
+        if offer is None:
+            self._vast_note("select an offer row first.", "warn")
+            return
+        key = tokens.read_token("vast")
+        if not key:
+            messagebox.showinfo(
+                "Salad Studio",
+                "Save the Vast.ai key on the Tokens tab, then search again.",
+            )
+            self._vast_note("save the Vast.ai key on the Tokens tab first", "warn")
+            return
+        image = str(self.var_vast_image.get() or "").strip()
+        if not image:
+            try:
+                image = profiles.policy_image_for(self._profile_from_form())
+            except ValueError:
+                image = ""
+        if not image:
+            self._vast_note("set the image for the new instance first.", "warn")
+            return
+        label = str(self.var_vast_rent_label.get() or "").strip() or (
+            f"salad-studio-{offer['id']}"
+        )
+        env = vast.replacement_env(
+            hf_token=tokens.read_token("huggingface"),
+            civitai_token=tokens.read_token("civitai"),
+        )
+        self._vast_create_busy = True
+        self.vast_rent_btn.configure(state="disabled")
+        self.vast_replace_btn.configure(state="disabled")
+        gpu = str(offer.get("gpu_name") or "the selected offer")
+        self._vast_note(f"creating an instance on {gpu}…")
+
+        def work() -> None:
+            try:
+                result = vast.rent_offer(key, offer, image=image, label=label, env=env)
+            except Exception as e:  # noqa: BLE001 - the button must come back
+                result = {"action": "error", "message": f"{type(e).__name__}: {e}"}
+            if self._later(0, lambda: self._apply_vast_rent(result)) is None:
+                self._vast_create_busy = False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _apply_vast_rent(self, result: dict) -> None:
+        """Show what a rent or replacement check did, and keep the row it returned."""
+        self._vast_create_busy = False
+        buttons = (
+            getattr(self, "vast_rent_btn", None),
+            getattr(self, "vast_replace_btn", None),
+        )
+        for button in buttons:
+            if button is None:
+                continue
+            try:
+                button.configure(state="normal")
+            except tk.TclError:
+                pass
+        action = str(result.get("action") or "")
+        message = str(result.get("message") or "")
+        new = result.get("row")
+        if isinstance(new, dict):
+            row = vast.clean_row(new)
+            if row is not None and row["endpoint"]:
+                doc, _status = vast.upsert_instance(self._vast_doc, row)
+                doc = dict(doc)
+                doc["active"] = row["endpoint"]
+                doc["replace"] = self._vast_criteria()
+                doc["pending"] = {}
+                self._store_vast_doc(doc, message)
+                self._sync_vast_gateway(row["endpoint"])
+            else:
+                self.var_vast_status.set(message)
+                self.status.set(message)
+        else:
+            if action == "created" and result.get("contract") is not None:
+                # The PUT returned a contract the listing has not confirmed yet.
+                # The row is the durable record, so the instance appears now.
+                doc, _status = vast.upsert_instance(
+                    self._vast_doc,
+                    {
+                        "id": int(result["contract"]),
+                        "endpoint": "",
+                        "state": "creating",
+                        "label": str(result.get("label") or ""),
+                        "image": str(result.get("image") or ""),
+                    },
+                )
+                doc["replace"] = self._vast_criteria()
+                doc["pending"] = {}
+                self._store_vast_doc(doc, message)
+            else:
+                self.var_vast_status.set(message)
+                self.status.set(message)
+        self.log("info" if action in ("alive", "created") else "error", message)
+
+    def _sync_vast_gateway(self, endpoint: str) -> None:
+        """Point the form and the profile it names at the instance just reached."""
+        if self._profile_mode() != "vast":
+            return
+        self.var_gateway.set(endpoint)
+        name = (self.var_name.get() or "").strip()
+        try:
+            allp = profiles.load_all()
+        except Exception as e:  # noqa: BLE001 - a bad store must not undo the row
+            self.log("warn", f"could not read the profiles: {e}")
+            return
+        if name not in allp:
+            return
+        prof = allp[name]
+        prof.gateway = endpoint
+        prof.mode = "vast"
+        try:
+            profiles.upsert(prof)
+        except Exception as e:  # noqa: BLE001 - a bad store must not undo the row
+            self.log("warn", f"could not update profile {name}: {e}")
+            return
+        self.log("info", f"profile {name} now targets {endpoint}")
+
     def _on_vast_replace(self) -> None:
-        """Check the selected instance, and rent the cheapest replacement if gone."""
-        if getattr(self, "_vast_replace_busy", False):
+        """Check the selected instance, and rent a replacement if gone."""
+        if self._vast_create_busy:
             self.var_vast_status.set("a replacement check is already running")
             return
-        row = self._vast_active()
+        # The selected row first, so a destroyed row can be replaced even
+        # though it is never the active one (it has no endpoint).
+        selection = self.vast_tree.selection()
+        row = self._vast_row_by_key(str(selection[0])) if selection else None
+        if row is None:
+            row = self._vast_active()
         if row is None:
             self.var_vast_status.set("select an instance row first")
             return
@@ -2585,14 +3046,16 @@ class SaladStudio(tk.Tk):
                 "Set an image for the selected instance first (Set image for selected).",
             )
             return
-        settings = self._vast_replace_settings()
-        label = str(row.get("label") or "").strip() or f"salad-studio-{row['endpoint']}"
+        settings = self._vast_criteria()
+        ident = row.get("id") if row.get("id") is not None else (row.get("endpoint") or "")
+        label = str(row.get("label") or "").strip() or f"salad-studio-{ident}"
         env = vast.replacement_env(
             hf_token=tokens.read_token("huggingface"),
             civitai_token=tokens.read_token("civitai"),
         )
-        self._vast_replace_busy = True
+        self._vast_create_busy = True
         self.vast_replace_btn.configure(state="disabled")
+        self.vast_rent_btn.configure(state="disabled")
         self.var_vast_status.set("checking the selected instance.")
 
         def work() -> None:
@@ -2600,8 +3063,7 @@ class SaladStudio(tk.Tk):
                 result = vast.replace_destroyed(
                     key=key,
                     endpoint=str(row.get("endpoint") or ""),
-                    instance_id=row.get("id")
-                    or (self._vast_doc.get("pending") or {}).get("contract"),
+                    instance_id=row.get("id"),
                     image=image,
                     settings=settings,
                     label=label,
@@ -2609,70 +3071,10 @@ class SaladStudio(tk.Tk):
                 )
             except Exception as e:  # noqa: BLE001 - the button must come back
                 result = {"action": "error", "message": f"{type(e).__name__}: {e}"}
-            self._later(0, lambda: self._apply_vast_replace(result, row))
+            if self._later(0, lambda: self._apply_vast_rent(result)) is None:
+                self._vast_create_busy = False
 
         threading.Thread(target=work, daemon=True).start()
-
-    def _apply_vast_replace(self, result: dict, old_row: dict | None) -> None:
-        """Show what the replacement check did, and keep the row it returned."""
-        self._vast_replace_busy = False
-        if hasattr(self, "vast_replace_btn"):
-            try:
-                self.vast_replace_btn.configure(state="normal")
-            except tk.TclError:
-                pass
-        action = str(result.get("action") or "")
-        message = str(result.get("message") or "")
-        new = result.get("row")
-        if isinstance(new, dict) and old_row:
-            # A live check returns the API's row fields only; keep the label and
-            # image the user set, while the new endpoint and state win.
-            new = {**old_row, **new}
-        if isinstance(new, dict) and str(new.get("endpoint") or ""):
-            rows: list[dict] = []
-            old_endpoint = str((old_row or {}).get("endpoint") or "")
-            old_id = (old_row or {}).get("id")
-            replaced = False
-            for row in self._vast_doc.get("instances") or []:
-                same = bool(old_endpoint and str(row.get("endpoint") or "") == old_endpoint)
-                if not same and old_id is not None:
-                    same = str(row.get("id") or "") == str(old_id)
-                rows.append(dict(new) if same else row)
-                replaced = replaced or same
-            if not replaced:
-                rows.append(dict(new))
-            doc = dict(self._vast_doc)
-            doc["instances"] = rows
-            doc["active"] = str(new["endpoint"])
-            doc["replace"] = self._vast_replace_settings()
-            doc["pending"] = {}
-            self._store_vast_doc(doc, message)
-            if self._profile_mode() == "vast":
-                self.var_gateway.set(str(new["endpoint"]))
-                name = (self.var_name.get() or "").strip()
-                try:
-                    allp = profiles.load_all()
-                    if name in allp:
-                        prof = allp[name]
-                        prof.gateway = str(new["endpoint"])
-                        prof.mode = "vast"
-                        profiles.upsert(prof)
-                        self.log("info", f"profile {name} now targets {new['endpoint']}")
-                except Exception as e:  # noqa: BLE001 - a bad store must not undo the row
-                    self.log("warn", f"could not update profile {name}: {e}")
-        else:
-            if action == "created" and result.get("contract") is not None:
-                doc = dict(self._vast_doc)
-                doc["pending"] = {
-                    "contract": int(result["contract"]),
-                    "label": str(result.get("label") or ""),
-                    "image": str(result.get("image") or ""),
-                }
-                self._store_vast_doc(doc, message)
-            else:
-                self.var_vast_status.set(message)
-                self.status.set(message)
-        self.log("info" if action in ("alive", "created") else "error", message)
 
     def _on_vast_set_image(self) -> None:
         """Record which image a listed instance runs, so the row points at one.
@@ -2686,19 +3088,26 @@ class SaladStudio(tk.Tk):
         if not selection:
             messagebox.showinfo("Salad Studio", "Select an instance row first.")
             return
-        endpoint = str(self.vast_tree.item(selection[0], "values")[2])
+        key = str(selection[0])
+        row = self._vast_row_by_key(key)
+        if row is None:
+            return
+        label = vast.row_label(row)
         image = self.var_vast_image.get().strip()
-        rows = [dict(row) for row in self._vast_doc.get("instances") or []]
+        rows = [dict(stored) for stored in self._vast_doc.get("instances") or []]
         changed = False
-        for row in rows:
-            if str(row.get("endpoint") or "") == endpoint and str(row.get("image") or "") != image:
-                row["image"] = image
+        for stored in rows:
+            clean = vast.clean_row(stored)
+            if clean is None or vast.row_key(clean) != key:
+                continue
+            if clean["image"] != image:
+                stored["image"] = image
                 changed = True
         if not changed:
             return
         doc = dict(self._vast_doc)
         doc["instances"] = rows
-        note = f"{endpoint} runs {image}" if image else f"cleared the image on {endpoint}"
+        note = f"{label} runs {image}" if image else f"cleared the image on {label}"
         self._store_vast_doc(doc, note)
 
     def _on_vast_fetch(self) -> None:
@@ -2717,7 +3126,9 @@ class SaladStudio(tk.Tk):
         self.var_vast_status.set("asking vast.ai for this account's instances…")
 
         def work() -> None:
-            result = vast.fetch_instances(key)
+            # The unfiltered listing: a record with no mapped port is still an
+            # instance, and a missing one is what marks a row destroyed.
+            result = vast.fetch_records(key)
 
             def done() -> None:
                 self._vast_fetch_busy = False
@@ -2729,9 +3140,8 @@ class SaladStudio(tk.Tk):
         threading.Thread(target=work, daemon=True).start()
 
     def _apply_vast_fetch(self, result: dict) -> None:
-        """Add what the vast.ai listing returned, and say what it did not."""
+        """Reconcile the store with the account's whole instance list."""
         status = int(result.get("status") or 0)
-        rows = list(result.get("instances") or [])
         if status != 200:
             note = str(result.get("error") or f"HTTP {status}")
             if status in (401, 403):
@@ -2739,30 +3149,75 @@ class SaladStudio(tk.Tk):
             self.var_vast_status.set(note)
             self.log("warn", f"vast.ai: {note}")
             return
-        doc = self._vast_doc
-        added: list[str] = []
-        for row in rows:
-            doc, refusal = vast.add_instance(
-                doc,
-                row["endpoint"],
-                label=row.get("label") or "",
-                id=row.get("id"),
-                gpu=row.get("gpu") or "",
-                state=row.get("state") or "",
+        records = list(result.get("instances") or [])
+        complete = not bool(result.get("truncated"))
+        doc, summary = vast.reconcile(self._vast_doc, records, complete=complete)
+        note = (
+            f"vast.ai listed {len(records)} record(s); "
+            f"added {len(summary['added'])}, "
+            f"updated {len(summary['updated'])}, "
+            f"destroyed {len(summary['destroyed'])}"
+        )
+        if summary["promoted"]:
+            note += (
+                f"; instance {summary['promoted']} mapped an endpoint and is now "
+                "the active target"
             )
-            if not refusal:
-                added.append(str(row["endpoint"]))
-        note = f"vast.ai listed {len(rows)} instance(s); added {len(added)}"
         if result.get("truncated"):
             note += (
-                f" — the account has more than {vast.MAX_PAGES} pages of instances, "
-                "so the list stops there"
+                "; the list was cut, so nothing was marked destroyed"
             )
-        if added:
+        if summary["changed"]:
             self._store_vast_doc(doc, note)
         else:
             self.var_vast_status.set(note)
             self.log("info", f"vast.ai: {note}")
+        self._clear_gone_vast_profiles(
+            summary.get("gone_endpoints") or [], str(doc.get("active") or "")
+        )
+        if summary.get("promoted"):
+            # The endpoint-less row a create left behind has just become
+            # reachable. The profile the user is on must follow it, or Generate
+            # refuses to a cleared gateway even though the instance is up.
+            self._sync_vast_gateway(str(doc.get("active") or ""))
+
+    def _clear_gone_vast_profiles(self, gone_endpoints: list, active: str) -> None:
+        """Point every vast-mode profile that held a gone address at the live one.
+
+        A profile that kept a destroyed instance's address would POST a render
+        to it. It names the new active endpoint instead, or nothing, so Generate
+        refuses until the user picks a reachable instance.
+        """
+        gone = {str(url or "").strip() for url in gone_endpoints}
+        gone.discard("")
+        if not gone:
+            return
+        name = (self.var_name.get() or "").strip()
+        cleared_form = False
+        try:
+            allp = profiles.load_all()
+        except Exception as e:  # noqa: BLE001 - a bad store must not break Fetch
+            self.log("warn", f"could not read the profiles: {e}")
+            return
+        for prof_name, prof in allp.items():
+            if str(getattr(prof, "mode", "") or "") != "vast":
+                continue
+            if str(getattr(prof, "gateway", "") or "").strip() not in gone:
+                continue
+            prof.gateway = active
+            try:
+                profiles.upsert(prof)
+            except Exception as e:  # noqa: BLE001 - report, keep reconciling
+                self.log("warn", f"could not update profile {prof_name}: {e}")
+                continue
+            self.log(
+                "info",
+                f"profile {prof_name} now targets {active or 'no instance'}",
+            )
+            if prof_name == name:
+                cleared_form = True
+        if cleared_form:
+            self.var_gateway.set(active)
 
     def _build_images_section(self, body) -> None:
         """The container images: where each one lives, and what a host needs.
@@ -2810,6 +3265,7 @@ class SaladStudio(tk.Tk):
         box.columnconfigure(0, weight=1)
         cols = ("name", "value", "source", "note")
         self.image_env_tree = ttk.Treeview(box, columns=cols, show="headings", height=7)
+        self._wheel_tree(self.image_env_tree)
         for col, heading, width, stretch in (
             ("name", "Variable", 190, False),
             ("value", "Value", 210, False),
@@ -2944,6 +3400,9 @@ class SaladStudio(tk.Tk):
         vast_box = getattr(self, "vast_image_box", None)
         if vast_box is not None:
             vast_box.configure(values=[""] + options)
+        rent_box = getattr(self, "vast_offer_image_box", None)
+        if rent_box is not None:
+            rent_box.configure(values=[""] + options)
 
     def _refresh_images_page(self) -> None:
         """Redraw the page: the picker, the facts, the environment and the script."""
@@ -3138,6 +3597,7 @@ class SaladStudio(tk.Tk):
         self.lora_tree = ttk.Treeview(
             body, columns=LORA_COLUMNS, show="headings", height=12
         )
+        self._wheel_tree(self.lora_tree)
         for col, heading, width in (
             ("verified", "Verified", 80),
             ("id", "Id", 200),
@@ -3760,6 +4220,7 @@ class SaladStudio(tk.Tk):
         self.catalog_tree = ttk.Treeview(
             self._catalog, columns=cols, show="headings", height=16
         )
+        self._wheel_tree(self.catalog_tree)
         for col, heading, width, _fill in CATALOG_GRID_COLUMNS:
             self.catalog_tree.heading(col, text=heading)
             self.catalog_tree.column(col, width=width, stretch=False)
@@ -4399,6 +4860,7 @@ class SaladStudio(tk.Tk):
             height=16,
             style="Hist.Treeview",
         )
+        self._wheel_tree(self.prompt_hist_tree)
         # A rated row lights its whole rating cell; an unrated one stays muted.
         self.prompt_hist_tree.tag_configure("rated", foreground=theme.PALETTE["accent"])
         self.prompt_hist_tree.heading("#0", text="")
@@ -4653,6 +5115,7 @@ class SaladStudio(tk.Tk):
         )
         cols = ("id", "profile", "state", "attempts", "status", "reason", "request", "finished")
         self.queue_tree = ttk.Treeview(self._queue, columns=cols, show="headings", height=14)
+        self._wheel_tree(self.queue_tree)
         for col, heading, width, _fill in QUEUE_GRID_COLUMNS:
             self.queue_tree.heading(col, text=heading)
             self.queue_tree.column(col, width=width, stretch=False, anchor="w")
@@ -6533,16 +6996,15 @@ class SaladStudio(tk.Tk):
             return
         who = vast.row_label(row) if row is not None else endpoint
         replace_policy = (
-            self._vast_replace_settings() if self._profile_mode() == "vast" else {}
+            self._vast_criteria() if self._profile_mode() == "vast" else {}
         )
         replacing = bool(replace_policy.get("enabled"))
-        pending_contract = (self._vast_doc.get("pending") or {}).get("contract")
         replace_key = ""
         replace_env = ""
         replace_image = ""
         replace_label = ""
         if replacing:
-            if getattr(self, "_vast_replace_busy", False):
+            if self._vast_create_busy:
                 note = "Refused: a replacement check is already running"
                 self.status.set(note)
                 self.log("warn", note)
@@ -6570,7 +7032,9 @@ class SaladStudio(tk.Tk):
             replace_label = str((row or {}).get("label") or "").strip() or (
                 f"salad-studio-{p.name}"
             )
-            self._vast_replace_busy = True
+            self._vast_create_busy = True
+            self.vast_replace_btn.configure(state="disabled")
+            self.vast_rent_btn.configure(state="disabled")
         self._gen_jobs += 1
         first = self._gen_jobs == 1
         self._busy = True
@@ -6595,7 +7059,7 @@ class SaladStudio(tk.Tk):
                     result = vast.replace_destroyed(
                         key=replace_key,
                         endpoint=endpoint,
-                        instance_id=(row or {}).get("id") or pending_contract,
+                        instance_id=(row or {}).get("id"),
                         image=replace_image,
                         settings=replace_policy,
                         label=replace_label,
@@ -6604,7 +7068,8 @@ class SaladStudio(tk.Tk):
                 except Exception as e:  # noqa: BLE001 - end the press, not the app
                     result = {"action": "error", "message": f"{type(e).__name__}: {e}"}
                 action = str(result.get("action") or "")
-                self._later(0, lambda: self._apply_vast_replace(result, row))
+                if self._later(0, lambda: self._apply_vast_rent(result)) is None:
+                    self._vast_create_busy = False
                 if action == "alive":
                     endpoint = str(
                         (result.get("row") or {}).get("endpoint") or endpoint
@@ -6652,8 +7117,6 @@ class SaladStudio(tk.Tk):
                             self.log("warn", f"history thumb skipped: {e}")
                         self._refresh_prompt_history()
                     self._refresh_history()
-                if replacing:
-                    self._vast_replace_busy = False
                 if self._gen_jobs <= 0:
                     self._busy = False
                     self._cancel_gen_tick()

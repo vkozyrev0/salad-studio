@@ -24,7 +24,7 @@ Plan D and this repo's `docs/workflow/15` now lands here.
 
 Control plane `https://api.salad.com/api/public` (`Salad-Api-Key: <key>`; client `salad_studio/salad_status.py`)
 creates, patches and stops groups, reallocates replicas and reads status and logs; the container at
-`https://<group>-<hash>.salad.cloud` is public by default and runs Comfy's `/prompt`, `/health`, `/ready` (working callers here: `salad_gen.py`, `salad_probe_klein.py`, `salad_age_review.py`; the other probes need the Eldermark checkout).
+`https://<group>-<hash>.salad.cloud` is public by default and runs Comfy's `/prompt`, `/health`, `/ready`. The working callers are listed in §3.
 
 A group's gateway DNS is the only handle the client keeps; the control plane is
 how you find the group behind it (`find_group_by_gateway`).
@@ -40,24 +40,23 @@ how you find the group behind it (`find_group_by_gateway`).
 and test commands (`cd salad_klein && python -m unittest discover -p "test_*.py"`).
 
 `prefetch.py` is the ENTRYPOINT: it inflates a sidecar/misnamed zip, else downloads the weights in
-parallel, then `exec`s `comfyui-api`. Beside it sit `Dockerfile` (FROM the Salad runtime tag),
-`manifest.yaml`, `weights_zip.py` (sidecar-zip inflation), `check_hf_download.py` (gated-HF
-reachability check), `RGTHREE_COMMIT.txt` (the pinned `rgthree-comfy` commit), `.dockerignore`
-(keeps weights out of the context), the `prompt_*.json` graphs, `prompt_catalog.json` /
-`prompt_ledger.json` (successful-prompt catalog + human verdicts), `weights/.gitignore` (the local
-staging target), `test_prefetch.py` / `test_hf_gated_access.py`, and `http_smoke.py` (a manual
-Docker smoke run, not a test module).
+parallel, then `exec`s `comfyui-api`. Beside it sit `Dockerfile`, `manifest.yaml`, `weights_zip.py`,
+`check_hf_download.py`, `RGTHREE_COMMIT.txt`, `.dockerignore`, the `prompt_*.json` graphs,
+`prompt_catalog.json` / `prompt_ledger.json`, `weights/.gitignore`,
+`test_prefetch.py` / `test_hf_gated_access.py`, and `http_smoke.py` (a manual Docker smoke run).
 
 ### 1.2 The two images: one per unet family
 
-One Dockerfile, built **twice** — once per unet family — and each family's group
-runs its own tag. The build arg `KLEIN_UNET_SET` decides what the first boot
-downloads, and that is the only difference between the two images.
+One Dockerfile, built **twice**, once per unet family. The build arg `KLEIN_UNET_SET` decides what
+the first boot downloads, and that is the only difference between the two images.
 
 | Family | Tag | `KLEIN_UNET_SET` | Unets on disk after the first boot |
 |---|---|---|---|
-| `klein` | `docker.io/vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-klein` | `base,distilled` | `flux-2-klein-base-9b-fp8.safetensors`, `flux-2-klein-9b-fp8.safetensors` |
-| `snofs` | `docker.io/vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-snofs` | `snofs` | `snofsSexNudesAndOther_distilledV12KleinFp8.safetensors` |
+| `klein` | `docker.io/vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-klein` | `base,distilled` | `flux-2-klein-base-9b-fp8.safetensors` (9.57 GB), `flux-2-klein-9b-fp8.safetensors` (9.43 GB), Qwen encoder (8.66 GB), VAE (0.34 GB) |
+| `snofs` | `docker.io/vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-snofs` | `snofs` | `snofsSexNudesAndOther_distilledV12KleinFp8.safetensors` (9.08 GB), Qwen encoder (8.66 GB), VAE (0.34 GB) |
+
+The SNOFS unet downloads from
+`https://huggingface.co/edwixx/Flux2Klein9B_SNOFS/resolve/main/snofsSexNudesAndOtherFunStuff_distilledV12Fp8.safetensors`.
 
 The family-to-image mapping is shipped in
 [`salad_studio/studio-metadata.json`](../../salad_studio/studio-metadata.json)
@@ -65,8 +64,7 @@ The family-to-image mapping is shipped in
 field is seeded from; `tests/test_docs_match.py` fails if this table stops
 naming an image, a unet or the build arg the document ships.
 
-Build and push both (`RGTHREE_COMMIT.txt` pins the node copy; weights are never
-baked):
+Build and push both (`RGTHREE_COMMIT.txt` pins the node copy; weights are never baked):
 
 ```bash
 git clone --depth 1 https://github.com/rgthree/rgthree-comfy.git salad_klein/custom_nodes/rgthree-comfy
@@ -88,25 +86,13 @@ What either image is, inside:
 | Base | `ghcr.io/saladtechnologies/comfyui-api:comfy0.35.0-api1.19.2-torch2.13.0-cuda13.0-runtime` |
 | ComfyUI | `--listen 0.0.0.0 --port 8188`, its own UI and API |
 | Salad wrapper | `comfyui-api` on port **3000**: `/health`, `/ready`, and `POST /prompt` answering `images[]` as base64 JPEG (`convert_output`) |
-| ENTRYPOINT | `python /prefetch.py` — parallel weight download, then `exec ./comfyui-api` |
+| ENTRYPOINT | `python /prefetch.py` runs the parallel weight download, then `exec ./comfyui-api` |
 | Custom nodes | `rgthree-comfy` (Image Comparer, Power Lora Loader) at the pinned commit |
-| Weights | none in any layer: the first boot fetches the set this tag was built for (~10 GB+) |
+| Weights | none in any layer: the first boot fetches 18 GB for `snofs` or 28 GB for `klein` |
 | Size | ~12 GB image; a new replica re-downloads, because node storage is ephemeral |
 
-Both tags are interchangeable as a container **image**: the Config page's
-**Image** (a Salad group policy) takes either one, and so does a **vast.ai
-instance**. See [`§5`](#5-vastai-instances) for the host, the port
-choice and the failure modes, and the Config page's Vast.ai instances section in
-[`salad_studio/README.md`](../../salad_studio/README.md). What a group may render
-is decided by the family its tag bakes, not by the tag's name.
-
-**The app renders all of this**: the Config page's **Container images** section
-shows these fields for each tag (context, base image, build arg, ports, GPU,
-disk, environment) and copies the build, run and `vastai create` commands, so the
-deploy parameters live in one place instead of in this document alone. The page
-reads them from `routing.families.<family>.deployment` in
-[`salad_studio/studio-metadata.json`](../../salad_studio/studio-metadata.json);
-the values below are the same ones.
+Both tags work as a container image for a Salad group or a **vast.ai instance**. What a group may render is decided by the family its tag bakes, not by the tag's name. See [`§5`](#5-vastai-instances) for the host, the port choice and the failure modes. The Config page's **Container images** section shows each tag's fields and copies the build, run and `vastai create` commands from `routing.families.<family>.deployment` in
+[`salad_studio/studio-metadata.json`](../../salad_studio/studio-metadata.json).
 
 ### 1.3 The two hard rules
 
@@ -116,8 +102,9 @@ the values below are the same ones.
 - **Do not `FROM` a `flux1dev` Salad tag.** It OOMs or 524s on a 24 GB card for
   Klein graphs.
 
-`prefetch.py` is the only thing that puts weights on disk, at **first boot**, not
-at build:
+`manifest.yaml` sets `before_start: []`; do not put sequential HF URLs back.
+
+`prefetch.py` is the only thing that puts weights on disk, at **first boot**, not at build:
 
 1. If a `.zip` sits next to the Comfy path, or a zip was misnamed
    `*.safetensors`, inflate it to the real `.safetensors` filename.
@@ -127,19 +114,9 @@ at build:
 
 ### 1.4 Staging weights locally (optional)
 
-`python model_catalog.py fetch-klein --stage` caches the same files in the
-gitignored `art/model-cache/hf/` and hardlinks them into the build tree; `--stage`
-targets `$SALAD_STUDIO_HOME/salad_klein/weights/` (this repo by default). Salad
-never sees that cache — the container URL-loads on a new replica instead, and the
-LoRA URLs carry the Civitai token at POST time. Also in
-[doc 15](15-salad-flux2-klein-group.md) and
-[`salad_klein/README.md`](../../salad_klein/README.md).
+`python model_catalog.py fetch-klein --stage` caches the same files in the gitignored `art/model-cache/hf/` and hardlinks them into `$SALAD_STUDIO_HOME/salad_klein/weights/`. Salad never sees that cache; the container URL-loads on a new replica, and the LoRA URLs carry the Civitai token at POST time. Also in [doc 15](15-salad-flux2-klein-group.md).
 
-> **Known duplication:** `model_catalog.py` exists in **both** repos. The game
-> repo keeps a copy because it manages `art/model-cache/` there and its own test
-> asserts that repo's ignore rules. This repo's copy is the one the Studio
-> package imports (`salad_studio/lora_store.py`). Edit both, or delete the game
-> repo's copy once nothing there uses it.
+`model_catalog.py` exists in **both** repos; this repo's copy is the one `salad_studio/lora_store.py` imports. Edit both, or delete the game repo's copy once nothing there uses it.
 
 ---
 
@@ -147,22 +124,10 @@ LoRA URLs carry the Civitai token at POST time. Also in
 
 ### 2.1 What a Salad group is (the host-side mechanics)
 
-- **Product shape, Salad Container Engine.** You push a Docker image, set a GPU class + priority
-  (`high` or `batch`/lowest — High for a full run, Lowest for probes) and N replicas. Interruptible
-  community nodes; **Salad Dedicated** is reserved DC hardware. Container-first, not SSH-first.
-  Storage is ephemeral — nodes do not persist `/opt/ComfyUI/models`, so every new instance
-  re-downloads; keep progress files (`regen_progress.json`) on the Windows side. Billing is prepaid,
-  per-second while running: allocation, image pull and cold start are not billed, but a huge pull
-  still costs wall-clock.
-- **GPU classes.** RTX 3060 up to **RTX 4090 24 GB** and **RTX 5090 32 GB** on Community. No
-  H100/A100 there; a 48 GB+ card means Dedicated or another host. A class is identified by a UUID —
-  the docs example for a 4090 is `ed563892-aacd-40f5-80b7-90c9be6c759b`;
-  `salad_status.list_gpu_classes()` reads the live list.
-- **No per-image safety classifier** on the container path: your image runs Comfy. The residual
-  filter is the ToS (CSAM/illegal-content clause, any-reason refusal) plus chef/node disconnects,
-  not a Google `IMAGE_SAFETY` 422.
-- **Adult workloads are a chef preference**, not an "anything goes" promise. Chefs in anti-porn
-  jurisdictions are excluded from those jobs. ToS: <https://salad.com/terms/saladcloud>.
+- **Product shape.** Push a Docker image, set a GPU class + priority (`high` or `batch`/lowest, High for a full run, Lowest for probes) and N replicas. Interruptible community nodes; **Salad Dedicated** is reserved DC hardware. Container-first, not SSH-first. Storage is ephemeral, so every new instance re-downloads; keep progress files (`regen_progress.json`) on the Windows side. Billing is prepaid, per-second while running: allocation, image pull and cold start are not billed, but a huge pull still costs wall-clock.
+- **GPU classes.** RTX 3060 up to **RTX 4090 24 GB** and **RTX 5090 32 GB** on Community. No H100/A100 there; a 48 GB+ card means Dedicated or another host. A class is a UUID; the docs example for a 4090 is `ed563892-aacd-40f5-80b7-90c9be6c759b`; `salad_status.list_gpu_classes()` reads the live list.
+- **No per-image safety classifier.** Your image runs Comfy. The residual filter is the ToS (CSAM/illegal-content clause, any-reason refusal) plus chef/node disconnects, not a Google `IMAGE_SAFETY` 422.
+- **Adult workloads are a chef preference**, not an "anything goes" promise. Chefs in anti-porn jurisdictions are excluded from those jobs. ToS: <https://salad.com/terms/saladcloud>.
 
 ### 2.2 Portal fields
 
@@ -180,15 +145,13 @@ https://portal.salad.com, create a **new** group; never edit an unrelated one.
 | Readiness probe | `GET /ready` |
 | Env | `HF_TOKEN`; `CIVITAI_API_TOKEN` if Civitai 401s; `STARTUP_CHECK_MAX_TRIES=120` (already in the Dockerfile, keep it) |
 
-Move steps, condensed: a prepaid org in the Salad portal, build and push the image (§1), create the group with §2.2's fields, scale replicas 1→N, wait for `/ready` 200 (the first replica pulls the ~12 GB image, then prefetches ~28 GB for `…-prefetch6-klein` or ~18 GB for `…-prefetch6-snofs`), point the caller at the group's gateway DNS, keep progress local, scale to 0 when done.
+### 2.3 Create and scale
+
+Create a prepaid org in the Salad portal, build and push the image (§1), create the group with §2.2's fields, scale replicas 1→N, wait for `/ready` 200 (the first replica pulls the ~12 GB image, then prefetches 28 GB for `…-prefetch6-klein` or 18 GB for `…-prefetch6-snofs`), point the caller at the group's gateway DNS, keep progress local, and scale to 0 when done.
 
 ### 2.4 Risks
 
-- Home GPUs: variable actual VRAM, driver oddities, random disconnects. High
-  priority is still "subject to node disconnection".
-- The image must be self-contained; the first replica pays wall-clock for a huge
-  pull even when Salad does not bill it.
-- 24 GB is tight for Flux-dev but standard; there is no 48 GB Community card.
+Home GPUs have variable actual VRAM, driver oddities and random disconnects; High priority is still subject to node disconnection. The image must be self-contained, and a 24 GB card is tight for Flux-dev but standard: there is no 48 GB Community card.
 
 ---
 
@@ -202,14 +165,9 @@ The gateway is `<group>-<hash>.salad.cloud`, saved to a per-group file
 | Liveness | `GET /health` on port 3000 |
 | Readiness | `GET /ready` on port 3000. 503 until Comfy listens |
 | Run a graph | `POST /prompt` with the Comfy API body (the `prompt_*.json` files) |
-| Result | Wrapper POST `/prompt` returns `images[]`. Native Comfy 8188 returns a `prompt_id`. GET `/history/<prompt_id>` then `/view` is the fallback when `images[]` is empty |
+| Result | Wrapper `POST /prompt` returns `images[]`. Native Comfy 8188 returns a `prompt_id`. GET `/history/<prompt_id>` then `/view` is the fallback when `images[]` is empty |
 
-`salad_gen.py`, `salad_probe_klein.py` and `salad_age_review.py` are the working
-callers. `salad_probe_ages.py`, `salad_probe_sdxl.py` and `salad_catalog_faces.py`
-need the Eldermark checkout (`paperdoll_mask` / `regen_faces`) and fail on import
-here, as the root README records. Studio's **Ready** badge and Generate's
-`/ready` pre-probe use the same path, and Studio skips the `/ready` probe while a
-replica is still pulling so a stale 200 cannot be trusted.
+The working callers are `salad_gen.py`, `salad_probe_klein.py` and `salad_age_review.py`. `salad_probe_ages.py`, `salad_probe_sdxl.py` and `salad_catalog_faces.py` need the Eldermark checkout (`paperdoll_mask` / `regen_faces`) and fail on import here. Studio's **Ready** badge and Generate's `/ready` pre-probe use the same path, and Studio skips the `/ready` probe while a replica is still pulling so a stale 200 cannot be trusted.
 
 Do not POST a Klein graph at the Flux.1 group. It OOMs or 524s on 24 GB.
 
@@ -239,8 +197,6 @@ Auth is the `Salad-Api-Key` header on every call. The PATCH body carries
 `container.resources.gpu_classes` while preserving the existing `cpu`, `memory`,
 `shm_size` and `storage_amount`.
 
-Practical notes:
-
 - A group's `startup_probe` / `readiness_probe` are readable and patchable;
   `explain_probe()` turns them into the "Salad waits {delay}s, then GET {path}"
   explanation the Studio shows.
@@ -250,32 +206,19 @@ Practical notes:
   down rather than still starting.
 - Never log `networking.auth` or the container's `environment_variables`.
 
----
-
 Files named above are the map; `salad_klein/README.md` is the build short form, [doc 15](15-salad-flux2-klein-group.md) the live ops, [doc 21](21-klein-image-handoff.md) the Klein entry point.
 
 ## 5. Vast.ai instances
 
-*Consolidated from `docs/workflow/24-vast-ai-image-deployment.md` on 2026-10-17. Subsection numbers below are the source document's own.*
+*Consolidated from `docs/workflow/24-vast-ai-image-deployment.md` on 2026-10-17.*
 
-How to rent a vast.ai instance, run the same container image the Salad group
-runs, and point the app at it. This is the operational companion to the
-Salad-group sections above.
+Rent the same container image the Salad group runs and point the app at it. The image is portable because it is an ordinary Docker image: it starts Comfy on `0.0.0.0:8188` and the Salad API wrapper on `3000`, and nothing in it asks Salad for anything at boot. The group policy, probes, replica counts, Reallocate and portal fields stay behind.
 
-> **Status:** written 2026-10-17 from a live run of
-> `docker.io/vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-klein` on
-> three vast.ai hosts. Numbers marked **measured** come from that run. The
-> `--runtype` semantics come from the vast.ai CLI documentation, not from a
-> controlled test.
-
-The image is portable because it is an ordinary Docker image. It starts Comfy on
-`0.0.0.0:8188` and the Salad API wrapper on `3000`, and nothing in it asks Salad
-for anything at boot. The Salad-only features stay behind: the group policy,
-the probes, replica counts, Reallocate and the portal fields.
+> **Status:** written 2026-10-17 from a live run of `docker.io/vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-klein` on three vast.ai hosts. Numbers marked **measured** come from that run. The `--runtype` semantics come from the vast.ai CLI documentation, not from a controlled test.
 
 ---
 
-### 1. What the image needs
+### 5.1 What the image needs
 
 | Requirement | Value | Why |
 | --- | --- | --- |
@@ -295,30 +238,35 @@ The tokens go in the instance environment:
 
 ---
 
-### 2. Pick an offer
+### 5.2 Pick an offer
 
 Filter the offer list before you rent:
 
 ```
-1 GPU, on-demand, rentable
-gpu_name in RTX 4090, RTX 5090, RTX A6000, A100
+1 GPU, on-demand, rentable, verified, rented=false
+gpu_name in RTX 5090, RTX 4090 (the app's default; add RTX A6000 or A100 PCIE)
+gpu_ram >= 24000
 cuda_max_good >= 13.0
 reliability2 >= 0.95
 disk_space >= 140
 inet_down >= 200
+inet_up >= 100
+dph_total <= 0.50
+limit 100
 ```
 
-Sort by `dph_total`. An RTX 4090 with 24 GB cost **$0.363/hr measured** on
-2026-10-17.
+Sort by `dlperf_per_dphtotal`, not by price alone. Measured on 2026-10-17: an
+RTX 5090 at $0.402/hr with `dlperf` 199 buys 495 Perf/$, while an RTX 4090 at
+$0.376/hr with `dlperf` 97 buys 258 Perf/$. Price alone hides that difference.
 
 The offer list does not say which container runtime the host uses. Some hosts run
 GPU containers under gvisor, and gvisor cannot inject the GPU device. The failure
 appears at container create, within a minute, and it is not the image's fault.
-Destroy that instance and pick another host. Section 8 has the exact message.
+Destroy that instance and pick another host. §5.9 has the exact message.
 
 ---
 
-### 3. Create the instance
+### 5.3 Create the instance
 
 The app's Deploy pane prints this line:
 
@@ -340,51 +288,62 @@ Add three options for a vast.ai host:
 - Nothing else. No `--onstart-cmd`: the entrypoint runs the prefetch and then
   starts the API.
 
-The image tags bake a unet set. Override it with `-e KLEIN_UNET_SET=...` when you
-want a shorter boot:
-
-| Tag | Baked set | Files downloaded |
-| --- | --- | --- |
-| `...-prefetch6-klein` | `base,distilled` | base 9.57 GB, distilled 9.43 GB, encoder 8.66 GB, VAE 0.34 GB |
-| `...-prefetch6-snofs` | `snofs` | SNOFS 9.08 GB, encoder 8.66 GB, VAE 0.34 GB |
-
-The `-e KLEIN_UNET_SET=base` override drops the distilled unet and roughly a
-third of the download.
+The image tags bake a unet set (the sizes are in §1.2). Override it with `-e KLEIN_UNET_SET=base` to
+drop the distilled unet and roughly a third of the download.
 
 ---
 
-### Replacing a destroyed instance
+### 5.4 Replacing a destroyed instance
 
 The app can rent a replacement when the profile's instance is gone. It is
-opt-in, because it spends money: the Config page's **Vast.ai instances** section
-carries **Create a replacement automatically when Generate finds it gone**, plus
-the four search floors.
+opt-in, because it spends money: the Config page's **Vast.ai** sub-tab carries
+**Create a replacement automatically when Generate finds it gone**. The same
+**Rent a machine** criteria drive the automatic check, **Find offers**, and
+**Create instance on selected offer**, so the manual and automatic paths cannot
+disagree.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
+| GPU models | `RTX 5090, RTX 4090` | The `gpu_name` whitelist, in preference order. An empty box restores these two; it never means "any GPU" |
 | Max $/hr | `0.50` | The offer's `dph_total` ceiling |
 | Min down Mbps | `200` | The offer's `inet_down` floor |
 | Min up Mbps | `100` | The offer's `inet_up` floor |
 | CUDA at least | `13.0` | The offer's `cuda_max_good` floor |
+| Reliability at least | `0.95` | The offer's `reliability2` floor; a record that omits it fails |
 
-Two more floors are fixed: a 24 GB card (`gpu_ram`) and 140 GB of free disk
-(`disk_space`), the image's own requirements. The search is
-`POST /api/v0/bundles/` with those filters, ordered by `dph_total` ascending, so
-the cheapest offer that clears every floor wins; ties go to the faster download.
-The create is `PUT /api/v0/asks/{offer}/` with `disk: 100`, `runtype: "args"`,
-the selected row's image, and the `-p 3000:3000 -p 8188:8188` flags plus
-`HF_TOKEN` and `CIVITAI_API_TOKEN` when those tokens are saved.
+The GPU default matters: the measured unfiltered search's cheapest 24 GB offer
+is a Tesla P40 at $0.108/hr, and it cannot run the image's CUDA 13 stack. Two
+more floors are fixed: a 24 GB card (`gpu_ram`) and 140 GB of free disk
+(`disk_space`), the image's own requirements.
 
-When Generate runs in vast mode with the option on, the app lists the account.
-An instance that is still listed is used as-is. A missing one is replaced, the
-new row becomes the active target, and the press reports the new instance
-instead of POSTing: the first boot still has to pull the image and prefetch the
-weights, so Generate again when `/ready` is green. **Replace if destroyed now**
-runs the same check and creation without waiting for a press.
+The search is `POST /api/v0/bundles/` with those filters, ordered by
+`dlperf_per_dphtotal` descending. The app then ranks by images per dollar
+(`dlperf_per_dphtotal`, or `dlperf / dph_total` when the API omits it), then the
+GPU preference order, then price. The cheapest offer is therefore not the pick.
+A manual rent issues exactly one `PUT /api/v0/asks/{offer}/` (with `disk: 100`, `runtype: "args"`,
+the selected row's image, and the `-p 3000:3000 -p 8188:8188` flags plus the saved tokens) and
+never falls through to another; the automatic path keeps a short fallback queue.
+
+When Generate runs in vast mode with the option on, the app lists the account. A listed instance is used as-is; a missing one is replaced, and the press reports the new instance instead of POSTing because the first boot still has to pull and prefetch, so Generate again when `/ready` is green. **Replace if destroyed now** runs the same check without waiting for a press; it acts on the row selected in the Instances table, so a destroyed row can be replaced too.
+
+A row is an instance, not an endpoint. **Fetch instances from Vast.ai** reads
+the unfiltered `/api/v1/instances/` records and reconciles the stored list:
+
+- a record that maps no ComfyUI port is still a row, showing its real state
+  (`loading`, `stopped`, …) with `#<id>` in the Address column;
+- an id-bearing row absent from a complete listing becomes `destroyed`, keeps
+  its id and image, and loses its address; a truncated listing destroys nothing;
+- the endpoint-less row a create left behind becomes the active target when its
+  ComfyUI port finally maps, unless another instance is already active; a
+  vast-mode profile that held a gone address is repointed at the new active
+  endpoint or cleared.
+
+When the rent returns without a mapped port, the contract appears as a `creating`
+row. There is no separate `pending` slot.
 
 ---
 
-### 4. Wait for the first boot
+### 5.5 Wait for the first boot
 
 The order is image pull, then the prefetch, then Comfy. Nothing listens until the
 last file lands. A **measured** boot of the klein set took 36 minutes on a
@@ -398,55 +357,27 @@ prefetch base 42% 4020/9570 MB 18.4 MB/s
 prefetch base done 9.57 GB in 8.7 min
 ```
 
-`Trying to resume download...` is normal. Hugging Face retries a stalled transfer
-from the partial file, up to five times. If the fifth fails, the prefetch prints
-`prefetch <name> FAILED`, then `prefetch aborted, missing ... (will not start
-Comfy)`, and the container exits. Raise the two timeouts above on a host that
-stalls.
+`Trying to resume download...` is normal. Hugging Face retries a stalled transfer from the partial file, up to five times. If the fifth fails, the prefetch prints `prefetch <name> FAILED`, then `prefetch aborted, missing ... (will not start Comfy)`, and the container exits. Raise the two timeouts above on a host that stalls.
 
-The vast.ai log API returned an empty file for these instances in every request
-during the measured run, both the container log and the daemon log. Read the log
-pane in the vast.ai console, or use the endpoints below.
+The vast.ai log API returned an empty file for these instances in every request during the measured run, both the container log and the daemon log. Read the log pane in the vast.ai console, or use the endpoints in §5.6.
 
 ---
 
-### 5. Check the instance
+### 5.6 Check the instance
 
-The wrapper answers on the mapped host port for container `3000`, and Comfy on
-the port for `8188`:
-
-```
-curl http://<host>:<wrapper-port>/health     # {"version":"1.19.2","status":"healthy"}
-curl http://<host>:<wrapper-port>/ready      # {"version":"1.19.2","status":"ready"}
-curl http://<host>:<comfy-port>/system_stats # {"system": {...}}
-curl http://<host>:<comfy-port>/queue        # {"queue_running": [], "queue_pending": []}
-```
-
-`/ready` on the wrapper is the single check that the whole image is up. It waits
-for Comfy inside the container, so it does not answer before Comfy does.
+The wrapper answers `GET /health` and `GET /ready` on the mapped host port for container `3000` (a ready response is `{"version":"1.19.2","status":"ready"}`), and Comfy answers `/system_stats` and `/queue` on the mapped `8188` port. `/ready` on the wrapper is the single check that the whole image is up; it waits for Comfy, so it does not answer first.
 
 ---
 
-### 6. Wire it into the app
+### 5.7 Wire it into the app
 
-1. On **Config**, **Vast.ai**, add the instance address, or press **Fetch
-   instances from Vast.ai** with the key saved on **Tokens**.
-2. Select the row. The dot in the **Use** column marks the active instance.
-3. On **Config**, **Profile**, set the profile's target to **Vast.ai instance**
-   and the URL to the instance's endpoint, then press **Save profile**. The
-   profile now names its hosting: a Salad gateway or a vast.ai instance.
-   **Use the selected instance** fills the URL from the active row in the
-   vast.ai list.
-4. Press **Generate**. The request is queued on the profile's line, like a Salad
-   render.
+On **Config**, **Vast.ai**, add the address or press **Fetch instances from Vast.ai**, then select the row (the dot in **Use** marks it). On **Config**, **Profile**, set the target to **Vast.ai instance**, set the URL, and press **Save profile**; **Use the selected instance** fills it from the active row. Press **Generate** and the request queues on the profile's line.
 
-The app's fetch derives the Comfy port (`8188`) when it builds a row. For graphs
-that carry Civitai LoRA URLs, edit the address to the wrapper port. Section 7
-explains why.
+The app derives the endpoint from the mapped ports. It prefers the wrapper on 3000, which resolves Civitai LoRA URLs, and falls back to Comfy on 8188 or 18188, or to the instance's only other non-ssh port. §5.8 explains why.
 
 ---
 
-### 7. Pick the port by what the graph needs
+### 5.8 Pick the port by what the graph needs
 
 | Port | Process | Civitai LoRA URLs | Response | Speed |
 | --- | --- | --- | --- | --- |
@@ -460,32 +391,30 @@ LoRA cached. Comfy on `8188` rejected the same graph with
 LoRA node removed, Comfy returned a 2.39 MB PNG in 88 seconds.
 
 The wrapper is the right endpoint for this app's graphs, because the profiles
-carry Civitai LoRA URLs. Keep the row on the wrapper port.
+carry Civitai LoRA URLs. Keep the row on the wrapper port. `instance_endpoint`
+prefers `3000` whenever the instance maps it, so a Salad image's row points at
+the wrapper even when Comfy's `8188` is also mapped. A 200 answer with no plate
+is reported by name, not retried.
 
 ---
 
-### 8. Failure modes
+### 5.9 Failure modes
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | `unresolvable CDI devices .../gpu=1: unknown` at container create | That host's gvisor setup cannot inject the GPU device | Destroy the instance and rent from another host. Not the image |
 | Comfy exits at startup and the log names an old CUDA driver | Host `cuda_max_good` below 13.0, usually a 535 driver | Pick a host with a 580 or newer driver |
-| Both ports closed for a long time | The prefetch is still downloading | Check the set size in section 3. Raise the HF timeouts on the next instance |
+| Both ports closed for a long time | The prefetch is still downloading | Check the set size in §1.2. Raise the HF timeouts on the next instance |
 | `prefetch <name> FAILED`, then `prefetch aborted, missing` | A download failed, usually the token, the gated-model terms, or the link | Check `HF_TOKEN` and accept the model terms on Hugging Face. Recreate with longer timeouts |
 | `401` or `403` from `huggingface.co` | The token lacks access, or the account has not accepted the gated terms | Fix the token on **Tokens**, or accept the terms |
 | `value_not_in_list ... lora_name: 'https://...'` | The graph reached plain ComfyUI on `8188` | Point the row at the wrapper port, or bake the LoRA into the image |
-| The vast.ai log pane is empty | The log API returned an empty file for these instances during the measured run | Use the endpoints in section 5 |
+| The vast.ai log pane is empty | The log API returned an empty file for these instances during the measured run | Use the endpoints in §5.6 |
 
-Two of these deserve a note. The gvisor error is host-specific: host 53447 also
-listed `CONTAINER_RUNTIME=gvisor` in its environment and created the container
-without the error, so the runtime name alone does not predict the failure. The
-CUDA failure was diagnosed from the host record (`cuda_max_good` 12.2 against the
-image's 13.0 runtime), because the log API returned nothing; the user's console
-log named an old CUDA driver, which matches.
+Two of these deserve a note. The gvisor error is host-specific: host 53447 also listed `CONTAINER_RUNTIME=gvisor` and created the container without the error, so the runtime name alone does not predict the failure. The CUDA failure was diagnosed from the host record (`cuda_max_good` 12.2 against the image's 13.0 runtime); the user's console log named an old CUDA driver, which matches.
 
 ---
 
-### 9. Cost and shutdown
+### 5.10 Cost and shutdown
 
 A 4090 ran at **$0.363/hr measured**. The app does not stop a vast.ai instance.
 Destroy it when you finish, from the vast.ai console or with
@@ -493,21 +422,19 @@ Destroy it when you finish, from the vast.ai console or with
 
 ---
 
-### 10. What was measured, and where
+### 5.11 What was measured, and where
 
 The live run on 2026-10-17 used three hosts:
 
-- Host 28421, CUDA 13.1, RTX 4090: container create failed on the gvisor CDI
-  error. The instance never started.
-- Host 53447, CUDA 12.2, RTX 4090: the container ran but Comfy never served. The
-  CUDA driver was older than the image's runtime.
-- Host 134629, CUDA 13.0, RTX 4090: the container served. Both endpoints
-  answered, and both render paths produced plates.
+| Host | CUDA | Result |
+| --- | --- | --- |
+| 28421 | 13.1, RTX 4090 | Container create failed on the gvisor CDI error. The instance never started |
+| 53447 | 12.2, RTX 4090 | The container ran but Comfy never served. The CUDA driver was older than the image's runtime |
+| 134629 | 13.0, RTX 4090 | The container served. Both endpoints answered, and both render paths produced plates |
 
-The set sizes are the Hugging Face file sizes. The list of files comes from
-`salad_klein/prefetch.py`. The deploy line comes from
-`salad_studio/image_deploy.py` (`vast_create_command`). The tags and their baked
-sets come from `salad_studio/studio-metadata.json`.
-## 6. Sources, with dates
+The set sizes are the Hugging Face file sizes from `salad_klein/prefetch.py`, and the deploy line
+comes from `salad_studio/image_deploy.py` (`vast_create_command`).
+
+## Appendix: sources, with dates
 
 Pricing (4090 High **$0.330** / Lowest **$0.160**; 5090 High **$0.500**), checked 2026-09-16: <https://blog.salad.com/saladcloud-price-changes-september-2026/> + <https://salad.com/pricing>. Product shape, API base, org/project, checked 2026-09-24: <https://docs.salad.com/container-engine/reference/recipes/comfyui> + `salad_status.py`. ToS (last updated 2024-12-09) and chef workload preferences, checked 2026-09-16: <https://salad.com/terms/saladcloud>, <https://support.salad.com/guides/getting-jobs/workload-preferences/>. Portal field values and probe timings, checked 2026-09-23: this repo's doc 15 "Live groups" and "What you will run".

@@ -60,7 +60,7 @@ any surface names the key: False
 
 ### 3. `Delete profile` asks nothing and reports a deletion that did not happen (High)
 
-**Artifact.** `salad_studio/app.py:4853-4872`.
+**Artifacts.** `salad_studio/app.py:4853-4872`.
 
 **Wrong.** Two defects in one handler. It deletes the saved profile and switches the active one on a single click, with no dialog, no undo, and no status line before the fact. And `self.status.set(f"Deleted {name}")` runs whether or not anything was deleted.
 
@@ -281,7 +281,7 @@ log tail                                : ['[OK] imported Civitai paste  13 node
 
 ### 12. `salad_probe_ages.py` exits 0 when every plate failed (Medium)
 
-**Artifact.** `salad_probe_ages.py:146` (`return 0`), against `salad_probe_klein.py:428` (`return 1 if fails else 0`) and `salad_probe_sdxl.py:174` (`return 3`).
+**Artifacts.** `salad_probe_ages.py:146` (`return 0`), against `salad_probe_klein.py:428` (`return 1 if fails else 0`) and `salad_probe_sdxl.py:174` (`return 3`).
 
 **Wrong.** `main()` prints each job's result and returns 0 whatever happened, so a run where all 26 plates failed reports success.
 
@@ -325,7 +325,7 @@ the shipped file: node 62 Flux2Scheduler steps=4
 
 ### 14. `Delete` on the Prompt History page asks nothing and says nothing (Medium)
 
-**Artifact.** `salad_studio/app.py:3674-3681`, the button at `:3585`.
+**Artifacts.** `salad_studio/app.py:3674-3681`, the button at `:3585`.
 
 **Wrong.** The handler removes a stored prompt and its thumbnail with no confirmation and without writing the status line, while the Catalog's Delete and the profile Delete both call `askyesno`.
 
@@ -585,7 +585,7 @@ At 1024×720 the Catalog's **Graph** column is entirely off-screen. The columns 
 
 ### 26. `generator.wait_gateway_ready`'s `/ready` failure message can never show (Low)
 
-**Artifact.** `salad_studio/generator.py:180-185` (the trailing block), against the in-loop raise at `:179`.
+**Artifacts.** `salad_studio/generator.py:180-185` (the trailing block), against the in-loop raise at `:179`.
 
 **Wrong.** The loop over `_READY_TRIES` ends every final iteration by returning or raising, so the block after it never runs.
 
@@ -611,7 +611,7 @@ At 1024×720 the Catalog's **Graph** column is entirely off-screen. The columns 
 
 ### 27. `generator._probe_url`'s "no probe worked" return can never show (Low)
 
-**Artifact.** `salad_studio/generator.py:391` (`return 0, "no probe worked"`), inside `_probe_url` (366-391).
+**Artifacts.** `salad_studio/generator.py:391` (`return 0, "no probe worked"`), inside `_probe_url` (366-391).
 
 **Wrong.** The loop tries `HEAD` then `GET`; the only `continue` is under `method == "HEAD"`, so the `GET` pass always returns and the trailing return is unreachable.
 
@@ -627,7 +627,7 @@ At 1024×720 the Catalog's **Graph** column is entirely off-screen. The columns 
 
 ### 28. `salad_queue._run`'s "gave up after N attempts" tail can never show (Low)
 
-**Artifact.** `salad_studio/salad_queue.py:904` (`job.reason = f"gave up after {self.max_attempts} attempts"`), inside `_run` (862-906).
+**Artifacts.** `salad_studio/salad_queue.py:904` (`job.reason = f"gave up after {self.max_attempts} attempts"`), inside `_run` (862-906).
 
 **Wrong.** `next_action` returns `RETRY` only while `attempt < max_attempts`, so the final iteration takes `ACCEPT` or `FAIL`, both of which return before the tail.
 
@@ -643,7 +643,7 @@ At 1024×720 the Catalog's **Graph** column is entirely off-screen. The columns 
 
 ### 29. `ai_helper._collect`'s trailing return can never show (Low)
 
-**Artifact.** `salad_studio/ai_helper.py:743` (`return text, attempts, info`), inside `_collect` (697-743).
+**Artifacts.** `salad_studio/ai_helper.py:743` (`return text, attempts, info`), inside `_collect` (697-743).
 
 **Wrong.** The loop over `range(attempts + 1)` raises on its last round, so the trailing return is unreachable.
 

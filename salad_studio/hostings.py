@@ -52,7 +52,10 @@ class VastAdapter:
         row = self._app._vast_active()
         if row is None:
             return "", "No vast.ai instance is selected."
-        return str(row.get("endpoint") or ""), ""
+        endpoint = str(row.get("endpoint") or "")
+        if not endpoint:
+            return "", "The selected vast.ai instance has no endpoint yet."
+        return endpoint, ""
 
     def generate(self, payload: dict, profile: Any) -> None:
         self._app._on_generate_vast(payload, profile)

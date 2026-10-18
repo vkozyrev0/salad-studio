@@ -320,7 +320,7 @@ the root [`README.md`](../README.md) (Configuration, Known limitations).
 Run the commands separately:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1245 tests, ~15-30 min
+python -m unittest discover -s tests -p "test_*.py"    # 1242 tests, ~15-30 min
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```

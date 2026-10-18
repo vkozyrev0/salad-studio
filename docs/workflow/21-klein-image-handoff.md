@@ -10,8 +10,8 @@ questions, and where each load-bearing claim came from.
 **Audience:** a reader who has never seen this work and needs to continue it
 without re-deriving it.
 
-**What this supersedes.** Three older statements are now wrong and have been
-corrected in place, each pointing here:
+**What this supersedes.** Three older statements were wrong and were corrected
+in place, each pointing here:
 
 | Site | Was | Now |
 | --- | --- | --- |
@@ -55,9 +55,7 @@ user's own verdict words are in `salad_klein/prompt_ledger.json`
 5,049-char sectioned prompt; that stack has **no human verdict in the ledger**
 and is superseded for the record. See §4, the `Stripping the LoRA stack` row.
 
-### The prompt text
-
-The text is canonical in `salad_klein/prompt_ledger.json` (`verdicts[0]`, id `snofs-missionary-v1`)
+The prompt text is canonical in `salad_klein/prompt_ledger.json` (`verdicts[0]`, id `snofs-missionary-v1`)
 and copied into [`../../salad_klein/prompt_catalog.json`](../../salad_klein/prompt_catalog.json);
 it is not reproduced here. The catalog is machine-checked against the recipe files it quotes (§7).
 
@@ -123,11 +121,7 @@ the Logs tab for the `Routed to profile` line.
 
 ## 3. What to do
 
-The first three rules — batch seeds, a human judges, record the verdict — are §9, its §5, with the ledger mechanics in §9, its §7. Rules 4–8 — state the act directly, name the canonical position, give both bodies a specific posture, carry the style block, keep the negative short and style-only — are §9, its §3, with their evidence.
-
-9. **Keep `_meta` if the node has one.** The Studio stamps the block when it writes a recipe. The shipped recipes carry none. A hand-built node with a bare Civitai URL and no `_meta` is classified foreign. See §5.
-10. **Watch the preconditions.** One unet family per group; routing correct;
-    replica actually Ready. Without them the prompt question is moot.
+The prompt rules are §9, its §3, with their evidence; the workflow is §9, its §5. Keep `_meta` if the node has one (§5). Watch the preconditions: one unet family per group (§2), correct routing, and a replica that is actually Ready. Without them the prompt question is moot.
 
 ---
 
@@ -189,16 +183,10 @@ Measured dead ends. Do not retry these.
 
 **Quality-level**
 
-- **The seed dominates.** ~2 in 7. The same prompt at another seed failed
-  differently. Selection beats iteration.
-- **Two similar-skinned bodies blend.** This is the "fused bodies" failure, and
-  it is why SNOFS v1.4 was trained against depth.
-- **Shot scale correlates with failure.** Figures at 40–53 % of frame rendered;
-  25–30 % failed. Pull the camera back.
-- **4 steps is the anatomy-risky end of a named axis.** See §6 and §8. Two
-  independent external sources name 4 steps as the regime where two-person
-  interactions produce extra limbs. Our verified plate is a 4-step render, and it
-  is one of 7 seeds.
+- **The seed dominates.** ~2 in 7. The same prompt at another seed failed differently. Selection beats iteration.
+- **Two similar-skinned bodies blend.** This is the "fused bodies" failure, and it is why SNOFS v1.4 was trained against depth.
+- **Shot scale correlates with failure.** Figures at 40–53 % of frame rendered; 25–30 % failed. Pull the camera back.
+- **4 steps is the anatomy-risky end of a named axis.** See §6 and §8. Two independent external sources name 4 steps as the regime where two-person interactions produce extra limbs. Our verified plate is a 4-step render, and it is one of 7 seeds.
 
 ---
 
@@ -215,24 +203,14 @@ Documented, **not** resolved. Do not assume an answer.
 2. **bf16 vs fp8.** The SNOFS author is quoted as recommending bf16 for fingers;
    an independent thread suspects fp8 and reports 40 steps also failing. **The
    author's quote could not be re-verified on 2026-09-23** (see §8). We run fp8.
-3. **v1.4 vs our v1.2.** v1.4 exists (bf16 and fp8) and adds depth training.
-   Nothing has A/B'd it here.
-4. **Step count / sampler / CFG above 1.** External evidence says more steps,
-   `res 2s` and CFG slightly above 1 each reduce anatomy errors on this model
-   line, and that 4 steps is where two-person interactions break. Our verified
-   recipe sits at 4 / euler / 1.0. Untested here.
+3. **v1.4 vs our v1.2.** v1.4 exists (bf16 and fp8) and adds depth training. Nothing has A/B'd it here.
+4. **Step count / sampler / CFG above 1.** External evidence says more steps, `res 2s` and CFG slightly above 1 each reduce anatomy errors on this model line, and that 4 steps is where two-person interactions break. Our verified recipe sits at 4 / euler / 1.0. Untested here.
 5. **NAG (Normalized Attention Guidance).** Unverified on our image.
-6. **The position matrix.** Only missionary has a human verdict. Doggystyle,
-   cowgirl and blowjob are candidate prompts with no plate judged.
-7. **An automatic anatomy QC gate.** A prototype scored 25 % TPR / 33 % FPR,
-   measured negative. A person on a contact sheet is currently better.
+6. **The position matrix.** Only missionary has a human verdict. Doggystyle, cowgirl and blowjob are candidate prompts with no plate judged.
+7. **An automatic anatomy QC gate.** A prototype scored 25 % TPR / 33 % FPR, measured negative. A person on a contact sheet is currently better.
 8. **The SDXL migration question.** See doc 22 §10; premise unverified.
-9. **Does the `comfyui-api` hang depend on batch size?** Observed after ~8
-   sequential renders; not characterised.
-10. **Can any diffusion configuration give anatomically correct two-body interlock *every time*?**
-    As of 2026-09-23, no: two independent passes found no published measured rate from either family,
-    and the only route with correctness *by construction* is 3D (DAZ → Blender geograft weld, or an
-    engine with hand-keyed penetration) — Krea 2 / Flux.2-Klein masking refuses SDXL adapters. [22](22-two-body-correctness-research.md).
+9. **Does the `comfyui-api` hang depend on batch size?** Observed after ~8 sequential renders; not characterised.
+10. **Can any diffusion configuration give anatomically correct two-body interlock *every time*?** As of 2026-09-23, no: two independent passes found no published measured rate from either family, and the only route with correctness *by construction* is 3D (DAZ → Blender geograft weld, or an engine with hand-keyed penetration). Krea 2 / Flux.2-Klein masking refuses SDXL adapters. [22](22-two-body-correctness-research.md).
 
 ---
 
@@ -268,11 +246,7 @@ concatenation.
 | diffusers LoKr bug: issue `#13261` **open**, created 2026-03-12; first fix PR `#13997` **closed, merged=false**; umbrella PR `#14163` **open** | GitHub API | **MATCH** |
 | the SNOFS LoRA's Klein v1.4 build is version `2960556` | `https://civitai.com/api/v1/models/1972981` | **MATCH** |
 
-The corrections listed here were applied at their source: doc 22 §9 (its §2.1/§9) and §9 (its §3).
-
-**New since the docs were written.** The SNOFS **merged** model now publishes three **Krea 2** versions (`3333138` Turbo v1.4,
-`3333068` Raw v1.4, `3226711` Raw v1.3D) alongside the Klein ones, and the SNOFS **LoRA** model has six Krea 2 versions: Klein
-is no longer the newest line on either page, and the merged model's own API description mentions bf16 / int8-convrot variants.
+The corrections listed here were applied at their source: doc 22 §9 (its §2.1/§9) and §9 (its §3). **New since the docs were written:** the SNOFS **merged** model now publishes three **Krea 2** versions (`3333138` Turbo v1.4, `3333068` Raw v1.4, `3226711` Raw v1.3D) alongside the Klein ones, and the SNOFS **LoRA** model has six Krea 2 versions, so Klein is no longer the newest line on either page.
 
 **Not re-verified, treat as unconfirmed:**
 
@@ -282,174 +256,55 @@ is no longer the newest line on either page, and the merged model's own API desc
 | "3 arms or other horrors images … increasing to eight steps seems to help" | doc 22 §9, its §2.2, cited to the HF fp8 discussions | The thread **is** real, discussion **#2, "4steps gives many 3 arms or other horrors images"**, opened 2026-01-16, open, but the wording differs and it is **about 4 steps**, not fp8: *"This fp8 version + default Comfyui workflow gives 3 arms or other horrors images many time. Giving 8steps seems to help…"*, answered by a report that **40 steps also fails** and that a q8 GGUF is better. Re-verified with that correction. |
 | NAG, MatchingPose, RefControl, the `res_2s` class name, Male Anatomy's PromptHero host | doc 22 §9 / doc 21 §9 | Not re-fetched. Anything §9 marks *"verify in your build"* has **not** been checked against our image (`api1.19.2`). |
 
-Corroboration for §6 item 4: <https://myaiforce.com/flux-2-klein-anatomy-horror/> (2026-09-23, single-author blog, no published methodology)
-names **4 steps** as the risky end for **two-person interactions**; one blog is not a controlled test.
+Corroboration for §6 item 4: <https://myaiforce.com/flux-2-klein-anatomy-horror/> (2026-09-23, single-author blog, no published methodology) names **4 steps** as the risky end for **two-person interactions**; one blog is not a controlled test.
 
 ## 9. Two-body prompt playbook
 
 *Consolidated from `docs/workflow/19-two-body-prompt-playbook.md` on 2026-10-17. Subsection numbers below are the source document's own.*
 
-**Started 2026-09-22.** Companion to doc 22 §9 (why Klein failed for two-body acts) and doc 22 §10 (the
-SDXL question). The machine-readable form is **`salad_klein/prompt_ledger.json`**.
-That file is canonical for the prompt text; this doc explains what the entries have in common.
+**Started 2026-09-22.** Companion to doc 22 §9 (why Klein failed for two-body acts) and doc 22 §10 (the SDXL question). The machine-readable form is **`salad_klein/prompt_ledger.json`**. That file is canonical for the prompt text; this doc explains what the entries have in common.
 
 **Scope:** 18+ adults only, two adults, no minors, nothing illegal.
 
----
-
 ### 1. Why this exists
 
-Everything before tonight produced **zero** acceptable two-body plates, 22 judged, none good, and the cause was misdiagnosed four times
-(LoRA stack, LoRA download, prompt enumeration, prompt length). Two things were actually wrong, and neither was the wording: **three
-unets in one container group thrashed VRAM**, turning 3-second renders into 239–576 s no gateway would wait for (fixed by routing one
-unet family per group, doc 22 §9, its §1.1); and a **template shipped as a prompt** — `prompt_snofs_distilled_v12.json` carried the literal
-`REPLACE_THIS_PROMPT`, so a "successful" 0.9 s render was a picture of that word. With both fixed, renders are **1–4 s** and acceptable
-plates arrive at roughly **2 in 7 seeds**; the work now is **collecting which prompts work and knowing that selection, not wording, is what
-you spend effort on.**
+Before 2026-09-22 the work produced **zero** acceptable two-body plates, 22 judged, none good, and the cause was misdiagnosed four times (LoRA stack, LoRA download, prompt enumeration, prompt length). Two things were wrong, and neither was the wording: **three unets in one container group thrashed VRAM**, turning 3-second renders into 239–576 s no gateway would wait for (fixed by routing one unet family per group, doc 22 §9, its §1.1); and a **template shipped as a prompt**, `prompt_snofs_distilled_v12.json` carried the literal `REPLACE_THIS_PROMPT`, so a "successful" 0.9 s render was a picture of that word. With both fixed, renders are **1–4 s** and acceptable plates arrive at roughly **2 in 7 seeds**. The work now is collecting which prompts work; selection, not wording, is what you spend effort on.
 
 ### 2. The verified configuration
 
-`salad_klein/prompt_snofs_distilled_v12.json` on the **SNOFS group** (`flux2-klein-5090`): the recipe file, the unet / clip / vae, euler at **4** steps and **CFG 1**, 832×1216 batch 1, **no LoRAs**, the 779-char positive and 111-char negative, and the two acceptable seeds (with the five judged bad) are [doc 21 §1](21-klein-image-handoff.md)'s table, which this section used to restate.
-
-#### The replacement, stated explicitly
-
-`prompt_snofs_distilled_v12.json` node **74** previously contained the literal string
-**`REPLACE_THIS_PROMPT`**. So every render of that recipe drew the word, not a scene. Node 74 now
-contains the prompt recorded in `salad_klein/prompt_ledger.json` (`verdicts[0]`), and node **67** (previously empty) holds the negative recorded there. That
-text produced these two user-approved plates:
-
-| plate | seed | user's verdict |
-| --- | --- | --- |
-| `target/snofs_variants/V1_knees/studio_1790112819749.jpg` | `323175253610296` | *"v1_knees is the best, all other are bed"* |
-| `target/snofs_v1_seeds/s882331/studio_1790113204549.jpg` | `610044882331` | *"s882331 is the best; all others are bed"* |
-
-Both are recorded under `replacements` in `prompt_ledger.json`, where the `now` field is copied
-from the recipe so it cannot drift from what was actually run.
-
-The prompt text is canonical in `salad_klein/prompt_ledger.json`, with the machine-checked copy in
-`salad_klein/prompt_catalog.json`.
+`salad_klein/prompt_snofs_distilled_v12.json` on `flux2-klein-5090` is §1's table: euler, **4** steps, **CFG 1**, 832×1216, no LoRAs, the 779-char positive and 111-char negative, and the two acceptable seeds.
 
 ### 3. What leads to a prompt like this, each rule and the evidence for it
 
-**State the act directly.** `INTIMACY: penis inside her vagina, his hips against hers`. The plate
-audit found **`ACT0`, act not depicted, in 11 of 16** earlier plates. That was the *dominant*
-failure all along, not limbs, and it is a wording problem: nothing in those 5,049-char prompts said
-what the bodies were doing together.
+**State the act directly.** `INTIMACY: penis inside her vagina, his hips against hers`. The plate audit found **`ACT0`, act not depicted, in 11 of 16** earlier plates. That was the *dominant* failure all along, not limbs, and it is a wording problem: nothing in those 5,049-char prompts said what the bodies were doing together.
 
-**Name the canonical position rather than describing geometry.** `missionary position, clean side
-view in profile`. The model has these compositions; prose geometry does not substitute. SNOFS's
-own model page lists the position terms that work (`missionary` / `doggystyle` / `cowgirl` /
-`prone` / `reverse cowgirl` / `spooning position`), which is why naming the position is worth doing.
+**Name the canonical position rather than describing geometry.** `missionary position, clean side view in profile`. The model has these compositions; prose geometry does not substitute. SNOFS's own model page lists the position terms that work (`missionary` / `doggystyle` / `cowgirl` / `prone` / `reverse cowgirl` / `spooning position`). Do not repeat the old unsourced claim that community reports rate the positions; that claim had no source and the Civitai comments endpoints refuse an unauthenticated fetch.
 
-> **Corrected 2026-09-23.** This paragraph previously claimed that "community reports on this
-> model line rate the positions very differently (**missionary worst, doggystyle best-rendered**)".
-> That claim had **no source**: it is not in either SNOFS model description, and the Civitai
-> comments endpoints are refused to an unauthenticated fetch. Do not cite it. The verifiable
-> statement is only that the SNOFS page publishes a list of position terms it was trained on.
+**Describe BOTH bodies' limbs, each with a specific posture.** This is where the one measurable prompt win came from. The control described her legs in three clauses and said **nothing** about his; his left leg split at the knee. Adding one clause, *"His knees rest on the mattress between her thighs, his shins flat behind him."*, was judged **"the best"** of five variants at a fixed seed. The posture wording matters, not merely mentioning his legs: *"His legs stretch back behind him along the mattress, knees and shins resting flat, one leg to either side of her hips."* **broke her legs** at both seeds, and stripping both leg descriptions broke her too.
 
-**Describe BOTH bodies' limbs, each with a specific posture.**
-This is where the one measurable prompt win came from. The control described her legs in three
-clauses and said **nothing** about his; his left leg split at the knee. Adding one clause,
-*"His knees rest on the mattress between her thighs, his shins flat behind him."*, was judged
-**"the best"** of five variants at a fixed seed.
+**Keep it short and affirmative, and never enumerate.** No limb counts, no defect words, in either polarity. Caveat: our own plate audit found limb counting in 16/16 plates and the strongest counting language in the *only four that worked*, so this rule is **not** proven to fix anything. Treat it as hygiene, not as the cure.
 
-**But the posture wording matters, not merely "mention his legs."** The first attempt at the same
-idea, *"His legs stretch back behind him along the mattress, knees and shins resting flat, one leg
-to either side of her hips."*, **broke her legs** at both seeds. Stripping both leg descriptions
-broke her too. So: a specific, physically coherent posture per body; not a generic "his legs are
-also there", and not less description.
+**Always carry the style block.** `ArsMJStyle, Impressionism, oil painting on canvas…` was held constant across every good plate; it costs nothing and it is what makes the output the house look.
 
-**Keep it short and affirmative, and never enumerate.** No limb counts, no defect words, in either
-polarity. Caveat on the evidence: our own plate audit found limb counting in 16/16 plates and the
-strongest counting language in the *only four that worked*, so this rule is **not** proven to fix
-anything. It is cheap, it follows the vendor's guidance, and it removes a confound. Treat it as
-hygiene, not as the cure.
+**Negative prompt: short, style-only.** At CFG 1 the negative is mathematically inert (`pred = uncond + cfg·(cond − uncond)` collapses to `pred = cond`), so the old 3,649-char defect list did nothing, while listing `cowgirl, doggy style, rear entry, spooning` as *suppressed*, i.e. forbidding the positions that render. Keep it short; revisit only if CFG is ever raised.
 
-**Always carry the style block.** `ArsMJStyle, Impressionism, oil painting on canvas…` was held
-constant across every good plate; it costs nothing and it is what makes the output the house look.
-
-**Negative prompt: short, style-only.** At CFG 1 the negative is mathematically inert
-(`pred = uncond + cfg·(cond − uncond)` collapses to `pred = cond`), so the old 3,649-char defect
-list did nothing, while listing `cowgirl, doggy style, rear entry, spooning` as *suppressed*,
-i.e. forbidding the positions that render. Keep it short; revisit only if CFG is ever raised.
-
-**Expect the seed to dominate. Roughly 2 in 7.** This is the most important practical finding.
-The winning prompt produced acceptable plates at 2 of 7 seeds, and the *same* prompt at seed
-`455233` failed differently (her leg plus crossed palms). **Do not iterate wording looking for a
-cure.** Batch seeds and select.
-
-Measured dead ends: doc 21 §4 (superset of this table).
+**Expect the seed to dominate. Roughly 2 in 7.** The winning prompt produced acceptable plates at 2 of 7 seeds, and the *same* prompt at seed `455233` failed differently (her leg plus crossed palms). **Do not iterate wording looking for a cure.** Batch seeds and select. Measured dead ends: §4.
 
 ### 5. The workflow
 
-1. **Batch seeds, don't tweak prose.** Generate ~12 seeds on a settled prompt (~3 s each, so ~40 s
-   for a sheet) and review it as a labelled contact sheet.
-2. **A human judges.** This session's own QC work showed why: a VLM asked to check anatomy scored
-   25 % TPR / 33 % FPR and called broken plates clean, and my own reads missed a missing act, a
-   third leg, an extra arm and a wrong leg. At 3 s per plate, a person picking from a sheet is
-   strictly better than any detector we measured.
+1. **Batch seeds, don't tweak prose.** Generate ~12 seeds on a settled prompt (~3 s each, so ~40 s for a sheet) and review it as a labelled contact sheet.
+2. **A human judges.** A VLM asked to check anatomy scored 25 % TPR / 33 % FPR and called broken plates clean; the session's own reads missed a missing act, a third leg, an extra arm and a wrong leg. At 3 s per plate, a person picking from a sheet is strictly better than any detector we measured.
 3. **Record the verdict in the ledger, good or bad.** A prompt is only "good" because a human said so.
-4. **Watch the operational preconditions** (§2 graph, one unet family per group, routing in Studio).
-   Without them plates 524 and the prompt question is moot.
+4. **Watch the operational preconditions** (§2 graph, one unet family per group, routing in Studio). Without them plates 524 and the prompt question is moot.
 
-The `comfyui-api` `/prompt` hang and its recovery: doc 21 §5.
+The `comfyui-api` `/prompt` hang and its recovery: §5.
 
 ### 6. The researched recipe. CANDIDATE, not yet verified
 
-**Source: the user's own research, 2026-09-22** (model cards, gallery metas, MyAIForce, MatchingPose/RefControl, Ashen3's notes, depth-training notes, cinematography framing), recorded here verbatim where the wording matters. **Status: being tested. No plate from this recipe has been judged by a human yet, so it is NOT in the `verdicts` list of `prompt_ledger.json` (it sits under `candidates`).**
+**Source: the user's own research, 2026-09-22.** No plate from this recipe has been judged by a human, so it is not in `prompt_ledger.json`'s `verdicts`; it sits under `candidates`.
 
-#### 6.1 The framework
-
-> Use full sentences, not tags. **Camera → who is who → named position** (`missionary position`,
-> `doggystyle position`, …) → **one limb action each with left/right ownership** → **clinical
-> genitals** (`penis` / `vagina`) → **light/setting**.
-
-**This directly contradicts our verified operating point** (Base 9B at CFG 4–5 / 30–50 steps, not the distilled 4-step cut; doc 21 §6 item 1). Routing: Base is family `klein`, so these plates belong on the **klein** group, not the SNOFS group.
-
-#### 6.2 Settings that work
-
-| Knob | Aim |
-| --- | --- |
-| Model | **Base 9B** |
-| SNOFS | **0.8–1.0** alone; if stacking realism/anatomy ~**0.3–0.5** |
-| Steps | **30–50** (showcase often 50) |
-| CFG | ~**4–5** on Base |
-| Sampler | Euler + Flux2 scheduler; if melt → `res_2s` / `res_multistep` |
-| Res | ~**1.0–1.5 MP** first (e.g. 1024×1536), then upscale |
-| Helpers | Anatomy Fixer **2–3**; Male Anatomy + the word **`penis`** (never slang) |
-
-The candidate template and paste-ready prompts are not reproduced here: the candidate is unverified (doc 21 §6.1) and only missionary has a judged plate (doc 21 §6.6).
-
-#### 6.5 Negatives and don'ts
-
-```
-extra limbs, fused bodies, merged torsos, twisted joints, bad anatomy, malformed hands,
-duplicate limbs, intertwined bodies, body horror
-```
-
-Plus SNOFS quirks: **`goosebumps`** in the negative if close-ups get weird texture (v1.4
-depth-training artifact), and **`kissing`** if cunnilingus drifts.
-
-**Avoid:** distilled 4-step for complex sex; slang-only tags; *intertwined / tangled*; conflicting
-arm verbs; ultra-tight crops; starting above ~2 MP before anatomy locks.
-
-#### 6.6 Three finds worth keeping
-
-- **Lock the pose first.** Mannequin → `matchingpose9b`: fix the pose, then describe sex/clothes in text and *do not re-describe the pose*. Add SNOFS on Base, or as an edit.
-- **Depth training** is in doc 22's anatomy research. **Shot scale** is doc 21 §5's quality-level list.
-
-Stack order: §6.2 above; the same knobs are the open questions in doc 21 §6.
-
-#### 6.8 Comfy recipe cards. Kept outside this repo
-
-The full write-up (21 KB, never added here) is not reproduced: four position cards, an *"if limbs broke"* fallback ladder, a wiring checklist, a ROCm/AMD section, a download table and an explicit uncertainties list. Its "corrections vs Flux.1 habits" table describes the graph we already run — four of its five rows are our plumbing, so **none of this session's four wrong diagnoses was a plumbing error** — and its **one real divergence** is the operating point: **BASE** for complex-sex T2I, distilled for edits/previews (CFG 4.5 vs 1, 40 steps vs 4). Its numbers: steps **40**, CFG **4.5**, SNOFS **0.9** alone (or **0.45** stacking Fixer **2.5** + Male **0.8**), batch 1, Stage-A ≈ 1–1.5 MP then upscale, latent presets missionary/cowgirl `1024×1536` / doggy side `1280×960` / blowjob `1024×1280`; its "limbs broke" cheat sheet: euler → `res_2s` / `res_multistep`, SNOFS ↓ to 0.35–0.5 with Fixer ↑ to 3.0, CFG **4.0** (not 6+), simpler camera, pose lock (MatchingPose or RefControl DWPose), Stage-A at ~1 MP then upscale. Its uncertainties (the official template ships **4B** filenames and the 9B swap is manual; the `res_2s` class name varies by pack; MatchingPose's Mannequin companion HF page appeared renamed; **Male Anatomy's primary host is PromptHero, not Civitai** and is alpha; SNOFS may need `civitai.red` for mature files) are doc 21 §8's, and anything it marks *"verify in your build"* is unchecked against our Salad image (`api1.19.2`).
+The candidate is **Base 9B at 30–50 steps and CFG 4–5**, with SNOFS **0.8–1.0** alone or **0.3–0.5** stacked, Euler + Flux2 scheduler (fall back to `res_2s` / `res_multistep` if it melts), and about **1–1.5 MP** before upscale. This contradicts the verified operating point (§6 item 1). Its full framework, settings, negatives, and Comfy recipe cards are the research record in doc 22 §9; none of it is verified against our image (`api1.19.2`).
 
 ### 7. Adding to this playbook
 
-Append to `prompt_ledger.json`, never overwrite: put the working prompt in a recipe file first and
-let the ledger copy it, so the recorded text cannot drift from what was run. An entry needs the
-graph, the verbatim prompt and negative, the seeds judged, and the **user's own verdict words**.
-Prompts judged bad go in the same ledger. The rejected list is what stops a future session
-retrying a dead end.
-
-An entry I add must say who judged it. If nobody has looked at the plate, it is not an entry.
+Append to `prompt_ledger.json`, never overwrite: put the working prompt in a recipe file first and let the ledger copy it, so the recorded text cannot drift from what was run. An entry needs the graph, the verbatim prompt and negative, the seeds judged, and the **user's own verdict words**. Prompts judged bad go in the same ledger. The rejected list is what stops a future session retrying a dead end. An entry must say who judged it. If nobody has looked at the plate, it is not an entry.

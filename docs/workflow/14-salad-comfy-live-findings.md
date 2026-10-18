@@ -9,7 +9,7 @@
 > file's old "RESEARCH / no pods / live T2I is banana-pro only" banner is
 > **stale** for Salad: a Comfy group is deployed and was used for probes.
 >
-> **Mass catalog freeze** — see §3 for the rules and the stop condition.
+> **Mass catalog freeze**. See §3 for the rules and the stop condition.
 
 Sex in the sim is **18+ only**. Infant/child plates are non-sexual DNA
 portraits. Salad's container does **not** 422 those infant DNA plates

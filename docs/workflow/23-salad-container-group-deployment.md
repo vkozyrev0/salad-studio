@@ -86,7 +86,7 @@ What either image is, inside:
 | Base | `ghcr.io/saladtechnologies/comfyui-api:comfy0.35.0-api1.19.2-torch2.13.0-cuda13.0-runtime` |
 | ComfyUI | `--listen 0.0.0.0 --port 8188`, its own UI and API |
 | Salad wrapper | `comfyui-api` on port **3000**: `/health`, `/ready`, and `POST /prompt` answering `images[]` as base64 JPEG (`convert_output`) |
-| ENTRYPOINT | `python /prefetch.py` — parallel weight download, then `exec ./comfyui-api` |
+| ENTRYPOINT | `python /prefetch.py` runs the parallel weight download, then `exec ./comfyui-api` |
 | Custom nodes | `rgthree-comfy` (Image Comparer, Power Lora Loader) at the pinned commit |
 | Weights | none in any layer: the first boot fetches 18 GB for `snofs` or 28 GB for `klein` |
 | Size | ~12 GB image; a new replica re-downloads, because node storage is ephemeral |

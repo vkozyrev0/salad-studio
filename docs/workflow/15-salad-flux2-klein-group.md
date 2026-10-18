@@ -74,7 +74,7 @@ runs **our** sampler stack ([`salad_studio/README.md`](../../salad_studio/README
 
 ## Two-body plate recipe (SNOFS distilled + anatomy stack)
 
-> **SUPERSEDED 2026-09-23** — the verified operating point is [doc 21 §1](21-klein-image-handoff.md); the recipe, its weights and the prompt-architecture claim below are the record of what was tried.
+> **SUPERSEDED 2026-09-23**. The verified operating point is [doc 21 §1](21-klein-image-handoff.md); the recipe, its weights and the prompt-architecture claim below are the record of what was tried.
 
 `salad_klein/prompt_snofs_distilled_anatomy.json` (euler, 4 steps) and `prompt_snofs_distilled_anatomy_resms.json`
 (res_multistep, 12 steps) are the two-body plates on disk, **18+ only**, adults: unet

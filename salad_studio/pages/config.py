@@ -16,6 +16,14 @@ from salad_studio import flet_theme, flet_widgets as w, image_deploy
 from salad_studio.flet_pump import refresh
 from salad_studio.flet_shell import Page
 
+def image_deploy_entry(page: Any) -> dict[str, Any] | None:
+    """The image entry the Images section has picked, or None."""
+    from salad_studio import image_deploy
+
+    settings = image_deploy.load_settings()
+    return image_deploy.entry_by_ref(image_deploy.entries(None, settings), str(page.image.value or ""))
+
+
 SECTIONS: tuple[tuple[str, str], ...] = (
     ("profile", "Profile"),
     ("images", "Images"),
@@ -178,6 +186,9 @@ class ConfigPage(Page):
             self.host.dialog("Salad Studio", f"Invalid size/steps: {exc}", level="error")
             self.host.note(f"Refused: {exc}", level="error")
             return
+        # The policy is saved with the profile, as the Tk page saved it: the
+        # fields on the Salad group section are this profile's own.
+        p.policy = self.policy_from_fields()
         profiles.upsert(p)
         profiles.set_active(p.name)
         self.win.apply_profile(p)
@@ -578,8 +589,10 @@ class ConfigPage(Page):
         self.vast_doc = vast.load_doc()
         self.vast_rows = [r for r in (vast.clean_row(x) for x in (self.vast_doc.get("instances") or [])) if r]
         active = str(self.vast_doc.get("active") or "")
-        cells = [[str(vast.row_key(r)), vast.row_label(r), str(r.get("endpoint") or ""),
-                  str(r.get("image") or ""), str(r.get("state") or ""), str(r.get("gpu_name") or ""),
+        cells = [[str(vast.row_key(r)), vast.row_label(r),
+                  str(r.get("endpoint") or (f"#{r.get('id')}" if r.get("id") is not None else "")),
+                  str(r.get("image") or ""), str(r.get("state") or ""),
+                  str(r.get("gpu") or r.get("gpu_name") or ""),
                   "*" if str(r.get("endpoint") or "") == active else ""] for r in self.vast_rows]
         self.vast_table_holder.controls = [
             w.table(("Use", "Label", "Address", "Image", "State", "GPU", "Active"),
@@ -756,20 +769,31 @@ class ConfigPage(Page):
         if not offer:
             self.host.note("Refused: select an offer first", level="warn")
             return
-        image = str(getattr(self.image, "value", "") or "")
+        image = str((image_deploy_entry(self) or {}).get("tag")
+                    or getattr(self.image, "value", "") or "")
 
         def go() -> None:
             def work() -> Any:
-                return vast.rent_offer(self.win.services.token("vast"), offer, image=image,
-                                       settings=vast.clean_replace(vast.REPLACE_DEFAULTS))
+                return vast.rent_offer(self.win.services.token("vast"), offer, image=image)
 
             def done(result: Any) -> None:
                 if isinstance(result, Exception):
                     self.host.dialog("Salad Studio", str(result), level="error")
                     return
                 self.vast_doc = vast.load_doc()
+                if isinstance(result, dict) and isinstance(result.get("row"), dict):
+                    row = result["row"]
+                    self.vast_doc, _refusal = vast.add_instance(
+                        self.vast_doc, str(row.get("endpoint") or ""),
+                        label=result.get("label") or f"vast-{result.get('contract')}",
+                        image=result.get("image") or "")
+                    key = vast.row_key(vast.clean_row(row) or row)
+                    if key:
+                        self.vast_doc = vast.set_active(self.vast_doc, key)
+                    vast.save_doc(self.vast_doc)
                 self.show_vast()
-                self.host.note(f"Rented the offer {vast.offer_label(offer)}", level="ok")
+                message = str(result.get("message") or "") if isinstance(result, dict) else ""
+                self.host.note(message or f"Rented the offer {vast.offer_label(offer)}", level="ok")
 
             self.win.services.background(work, done)
 

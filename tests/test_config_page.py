@@ -585,14 +585,16 @@ class SaladGroup(ConfigCase):
         self.assertEqual(self.stored("klein5090").policy, other_saved)
 
     def test_save_keeps_the_policy_of_each_profile_apart(self) -> None:
-        """Save writes the profile's form; the policy fields reach Salad through Apply, not Save."""
+        """Save writes this profile's own policy, as the Tk page did, and leaves the other's."""
         self.page.policy_image.value = "docker.io/example/klein:tag1"
         self.page.policy_us.value = True
         self.fill("startup", "failure_threshold", "6")
         self.page.save_profile()
-        self.assertEqual(self.stored("klein").policy["image"],
-                         studio_meta.image_for_family("klein", self.document()),
-                         "the stored policy is untouched by Save")
+        saved = self.stored("klein").policy
+        self.assertEqual(saved["image"], "docker.io/example/klein:tag1",
+                         "Save keeps the image the fields show")
+        self.assertEqual(saved["country_codes"], ["us"])
+        self.assertEqual(saved["startup"]["failure_threshold"], "6")
         snofs = studio_meta.probe_settings_for_family("snofs", self.document())
         self.assertEqual(self.stored("klein5090").policy["startup"], snofs["startup"],
                          "the other profile keeps its own documented probes")
@@ -702,8 +704,8 @@ class VastInstances(ConfigCase):
         self.assertEqual(fetch.call_args.args, ("vast-page-key",), "the fetch uses the saved key")
         table = _table(self.page, 0)
         self.assertEqual([row[2] for row in table],
-                         ["http://203.0.113.9:31234", "http://198.51.100.7:40111", ""],
-                         "the stopped record is a row too; it just has no address")
+                         ["http://203.0.113.9:31234", "http://198.51.100.7:40111", "#333"],
+                         "the stopped record is a row too; it shows its id where its address would be")
         self.assertEqual(table[2][4], "exited")
         self.assertEqual(table[0][1], "klein-4090", "the label column shows the vast label")
         self.assertIsNone(vast.active_row(vast.load_doc()), "Fetch does not promote a row it did not create")
@@ -731,8 +733,8 @@ class VastInstances(ConfigCase):
         rows = _table(self.page, 0)
         self.assertEqual([row[0] for row in rows], ["56373341", "56496191"],
                          "a row is keyed by the instance id the account assigned")
-        self.assertEqual(rows[1][1:3], ["salad-studio-53483606", ""],
-                         "a row with no address shows its label only")
+        self.assertEqual(rows[1][1:3], ["salad-studio-53483606", "#56496191"],
+                         "a row with no address shows its id where its address would be")
         self.assertEqual(rows[1][4], "creating")
 
         record = {"id": 56496191, "label": "salad-studio-53483606", "actual_status": "loading",
@@ -743,7 +745,7 @@ class VastInstances(ConfigCase):
             self.page.fetch_vast()
         rows = {row[0]: row for row in _table(self.page, 0)}
         self.assertEqual(rows["56373341"][4], "destroyed", "the deleted instance is not running")
-        self.assertEqual(rows["56496191"][2], "", "the booting instance has no address yet")
+        self.assertEqual(rows["56496191"][2], "#56496191", "the booting instance shows no address, only its id")
         self.assertEqual(rows["56496191"][4], "loading")
         self.assertEqual(vast.load_doc()["active"], "", "a destroyed row is never the target")
 
@@ -820,7 +822,12 @@ class VastOffers(ConfigCase):
             self.host.answer_yes()
         self.assertEqual(rent.call_args.args[1]["id"], 55818626, "the chosen offer goes to vast")
         self.assertEqual(rent.call_args.kwargs["image"], KLEIN_TAG)
-        self.assertEqual(self.host.last_note(), ("ok", f"Rented the offer {vast.offer_label(offer)}"))
+        self.assertEqual(self.host.last_note(), ("ok", "created instance 777 at http://203.0.113.55:40111"))
+        listing = vast.load_doc()
+        self.assertEqual([row.get("endpoint") for row in listing.get("instances") or []],
+                         ["http://203.0.113.55:40111"], "the rented instance is recorded")
+        self.assertEqual(listing.get("active"), "http://203.0.113.55:40111",
+                         "and Generate targets it")
 
     def test_renting_with_no_offer_is_refused(self) -> None:
         self.page.rent_offer()

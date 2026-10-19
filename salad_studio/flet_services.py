@@ -137,6 +137,11 @@ class AppServices:
             self.log_lines.clear()
         self.set_salad_logs("")
 
+    def clear_studio_logs(self) -> None:
+        """The Studio pane only: the container's own log stays until it is fetched again."""
+        with self._log_lock:
+            self.log_lines.clear()
+
     # -- threads
 
     def post(self, fn: Callable[..., None], *args: Any, **kwargs: Any) -> None:

@@ -75,9 +75,11 @@ class TokensPage(Page):
             try:
                 tokens.write_token(slot, value)
             except OSError as exc:
-                self.host.dialog("Salad Studio", f"Could not save the {slot} key: {exc}", level="error")
+                self.host.note(f"Could not save the {slot} key: {exc}", level="error")
                 return
-        self.host.note("Saved the keys", level="ok")
+        self.state = {slot: "unknown" for slot, _label in SLOTS}
+        self.refresh_states()
+        self.host.note("Saved the keys; Check keys confirms each one", level="ok")
 
     def check_keys(self, _e: Any = None) -> None:
         if self.win.services.busy_flags.get("tokens"):
@@ -97,12 +99,12 @@ class TokensPage(Page):
         def done(result: Any) -> None:
             self.win.services.busy_flags["tokens"] = False
             if isinstance(result, Exception):
-                self.host.dialog("Salad Studio", str(result), level="error")
+                self.host.note(f"Could not check the keys: {result}", level="error")
                 return
             self.state = result
             self.refresh_states()
             bad = [slot for slot, s in result.items() if s == "invalid"]
-            self.host.note("Keys checked" if not bad else f"Rejected: {', '.join(bad)}",
+            self.host.note("Checked the typed keys" if not bad else f"Rejected: {', '.join(bad)}",
                            level="ok" if not bad else "warn")
 
         self.win.services.background(work, done)

@@ -298,7 +298,7 @@ class Target(ConfigCase):
 
 class Checkpoints(ConfigCase):
     def shown(self) -> list[str]:
-        return [str(c.value).removeprefix("• ") for c in self.page.checkpoint_list.controls]
+        return [str(c.content.value).removeprefix("• ") for c in self.page.checkpoint_list.controls]
 
     def test_the_page_adds_and_removes_a_checkpoint(self) -> None:
         before = self.stored("klein").checkpoints
@@ -317,14 +317,23 @@ class Checkpoints(ConfigCase):
         self.assertEqual(refusal, "")
         self.assertEqual(route.name, "klein", "a graph loading the checkpoint routes to this profile")
 
+        self.page.select_checkpoint("flux-2-klein-5b-fp8.safetensors")
         self.page.remove_checkpoint()
         self.assertNotIn("flux-2-klein-5b-fp8.safetensors", self.stored("klein").checkpoints)
 
-    def test_removing_a_checkpoint_drops_the_last_one_listed(self) -> None:
+    def test_removing_a_checkpoint_drops_the_one_picked(self) -> None:
         before = self.stored("klein").checkpoints
+        self.page.select_checkpoint(before[-1])
         self.page.remove_checkpoint()
         self.assertEqual(self.stored("klein").checkpoints, before[:-1])
         self.assertEqual(self.host.last_note(), ("ok", f"Removed checkpoint {before[-1]}"))
+
+    def test_a_selected_checkpoint_is_marked_in_the_list(self) -> None:
+        names = self.stored("klein").checkpoints
+        self.page.select_checkpoint(names[-1])
+        marked = [i for i, c in enumerate(self.page.checkpoint_list.controls)
+                  if c.bgcolor == self.page.colors["primary_container"]]
+        self.assertEqual(marked, [len(names) - 1], "only the picked row is marked")
 
     def test_an_empty_entry_says_so_instead_of_adding_blank(self) -> None:
         before = self.stored("klein").checkpoints

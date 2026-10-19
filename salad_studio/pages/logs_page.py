@@ -67,11 +67,12 @@ class LogsPage(Page):
             return
 
     def clear(self) -> None:
-        self.win.services.clear_logs()
+        """Clear the Studio pane only: the container's log is fetched, not logged here."""
+        self.win.services.clear_studio_logs()
         self.shown = 0
         self.studio_lines.controls.clear()
         self.refresh_lines()
-        self.host.note("Logs cleared", level="info")
+        self.host.note("Studio logs cleared", level="info")
 
     def refresh_salad_logs(self, _e: Any = None) -> None:
         self.win.services.refresh_salad_logs()

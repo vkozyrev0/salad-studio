@@ -118,9 +118,23 @@ class ConfigPage(Page):
 
     def _fill_checkpoints(self) -> None:
         names = list(self.win.profile.checkpoints or [])
+        if getattr(self, "checkpoint_selected", None) not in names:
+            self.checkpoint_selected = names[0] if names else None
         self.checkpoint_list.controls = [
-            ft.Text(f"• {name}", size=12, selectable=True) for name in names
+            ft.Container(
+                ft.Text(f"• {name}", size=12),
+                bgcolor=self.colors["primary_container"] if name == self.checkpoint_selected else None,
+                padding=ft.Padding.symmetric(horizontal=4, vertical=1),
+                border_radius=4,
+                on_click=lambda _e, n=name: self.select_checkpoint(n),
+            )
+            for name in names
         ] or [ft.Text("(none)", size=12, color=self.colors["muted"])]
+
+    def select_checkpoint(self, name: str) -> None:
+        self.checkpoint_selected = name
+        self._fill_checkpoints()
+        refresh(self.checkpoint_list)
 
     def show_profile(self) -> None:
         """Draw the window's form after a profile is loaded from here or elsewhere."""
@@ -257,6 +271,8 @@ class ConfigPage(Page):
         profiles.upsert(stored)
         self.win.apply_profile(stored)
         self.checkpoint.value = ""
+        self._fill_checkpoints()
+        refresh(self.checkpoint_list)
         self.host.note(f"Added checkpoint {text}", level="ok")
 
     def remove_checkpoint(self, _e: Any = None) -> None:
@@ -267,7 +283,7 @@ class ConfigPage(Page):
         if not names:
             self.host.note("Refused: The profile lists no checkpoints", level="warn")
             return
-        last = names[-1]
+        last = self.checkpoint_selected if self.checkpoint_selected in names else names[-1]
         profiles.remove_checkpoint(stored, last)
         profiles.upsert(stored)
         self.win.apply_profile(stored)

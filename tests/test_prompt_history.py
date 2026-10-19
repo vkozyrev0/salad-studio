@@ -16,6 +16,7 @@ for p in (str(TOOLS), str(PKG)):
 
 from salad_studio import prompt_history as ph  # noqa: E402
 from tests import _stores  # noqa: E402
+from tests.test_launch import _TempPaths  # noqa: E402
 
 
 def setUpModule() -> None:
@@ -247,97 +248,53 @@ class PromptHistoryStore(unittest.TestCase):
         self.assertFalse(thumb.is_file())
 
 
-try:
-    import tkinter as tk
-except ImportError as _tk_err:
-    tk = None  # type: ignore[assignment]
-    _TK_IMPORT_ERROR = _tk_err
-else:
-    _TK_IMPORT_ERROR = None
+def _page_rows(page) -> list[list[str]]:
+    """The history table's cells as text, one list per row."""
+    out: list[list[str]] = []
+    for row in page.table_holder.controls[0].rows:
+        out.append([str(cell.content.value) if hasattr(cell.content, "value") else str(cell.content)
+                    for cell in row.cells])
+    return out
 
 
-@unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
 class LivePromptHistory(unittest.TestCase):
-    def test_reuse_fills_prompt_tab(self) -> None:
-        try:
-            probe = tk.Tk()
-            probe.withdraw()
-            probe.destroy()
-        except tk.TclError as e:
-            raise unittest.SkipTest(f"Tk cannot initialize: {e}") from e
-        from salad_studio.app import SaladStudio
-        from salad_studio import lora_store, profiles, tokens as tok
+    """Reuse, on the real Prompt History and Prompt Editor pages, every store in a temp dir."""
 
-        old_h = ph.HISTORY_PATH
-        old_local = tok.LOCAL_PATH
-        old_cfg = tok.CONFIG_HOME
-        old_prof = profiles.PROFILES_PATH
-        old_extras = lora_store.EXTRAS_PATH
-        with tempfile.TemporaryDirectory() as td:
-            tmp = Path(td)
-            ph.HISTORY_PATH = tmp / "hist.json"
-            tok.LOCAL_PATH = tmp / "studio-tokens.json"
-            tok.CONFIG_HOME = tmp / "defaults"
-            profiles.PROFILES_PATH = tmp / "studio-profiles.json"
-            lora_store.EXTRAS_PATH = tmp / "studio-loras.json"
-            try:
-                ph.add_prompt("Aged art. Oil painting style.")
-                app = SaladStudio(show=False)
-                app.withdraw()
-                try:
-                    app.update_idletasks()
-                    tabs = [app.nb.tab(t, "text") for t in app.nb.tabs()]
-                    from salad_studio import app as app_mod
+    def setUp(self) -> None:
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.tmp = Path(self._td.name)
+        self._ctx = _TempPaths(self.tmp)
+        self._ctx.__enter__()
+        self.addCleanup(lambda: self._ctx.__exit__(None, None, None))
+        from tests._flet_host import Host
 
-                    self.assertEqual(tabs, list(app_mod.TAB_ORDER))
-                    self.assertLess(
-                        tabs.index("Prompt Editor"), tabs.index("Prompt Catalog")
-                    )
-                    self.assertLess(
-                        tabs.index("Prompt Catalog"), tabs.index("Prompt History")
-                    )
-                    kids = app.prompt_hist_tree.get_children()
-                    self.assertTrue(kids)
-                    # The row is text-only: no "request" key, so reuse takes the
-                    # plain-text branch.
-                    rows = ph.list_prompts()
-                    self.assertEqual(rows[0]["text"], "Aged art. Oil painting style.")
-                    self.assertNotIn("request", rows[0])
-                    app.prompt_hist_tree.selection_set(kids[0])
-                    app._reuse_prompt_history()
-                    self.assertIn(
-                        "Aged art. Oil painting style.",
-                        app.prompt_text.get("1.0", "end"),
-                    )
-                    # ... and lands on the Prompt Editor tab, where the prompt
-                    # boxes live (there is no separate "Prompt" tab).
-                    self.assertEqual(
-                        app.nb.tab(app.nb.select(), "text"), "Prompt Editor"
-                    )
-                finally:
-                    app.destroy()
-            finally:
-                ph.HISTORY_PATH = old_h
-                tok.LOCAL_PATH = old_local
-                tok.CONFIG_HOME = old_cfg
-                profiles.PROFILES_PATH = old_prof
-                lora_store.EXTRAS_PATH = old_extras
+        self.host = Host()
+
+    def _history(self) -> Any:
+        from salad_studio.pages.history import HistoryPage
+
+        page = HistoryPage(self.host)
+        self.host.store_page("Prompt History", page)
+        return page
+
+    def test_a_bare_prompt_reuse_fills_the_prompt_box(self) -> None:
+        """A row with no request is reused as text, and lands on Prompt Editor."""
+        from salad_studio import request_json
+
+        ph.add_prompt("Aged art. Oil painting style.")
+        editor = self.host.open_page("Prompt Editor")
+        editor.set_payload(request_json.build_request(prompt_text="first", negative_text="",
+                                                      graph="klein", width=1024, height=1024,
+                                                      steps=20, seed=1))
+        page = self._history()
+        self.assertEqual(len(_page_rows(page)), 1, "the page lists the stored prompt")
+        page.select_row(0)
+        page.reuse()
+        self.assertEqual(self.host.screen.current, "Prompt Editor")
+        self.assertIn("Aged art. Oil painting style.", editor.positive.value)
 
     def test_reuse_restores_request_json(self) -> None:
-        try:
-            probe = tk.Tk()
-            probe.withdraw()
-            probe.destroy()
-        except tk.TclError as e:
-            raise unittest.SkipTest(f"Tk cannot initialize: {e}") from e
-        from salad_studio.app import SaladStudio
-        from salad_studio import lora_store, profiles, tokens as tok
-
-        old_h = ph.HISTORY_PATH
-        old_local = tok.LOCAL_PATH
-        old_cfg = tok.CONFIG_HOME
-        old_prof = profiles.PROFILES_PATH
-        old_extras = lora_store.EXTRAS_PATH
         body = {
             "prompt": {
                 "74": {
@@ -354,44 +311,20 @@ class LivePromptHistory(unittest.TestCase):
             },
             "convert_output": {"format": "jpeg"},
         }
-        with tempfile.TemporaryDirectory() as td:
-            tmp = Path(td)
-            ph.HISTORY_PATH = tmp / "hist.json"
-            tok.LOCAL_PATH = tmp / "studio-tokens.json"
-            tok.CONFIG_HOME = tmp / "defaults"
-            profiles.PROFILES_PATH = tmp / "studio-profiles.json"
-            lora_store.EXTRAS_PATH = tmp / "studio-loras.json"
-            try:
-                ph.add_request(body)
-                app = SaladStudio(show=False)
-                app.withdraw()
-                try:
-                    app.update_idletasks()
-                    kids = app.prompt_hist_tree.get_children()
-                    self.assertTrue(kids)
-                    vals = app.prompt_hist_tree.item(kids[0], "values")
-                    # Column order is HISTORY_GRID_COLUMNS, so values[1] is the
-                    # rating, values[2] the profile and values[3] the preview.
-                    self.assertEqual(vals[1], "☆" * 5, "an unrated row shows five empty stars")
-                    self.assertEqual(vals[2], "")
-                    self.assertIn("history oil stallion", vals[3])
-                    app.prompt_hist_tree.selection_set(kids[0])
-                    app._reuse_prompt_history()
-                    editor = app.editor_text.get("1.0", "end")
-                    self.assertIn("history oil stallion", editor)
-                    self.assertIn("CLIPTextEncode", editor)
-                    self.assertIn(
-                        "history oil stallion",
-                        app.prompt_text.get("1.0", "end"),
-                    )
-                finally:
-                    app.destroy()
-            finally:
-                ph.HISTORY_PATH = old_h
-                tok.LOCAL_PATH = old_local
-                tok.CONFIG_HOME = old_cfg
-                profiles.PROFILES_PATH = old_prof
-                lora_store.EXTRAS_PATH = old_extras
+        ph.add_request(body)
+        page = self._history()
+        rows = _page_rows(page)
+        self.assertEqual(len(rows), 1)
+        # COLUMNS: When, Prompt, Graph, Rating, Image.
+        self.assertEqual(rows[0][3], "", "an unrated row shows no stars")
+        self.assertIn("history oil stallion", rows[0][1])
+        self.assertEqual(rows[0][2], "2 nodes · no LoRA", "the graph column describes the request")
+        page.select_row(0)
+        page.reuse()
+        self.assertEqual(self.host.screen.current, "Prompt Editor")
+        editor = self.host.pages["Prompt Editor"]
+        self.assertIn("history oil stallion", editor.text())
+        self.assertIn("CLIPTextEncode", editor.text())
 
 
 if __name__ == "__main__":

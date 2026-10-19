@@ -357,29 +357,13 @@ class ProfilesTest(unittest.TestCase):
         self.assertEqual(built["klein"].width, SaladProfile.width)
 
 
-try:
-    import tkinter as tk
-except ImportError as _tk_err:
-    tk = None  # type: ignore[assignment]
-    _TK_IMPORT_ERROR = _tk_err
-else:
-    _TK_IMPORT_ERROR = None
-
-
-@unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
 class LiveCorruptProfilesFile(unittest.TestCase):
     """The shipped app must start with a non-numeric studio-profiles.json."""
 
     def test_app_starts_with_a_non_numeric_stored_field(self) -> None:
-        try:
-            probe = tk.Tk()
-            probe.withdraw()
-            probe.destroy()
-        except tk.TclError as e:
-            raise unittest.SkipTest(f"Tk cannot initialize: {e}") from e
-
         from salad_studio import profiles as sp
-        from salad_studio.app import SaladStudio
+        from salad_studio.pages.config import ConfigPage
+        from tests._flet_host import Host
         from tests.test_launch import _TempPaths
 
         with tempfile.TemporaryDirectory() as td:
@@ -401,18 +385,15 @@ class LiveCorruptProfilesFile(unittest.TestCase):
                     ),
                     encoding="utf-8",
                 )
-                app = SaladStudio(show=False)
-                try:
-                    app.update_idletasks()
-                    self.assertIn("klein", app.profile_combo["values"])
-                    self.assertIn("klein5090", app.profile_combo["values"])
-                    self.assertEqual(app.var_width.get(), str(SaladProfile.width))
-                    self.assertEqual(app.var_steps.get(), str(SaladProfile.steps))
-                    self.assertEqual(
-                        app.var_gateway.get(), "https://example.salad.cloud"
-                    )
-                finally:
-                    app.destroy()
+                win = Host()
+                win.load_profiles()
+                page = ConfigPage(win)
+                listed = [option.key for option in page.profile_list.options]
+                self.assertIn("klein", listed)
+                self.assertIn("klein5090", listed)
+                self.assertEqual(win.form.width, str(SaladProfile.width))
+                self.assertEqual(win.form.steps, str(SaladProfile.steps))
+                self.assertEqual(win.form.gateway, "https://example.salad.cloud")
 
 
 class UnetRoutingTest(unittest.TestCase):

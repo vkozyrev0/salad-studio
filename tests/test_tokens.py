@@ -18,6 +18,7 @@ for p in (str(TOOLS), str(PKG)):
 
 from salad_studio import tokens as tok  # noqa: E402
 from tests import _stores  # noqa: E402
+from tests.test_launch import _TempPaths  # noqa: E402
 
 GITIGNORE = HERE.parent / ".gitignore"
 
@@ -29,24 +30,6 @@ def setUpModule() -> None:
 
 def tearDownModule() -> None:
     _stores.restore_queue_ledger()
-
-
-def _walk(widget):
-    yield widget
-    for child in widget.winfo_children():
-        yield from _walk(child)
-
-
-def _labelframe_texts(root) -> list[str]:
-    from tkinter import ttk
-
-    return [str(w.cget("text")) for w in _walk(root) if isinstance(w, ttk.LabelFrame)]
-
-
-def _label_texts(root) -> list[str]:
-    from tkinter import ttk
-
-    return [str(w.cget("text")) for w in _walk(root) if isinstance(w, ttk.Label)]
 
 
 def _header(request, name: str) -> str | None:
@@ -314,93 +297,66 @@ class TokenFiles(unittest.TestCase):
         self.assertIn("deepseek", doc)
 
 
-try:
-    import tkinter as tk
-except ImportError as _tk_err:
-    tk = None  # type: ignore[assignment]
-    _TK_IMPORT_ERROR = _tk_err
-else:
-    _TK_IMPORT_ERROR = None
-
-
-@unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
 class LiveTokensTab(unittest.TestCase):
+    """The Tokens page reads the saved keys back and saves what the page holds."""
+
+    def setUp(self) -> None:
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.tmp = Path(self._td.name)
+        self._ctx = _TempPaths(self.tmp)
+        self._ctx.__enter__()
+        self.addCleanup(lambda: self._ctx.__exit__(None, None, None))
+
+    def _page(self):
+        from salad_studio.pages.tokens_page import TokensPage
+        from tests._flet_host import Host
+
+        host = Host()
+        page = TokensPage(host)
+        self.addCleanup(page.refresh_states)  # a mounted page, for the probes' repaint
+        return host, page
+
     def test_tokens_tab_loads_saved_salad_key_and_generate_reads_it(self) -> None:
-        try:
-            probe = tk.Tk()
-            probe.withdraw()
-            probe.destroy()
-        except tk.TclError as e:
-            raise unittest.SkipTest(f"Tk cannot initialize: {e}") from e
+        from salad_studio.flet_shell import TAB_ORDER
 
-        from salad_studio.app import SaladStudio
-        from salad_studio import lora_store, profiles
+        self.assertEqual(list(TAB_ORDER), ["Config", "Prompt Settings", "Tokens", "LoRAs",
+                                           "Prompt Editor", "Prompt Assist", "Prompt Catalog",
+                                           "Import", "Prompt History", "Queue", "Logs"])
+        tok.write_token("salad", "salad-live-key-xyz9")
+        tok.write_token("huggingface", "hf_live_token_abcd")
+        host, page = self._page()
+        self.assertEqual(page.fields["salad"].value, "salad-live-key-xyz9")
+        self.assertEqual(page.fields["huggingface"].value, "hf_live_token_abcd")
+        # Every spec gets a field, and each is shown as a password until revealed.
+        for kind, _label, _rel in tok.TOKEN_SPECS:
+            self.assertIn(kind, page.fields)
+            self.assertTrue(page.fields[kind].password)
+        self.assertEqual(page.fields["deepseek"].label, "DeepSeek")
+        self.assertEqual(page.fields["salad"].label, "Salad")
 
-        old_home = tok.CONFIG_HOME
-        old_local = tok.LOCAL_PATH
-        old_profiles = profiles.PROFILES_PATH
-        old_extras = lora_store.EXTRAS_PATH
-        with tempfile.TemporaryDirectory() as td:
-            tmp = Path(td)
-            tok.CONFIG_HOME = tmp / "defaults"
-            tok.LOCAL_PATH = tmp / "studio-tokens.json"
-            try:
-                tok.write_token("salad", "salad-live-key-xyz9")
-                tok.write_token("huggingface", "hf_live_token_abcd")
-                profiles.PROFILES_PATH = tmp / "studio-profiles.json"
-                lora_store.EXTRAS_PATH = tmp / "studio-loras.json"
-                app = SaladStudio(show=False)
-                app.withdraw()
-                try:
-                    app.update_idletasks()
-                    from salad_studio import app as app_mod
+        # Check keys: one probe per field, and the dot takes the probe's state.
+        probed: list[str] = []
 
-                    tabs = [app.nb.tab(t, "text") for t in app.nb.tabs()]
-                    self.assertEqual(tabs, list(app_mod.TAB_ORDER))
-                    self.assertEqual(
-                        app._token_entry["salad"].get(), "salad-live-key-xyz9"
-                    )
-                    self.assertEqual(
-                        app._token_entry["huggingface"].get(), "hf_live_token_abcd"
-                    )
-                    # Every spec gets a box; the DeepSeek one names its env fallback.
-                    for kind, _label, _rel in tok.TOKEN_SPECS:
-                        self.assertIn(kind, app._token_entry)
-                        self.assertIn(kind, app._token_widgets)
-                    boxes = _labelframe_texts(app._tokens)
-                    self.assertIn("DeepSeek", boxes)
-                    self.assertIn("Salad API", boxes)
-                    labels = _label_texts(app._tokens)
-                    self.assertTrue(
-                        any("DEEPSEEK_API_KEY" in text for text in labels),
-                        "the DeepSeek box should name its environment fallback",
-                    )
-                    self.assertTrue(
-                        any("deepseek" in text for text in labels),
-                        "the DeepSeek box should show its default file path",
-                    )
-                    self.assertEqual(str(app._token_widgets["salad"].cget("show")), "*")
-                    app._token_show["salad"].set(True)
-                    app._toggle_token_visible("salad")
-                    self.assertEqual(str(app._token_widgets["salad"].cget("show")), "")
-                    app._token_show["salad"].set(False)
-                    app._toggle_token_visible("salad")
-                    self.assertEqual(str(app._token_widgets["salad"].cget("show")), "*")
-                    self.assertEqual(app._salad_api_key(), "salad-live-key-xyz9")
-                    app._token_entry["salad"].set("salad-replaced-key-Q")
-                    app._save_token("salad")
-                    self.assertEqual(tok.read_token("salad"), "salad-replaced-key-Q")
-                    self.assertEqual(app._salad_api_key(), "salad-replaced-key-Q")
-                    self.assertEqual(app._token_entry["salad"].get(), "salad-replaced-key-Q")
-                    self.assertTrue(tok.LOCAL_PATH.is_file())
-                    self.assertFalse(tok.default_path("salad").exists())
-                finally:
-                    app.destroy()
-            finally:
-                tok.CONFIG_HOME = old_home
-                tok.LOCAL_PATH = old_local
-                profiles.PROFILES_PATH = old_profiles
-                lora_store.EXTRAS_PATH = old_extras
+        def probe(kind, **_kwargs):
+            probed.append(kind)
+            return {"kind": kind, "state": tok.INVALID if kind == "salad" else tok.VALID}
+
+        with mock.patch.object(tok, "probe_token", probe):
+            page.check_keys()
+        self.assertEqual(probed, [kind for kind, _label, _rel in tok.TOKEN_SPECS])
+        self.assertEqual(page.dots["salad"].color, host.colors[tok.state_color(tok.INVALID)])
+        self.assertEqual(page.dots["huggingface"].color, host.colors[tok.state_color(tok.VALID)])
+        self.assertIn("Rejected: salad", host.notes[-1][1])
+
+        # Save key writes what the page holds, and the window's key read follows it.
+        page.fields["salad"].value = "salad-replaced-key-Q"
+        page.save_key()
+        self.assertEqual(tok.read_token("salad"), "salad-replaced-key-Q")
+        self.assertEqual(host.services.salad_key(), "salad-replaced-key-Q")
+        self.assertEqual(page.fields["salad"].value, "salad-replaced-key-Q")
+        self.assertTrue(tok.LOCAL_PATH.is_file())
+        self.assertFalse(tok.default_path("salad").exists())
 
 
 if __name__ == "__main__":

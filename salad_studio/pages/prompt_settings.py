@@ -4,10 +4,10 @@ Width, height, steps, CFG and seed; the graph, scheduler and checkpoint
 choices; and every LoRA as a checkbox. A change writes the window's form and
 rebuilds the editor's JSON.
 
-Every control is a child of the body or of one of its rows: a scrolling
-``Column`` inside a ``Row`` inside the body renders blank here (measured on
-flet 1.0.4), so the LoRA checkboxes sit in a Row of two columns directly under
-the body.
+Layout: the body is one Row holding the knobs on the left and the LoRAs on the
+right, each group a Column that scrolls alone. A Column body that holds all ten
+form controls directly renders blank on flet 1.0.4 (measured); this grouping
+paints on every measurement, including the first frame.
 """
 from __future__ import annotations
 

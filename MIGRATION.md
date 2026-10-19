@@ -263,13 +263,14 @@ with `PrintWindow`, and read for a grey blank pane.
 - Ten pages paint: Config, Tokens, LoRAs, Prompt Editor, Prompt Assist,
   Prompt Catalog, Import, Prompt History, Queue, Logs. Each was opened, one at
   a time, in a fresh process against the on-screen window.
-- Prompt Settings renders blank. Its controls answer (the page is built, the
-  shell swaps it into the body, the form is intact) but the pane shows nothing.
-  Every reduction tried (fewer fields, fewer rows, a text-only body, a static
-  body) still blanked it once the page held a form control, while on its own
-  first visit the same shape painted; treat it as open.
-- Opening a dropdown or the date picker stops the app window from drawing for
-  good, although its controls keep responding. The window never recovers, so
-  every page with a combo box is limited by this until flet fixes it.
-- A window started on the page it saved in `studio-ui.json` can show a blank
-  frame on its first page; a page switched after the first frame paints.
+- Every page, Prompt Settings included, painted once `flet_app` stopped
+  importing `salad_studio.pages` and the page list moved to `flet_pages.py`.
+  The blank pane above was measured while that import was still in the module
+  and is no longer reproducible.
+- Opening a dropdown or the date picker leaves the app window on its last
+  drawn frame while its controls keep responding. It was seen on the window
+  itself, and the same frame on the first page came from the window's own
+  title-bar chrome and game-mode notifications, so it is the flet desktop
+  shell's compositing, not page code. Not fixed here.
+- The window opens on Config; the saved tab is no longer restored, because a
+  first frame on a form page could be blank.

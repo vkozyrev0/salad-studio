@@ -16,6 +16,10 @@ from salad_studio.flet_pump import refresh
 from salad_studio.flet_shell import Page
 
 COLUMNS = ("Verified", "Id", "Name", "Version", "Model", "Source", "Comfy name")
+# A row's Verified cell is drawn in the verified or unverified colour, as the
+# Tk tree coloured the whole row.
+VERIFIED_COLOR = "valid"
+UNVERIFIED_COLOR = "invalid"
 
 
 class LorasPage(Page):
@@ -86,6 +90,10 @@ class LorasPage(Page):
         index = next((i for i, item in enumerate(shown) if str(item.get("id")) == self.selected), None)
         cells = [self._cells(item) for item in shown] or [["(none)"] + [""] * (len(COLUMNS) - 1)]
         table = w.table(COLUMNS, cells, on_row=self.select_row, selected=index)
+        for row, item in zip(table.rows, shown):
+            row.cells[0].content = ft.Text(row.cells[0].content.value, size=12,
+                                           color=self.colors[VERIFIED_COLOR if item.get("verified")
+                                                              else UNVERIFIED_COLOR])
         for column_index, column in enumerate(table.columns):
             column.on_sort = lambda _e, i=column_index: self.sort(i)
         self.table_box.content = ft.Column([table], scroll=ft.ScrollMode.ALWAYS, expand=True)

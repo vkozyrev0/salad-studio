@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import salad_studio.comfy_import as comfy_import
-import salad_studio.graph_view as graph_view
+import salad_studio.graph_model as graph_model
 import salad_studio.generator as generator
 import salad_studio.request_json as request_json
 
@@ -72,7 +72,7 @@ def text_encodes(prompt: dict[str, Any]) -> tuple[str, str]:
     for nid, node in prompt.items():
         if not isinstance(node, dict) or str(node.get("class_type")) != "CLIPTextEncode":
             continue
-        role = graph_view._clip_role(str(nid), prompt)
+        role = graph_model._clip_role(str(nid), prompt)
         if role == 0 and not positive:
             positive = str(nid)
         elif role == 1 and not negative:
@@ -101,7 +101,7 @@ def patch_text(prompt: dict[str, Any], which: str, text: str) -> dict[str, Any]:
 
 def swap_text(prompt: dict[str, Any], a: str, b: str) -> dict[str, Any]:
     """Swap two same-class nodes' inputs and meta. Raises ValueError with the reason."""
-    return graph_view.swap_payloads(prompt, a, b)
+    return graph_model.swap_payloads(prompt, a, b)
 
 
 def validate(text: str) -> tuple[bool, str]:

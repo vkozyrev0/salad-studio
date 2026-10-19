@@ -47,6 +47,8 @@ from salad_studio.profiles import SaladProfile  # noqa: E402
 ART = Path(os.environ.get("ELDERMARK_ART", r"C:\Users\vkozy\repos\lifesim-design\art"))
 OUT_DIR = ART / "salad_studio"
 PROBE_GLOB = "salad_probe_klein_*.jpg"
+# The page order. flet_shell.TAB_ORDER is the shipped list; this one keeps
+# app.py importable until it is deleted.
 TAB_ORDER = (
     "Config",
     "Prompt Settings",

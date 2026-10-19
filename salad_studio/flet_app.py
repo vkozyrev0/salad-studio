@@ -29,9 +29,9 @@ import hostings  # noqa: E402  top-level, as profiles.py and app.py import it
 
 from salad_studio import desktop, flet_theme, flet_widgets as w, image_deploy, lora_store, profiles, request_json, vast
 from salad_studio.flet_pump import Pump, refresh
+from salad_studio.flet_pages import Form, page as build_page
 from salad_studio.flet_services import STRIP_COLORS, AppServices
 from salad_studio.flet_shell import PageSpec, Shell, TAB_ORDER, apply_shortcut
-from salad_studio.pages.editor import EditorPage
 
 DEFAULT_WIDTH = 1180
 DEFAULT_HEIGHT = 720
@@ -51,86 +51,6 @@ SUBTITLES: dict[str, str] = {
 }
 
 
-@dataclass
-class Form:
-    """The Config and Prompt Settings values the window shows, and the profile they describe."""
-
-    name: str = "klein"
-    gateway: str = ""
-    mode: str = "salad"
-    graph: str = "klein"
-    width: str = "1024"
-    height: str = "1024"
-    steps: str = "20"
-    cfg: str = "1"
-    seed: str = "1"
-    scheduler: str = "flux2"
-    selected_loras: list[str] = field(default_factory=list)
-
-    def from_profile(self, p: profiles.SaladProfile) -> "Form":
-        return Form(
-            name=p.name,
-            gateway=p.gateway,
-            mode=p.mode,
-            graph=p.graph,
-            width=str(p.width),
-            height=str(p.height),
-            steps=str(p.steps),
-            cfg=str(p.cfg),
-            seed=str(p.seed),
-            scheduler=p.scheduler,
-            selected_loras=list(p.selected_loras),
-        )
-
-    def profile(self, stored: profiles.SaladProfile | None = None) -> profiles.SaladProfile:
-        """The profile this form describes. Raises ValueError naming the bad knob."""
-
-        def whole(field: str, raw: str, default: int) -> int:
-            text = str(raw or "").strip()
-            if not text:
-                return default
-            try:
-                return int(text)
-            except ValueError:
-                raise ValueError(f"{field} must be a whole number (got {text!r})") from None
-
-        def number(field: str, raw: str, default: float) -> float:
-            text = str(raw or "").strip()
-            if not text:
-                return default
-            try:
-                return float(text)
-            except ValueError:
-                raise ValueError(f"{field} must be a number (got {text!r})") from None
-
-        checkpoints = list(stored.checkpoints) if stored is not None else profiles.seed_checkpoints(self.name)
-        return profiles.SaladProfile(
-            name=self.name,
-            gateway=self.gateway.strip(),
-            mode=self.mode,
-            key_path=profiles.DEFAULT_KEY_PATH,
-            graph=lora_store.graph_id(self.graph),
-            width=whole("Width", self.width, 1024),
-            height=whole("Height", self.height, 1024),
-            steps=whole("Steps", self.steps, 20),
-            cfg=number("CFG", self.cfg, profiles.FORM_CFG),
-            seed=int(number("Seed", self.seed, 1)),
-            scheduler=self.scheduler,
-            checkpoints=checkpoints,
-            use_loras=bool(self.selected_loras),
-            selected_loras=list(self.selected_loras),
-            policy=dict(stored.policy) if stored is not None else {},
-        )
-
-    def save(self, services: AppServices) -> profiles.SaladProfile:
-        stored = profiles.load_all().get(self.name)
-        p = self.profile(stored)
-        profiles.upsert(p)
-        profiles.set_active(p.name)
-        services.log("info", f"saved profile {p.name}")
-        return p
-
-
 class Window:
     """Everything a page can reach: the shell, the form, the last probe and the dialogs."""
 
@@ -143,6 +63,10 @@ class Window:
         self.form = Form()
         self.profile = profiles.SaladProfile(name="klein")
         self.dialogs: list[ft.AlertDialog] = []
+        # The action bar's state word. A window built without a bar can still be
+        # pressed; these hold its two words until ``build_action_bar`` replaces them.
+        self.gen_state = ft.Text("Idle")
+        self.salad_label = ft.Text("…")
         self.services.on_log = self._repaint_logs
         self.services.on_timer = self._timer
 
@@ -399,7 +323,7 @@ class Window:
         """Build a page without showing it. It lands on the client with the
         shell's next update; repaint it only after that."""
         if name not in self.shell.pages:
-            self.shell.pages[name] = _page(self, name)
+            self.shell.pages[name] = build_page(self, name)
         return self.shell.pages[name]
 
     def apply_profile(self, p: profiles.SaladProfile) -> None:
@@ -443,7 +367,7 @@ def build(page: ft.Page, *, dark: bool = True, show: bool = True,
     page.window.min_width = 900
     page.window.min_height = 560
     pump = Pump()
-    specs = [PageSpec(name, lambda host, n=name: _page(host, n)) for name in TAB_ORDER]
+    specs = [PageSpec(name, lambda host, n=name: build_page(host, n)) for name in TAB_ORDER]
     shell = Shell(specs, dark=dark)
     window = Window(page, pump, shell, show=show)
     shell.window = window
@@ -464,28 +388,6 @@ def default_page() -> str:
     page that has painted from the first frame in every measurement.
     """
     return "Config"
-
-
-def _page(host: Any, name: str) -> ft.Control:
-    from salad_studio.pages import (
-        assist, config, editor, history, import_page, logs_page, loras, prompt_settings,
-        catalog as catalog_page, queue_page, tokens_page,
-    )
-
-    builders = {
-        "Config": config.ConfigPage,
-        "Prompt Settings": prompt_settings.SettingsPage,
-        "Tokens": tokens_page.TokensPage,
-        "LoRAs": loras.LorasPage,
-        "Prompt Editor": editor.EditorPage,
-        "Prompt Assist": assist.AssistPage,
-        "Prompt Catalog": catalog_page.CatalogPage,
-        "Import": import_page.ImportPage,
-        "Prompt History": history.HistoryPage,
-        "Queue": queue_page.QueuePage,
-        "Logs": logs_page.LogsPage,
-    }
-    return builders[name](host)
 
 
 def placement(win: Window, radius: float = 0.0) -> None:

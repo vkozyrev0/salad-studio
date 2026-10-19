@@ -26,7 +26,7 @@ for _p in (PKG, TOOLS):
 
 import salad_queue as q  # noqa: E402
 import studio_meta  # noqa: E402
-from salad_studio import app as app_mod  # noqa: E402
+from salad_studio import flet_shell  # noqa: E402
 
 MANUAL = PKG / "README.md"
 ROOT_README = TOOLS / "README.md"
@@ -48,7 +48,7 @@ class TabListMatchesTheApp(unittest.TestCase):
         listed = re.findall(r"\*\*([^*]+)\*\*", block)
         self.assertEqual(
             listed,
-            list(app_mod.TAB_ORDER),
+            list(flet_shell.TAB_ORDER),
             "the manual's tab list must be the app's tab order",
         )
 
@@ -101,7 +101,7 @@ class TabListMatchesTheApp(unittest.TestCase):
     def test_the_manual_documents_profile_management(self) -> None:
         """The controls the Config page ships are the ones the manual names."""
         manual = " ".join(MANUAL.read_text(encoding="utf-8").split())
-        source = (PKG / "app.py").read_text(encoding="utf-8")
+        source = (PKG / "pages" / "config.py").read_text(encoding="utf-8")
         for label in (
             "Add profile",
             "Delete profile",
@@ -155,7 +155,7 @@ class AssistPageMatchesTheManual(unittest.TestCase):
 
     def test_the_manual_names_both_backends_and_matches_the_shipped_labels(self) -> None:
         manual = " ".join(MANUAL.read_text(encoding="utf-8").split())
-        source = (PKG / "app.py").read_text(encoding="utf-8")
+        source = (PKG / "pages" / "assist.py").read_text(encoding="utf-8")
         self.assertIn("Help (DeepSeek)", manual, "the manual names the DeepSeek button")
         self.assertIn("Help (local)", manual, "and the local one")
         self.assertIn(
@@ -165,12 +165,8 @@ class AssistPageMatchesTheManual(unittest.TestCase):
             "LM Studio", manual, "and where the local server usually comes from"
         )
 
-        title = re.search(r'text="(Reply \(raw[^"]*)"', source)
-        self.assertIsNotNone(title, "the reply pane's title must be in app.py")
-        pane = str(title.group(1))
-        self.assertIn("DeepSeek", pane, f"the pane must name DeepSeek: {pane!r}")
-        self.assertIn("local", pane, f"the pane must name the local model too: {pane!r}")
-        for where, text in (("the manual", manual), ("app.py", source)):
+        self.assertIn('ft.Text("Reply"', source, "the reply pane's title must be in assist.py")
+        for where, text in (("the manual", manual), ("assist.py", source)):
             self.assertNotIn(
                 "DeepSeek reply", text, f"{where} still calls the pane DeepSeek-only"
             )
@@ -188,10 +184,10 @@ class AssistPageMatchesTheManual(unittest.TestCase):
 
 class RootReadmeTestCount(unittest.TestCase):
     def _real_count(self) -> int:
-        real = 0
-        for path in sorted(HERE.glob("test_*.py")):
-            real += len(re.findall(r"^\s+def test_", path.read_text(encoding="utf-8"), re.M))
-        return real
+        """The suite's count, read by building it: a pattern over the files misses
+        tests a base class supplies and counts a commented-out one."""
+        suite = unittest.defaultTestLoader.discover(str(HERE), pattern="test_*.py")
+        return suite.countTestCases()
 
     def test_every_stated_test_count_is_the_real_one(self) -> None:
         """Both manuals state the count, and both have drifted before."""
@@ -400,9 +396,11 @@ class AuditDocument(unittest.TestCase):
         confirmations: list[str] = []
 
         # A1: the queue page is in the tab set and renders a tree.
-        self.assertIn("Queue", app_mod.TAB_ORDER)
-        self.assertTrue(hasattr(app_mod.SaladStudio, "_build_queue_tab"))
-        confirmations.append(f"A1 queue page in TAB_ORDER at {app_mod.TAB_ORDER.index('Queue')}")
+        self.assertIn("Queue", flet_shell.TAB_ORDER)
+        from salad_studio.pages import queue_page
+
+        self.assertTrue(hasattr(queue_page, "QueuePage"))
+        confirmations.append(f"A1 queue page in TAB_ORDER at {flet_shell.TAB_ORDER.index('Queue')}")
 
         # A3: the dead routing helpers are gone.
         self.assertFalse(hasattr(profiles, "routing_conflict"))
@@ -1035,7 +1033,7 @@ class MoreFixedClaimsHoldInTheShippedCode(unittest.TestCase):
         import theme
         import tokens as tok
 
-        from salad_studio import civitai_verify, graph_view, profiles, salad_status
+        from salad_studio import civitai_verify, graph_model, profiles, salad_status
 
         absent = (
             (generator, ("read_key", "_body_snippet", "clear_history")),
@@ -1051,8 +1049,9 @@ class MoreFixedClaimsHoldInTheShippedCode(unittest.TestCase):
             # calls. `_draw_grid` was a method, so its name lived on the class.
             (theme, ("palette_snapshot",)),
             (json_highlight, ("token_kinds",)),
-            (graph_view, ("node_boxes", "round_polyline", "_wrap", "_rounded_rect")),
-            (graph_view.GraphPane, ("_draw_grid",)),
+            (graph_model, ("node_boxes", "round_polyline", "_wrap", "_rounded_rect")),
+            (graph_model.GraphModel, ("_draw_grid",)),
+            (flet_shell, ("HistoryStrip", "_build_nav_buttons", "SaladStudio", "TAB_ORDER_TK")),
             (
                 face_prompt,
                 (
@@ -1104,13 +1103,6 @@ class MoreFixedClaimsHoldInTheShippedCode(unittest.TestCase):
             [f"{module}:{name}" for module, name in DEAD_HELPERS],
             "the rule must report all seven against the pre-deletion source",
         )
-
-    def test_the_config_page_no_longer_unbinds_the_wheel_app_wide(self) -> None:
-        """C22: `unbind_all` drops every other page's binding with this one's."""
-        source = (PKG / "app.py").read_text(encoding="utf-8")
-        self.assertNotIn("unbind_all", source)
-        self.assertIn("_claim_wheel", source)
-        self.assertIn("_on_page_wheel", source)
 
     def test_the_deployment_accessor_is_the_one_entries_uses(self) -> None:
         """C16: the module docstring named an accessor nothing called."""

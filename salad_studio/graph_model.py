@@ -13,9 +13,9 @@ an output port on the right edge and enter an input port on the left edge.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any, Iterable
-
-from salad_studio import graph_view
+from urllib.parse import urlparse
 
 Prompt = dict[str, Any]
 
@@ -38,9 +38,324 @@ ZOOM_MIN = 0.25
 ZOOM_MAX = 2.4
 ZOOM_STEP = 1.1
 
-# The class each column holds, from the Tk pane. Unknown classes share a last
-# column so they never land in a sampler column.
-_COLUMN: dict[str, int] = graph_view._COLUMN
+CLASS_TITLE: dict[str, str] = {
+    "UNETLoader": "Load Diffusion Model",
+    "CLIPLoader": "Load CLIP",
+    "VAELoader": "Load VAE",
+    "LoraLoader": "Load LoRA",
+    "CLIPTextEncode": "CLIP Text Encode (Prompt)",
+    "EmptyFlux2LatentImage": "Empty Flux2 Latent",
+    "EmptyLatentImage": "Empty Latent",
+    "EmptySD3LatentImage": "Empty SD3 Latent",
+    "RandomNoise": "Random Noise",
+    "KSamplerSelect": "KSampler Select",
+    "KSampler": "KSampler",
+    "BasicScheduler": "Scheduler",
+    "Flux2Scheduler": "Flux2 Scheduler",
+    "CFGGuider": "CFG Guider",
+    "SamplerCustomAdvanced": "Sampler Custom",
+    "VAEDecode": "VAE Decode",
+    "SaveImage": "Save Image",
+}
+
+SLOT_COLOR: dict[str, str] = {
+    "model": "#B39DDB",
+    "clip": "#F5D76E",
+    "positive": "#FFA726",
+    "negative": "#FFA726",
+    "text": "#FFA726",
+    "latent_image": "#EC407A",
+    "samples": "#EC407A",
+    "latent": "#EC407A",
+    "vae": "#EF5350",
+    "images": "#4FC3F7",
+    "image": "#4FC3F7",
+    "noise": "#CE93D8",
+    "guider": "#AED581",
+    "sampler": "#80CBC4",
+    "sigmas": "#90CAF9",
+    "width": "#B0BEC5",
+    "height": "#B0BEC5",
+}
+
+_GRAPH_COLUMNS: dict[str, int] = {
+    "UNETLoader": 0,
+    "CLIPLoader": 0,
+    "VAELoader": 0,
+    "LoraLoader": 1,
+    "CLIPTextEncode": 2,
+    "EmptyFlux2LatentImage": 2,
+    "EmptyLatentImage": 2,
+    "EmptySD3LatentImage": 2,
+    "RandomNoise": 3,
+    "KSamplerSelect": 3,
+    "BasicScheduler": 3,
+    "Flux2Scheduler": 3,
+    "CFGGuider": 3,
+    "SamplerCustomAdvanced": 4,
+    "KSampler": 4,
+    "VAEDecode": 5,
+    "SaveImage": 5,
+}
+
+_LG_KEY_TYPE = {
+    "model": "MODEL",
+    "clip": "CLIP",
+    "vae": "VAE",
+    "positive": "CONDITIONING",
+    "negative": "CONDITIONING",
+    "conditioning": "CONDITIONING",
+    "samples": "LATENT",
+    "latent_image": "LATENT",
+    "images": "IMAGE",
+    "image": "IMAGE",
+    "pixels": "IMAGE",
+    "noise": "NOISE",
+    "guider": "GUIDER",
+    "sampler": "SAMPLER",
+    "sigmas": "SIGMAS",
+}
+
+_LG_OUTPUTS: dict[str, list[tuple[str, str]]] = {
+    "UNETLoader": [("MODEL", "MODEL")],
+    "CLIPLoader": [("CLIP", "CLIP")],
+    "VAELoader": [("VAE", "VAE")],
+    "LoraLoader": [("MODEL", "MODEL"), ("CLIP", "CLIP")],
+    "CLIPTextEncode": [("CONDITIONING", "CONDITIONING")],
+    "EmptyFlux2LatentImage": [("LATENT", "LATENT")],
+    "EmptyLatentImage": [("LATENT", "LATENT")],
+    "VAEDecode": [("IMAGE", "IMAGE")],
+    "VAEEncode": [("LATENT", "LATENT")],
+    "SamplerCustomAdvanced": [("LATENT", "LATENT")],
+    "KSampler": [("LATENT", "LATENT")],
+    "CFGGuider": [("GUIDER", "GUIDER")],
+    "RandomNoise": [("NOISE", "NOISE")],
+    "KSamplerSelect": [("SAMPLER", "SAMPLER")],
+    "Flux2Scheduler": [("SIGMAS", "SIGMAS")],
+    "BasicScheduler": [("SIGMAS", "SIGMAS")],
+    "SaveImage": [],
+    "LoadImage": [("IMAGE", "IMAGE")],
+}
+
+_UNKNOWN_COLUMN = 6
+
+def _clip_role(nid: str, prompt: Prompt) -> int:
+    """0 = positive, 1 = negative, 2 = other."""
+    for node in prompt.values():
+        if not isinstance(node, dict) or node.get("class_type") != "CFGGuider":
+            continue
+        inputs = node.get("inputs") if isinstance(node.get("inputs"), dict) else {}
+        pos, neg = inputs.get("positive"), inputs.get("negative")
+        if is_link(pos) and str(pos[0]) == nid:
+            return 0
+        if is_link(neg) and str(neg[0]) == nid:
+            return 1
+    return 2
+
+def _lg_origin_slot(src: dict[str, Any], dest_key: str) -> int:
+    want = _LG_KEY_TYPE.get(dest_key.lower(), dest_key.upper())
+    outs = _lg_outputs(str(src.get("class_type") or ""))
+    for i, (_name, typ) in enumerate(outs):
+        if typ == want:
+            return i
+    return 0
+
+def _lg_outputs(cls: str) -> list[tuple[str, str]]:
+    return list(_LG_OUTPUTS.get(cls) or [("OUT", "*")])
+
+def graph_edges(prompt: Prompt) -> list[tuple[str, str, str]]:
+    """(src_id, dst_id, input_name) for every node-ref input."""
+    ids = {str(k) for k in prompt}
+    edges: list[tuple[str, str, str]] = []
+    for nid, node in prompt.items():
+        if not isinstance(node, dict):
+            continue
+        inputs = node.get("inputs") if isinstance(node.get("inputs"), dict) else {}
+        for key, val in inputs.items():
+            if is_link(val) and str(val[0]) in ids:
+                edges.append((str(val[0]), str(nid), str(key)))
+    return edges
+
+def is_link(val: Any) -> bool:
+    return (
+        isinstance(val, list)
+        and len(val) == 2
+        and isinstance(val[0], (str, int))
+        and isinstance(val[1], int)
+    )
+
+def lora_query_keys(name: str) -> list[str]:
+    """Lookup keys for one loader name: token-free URL, basename, filename stem."""
+    raw = str(name or "").strip()
+    if not raw:
+        return []
+    clean = raw.split("?")[0].strip()
+    path = urlparse(clean).path if "://" in clean else clean
+    base = Path(path).name.lower()
+    keys = [clean.lower(), base]
+    if base.endswith(".safetensors"):
+        keys.append(base[: -len(".safetensors")])
+    return [k for k in keys if k]
+
+
+def lora_lookup(items: list[dict[str, Any]] | None = None) -> dict[str, str]:
+    """``{loader-name key: catalog name}`` built from ONE LoRA store read.
+
+    ``prompt_to_joint`` builds this once and threads it through the card
+    helpers, so a graph with N LoRA nodes reads the store once, not 2N times.
+    Pass ``items`` (raw store rows) to drive it without touching the store.
+    """
+    if items is None:
+        try:
+            import lora_store as ls
+
+            items = ls.list_loras()
+        except Exception:
+            return {}
+    out: dict[str, str] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("name") or "").strip()
+        if not label:
+            continue
+        src = item.get("source") if isinstance(item.get("source"), dict) else {}
+        for cand in (src.get("filename"), src.get("download"), item.get("id")):
+            for key in lora_query_keys(str(cand or "")):
+                out.setdefault(key, label)
+    return out
+
+def lora_symbolic_name(
+    node: dict[str, Any], lookup: dict[str, str] | None = None
+) -> str:
+    """Human LoRA name (catalog / Civitai tag), not the loader filename."""
+    meta = node.get("_meta") if isinstance(node.get("_meta"), dict) else {}
+    inputs = node.get("inputs") if isinstance(node.get("inputs"), dict) else {}
+    lora_name = str(inputs.get("lora_name") or "")
+    title = str(meta.get("title") or "")
+    tag = str(meta.get("tag") or "")
+    if lookup is None:
+        lookup = lora_lookup()
+    catalog = ""
+    for key in (*lora_query_keys(lora_name), *lora_query_keys(title)):
+        catalog = lookup.get(key) or ""
+        if catalog:
+            break
+    internal = Path(unquote(urlparse(lora_name).path) if "://" in lora_name else lora_name).name
+    for cand in (tag, catalog, Path(title).stem):
+        text = str(cand or "").strip()
+        if not text or text.isdigit() or text.startswith("http"):
+            continue
+        if text.lower() == internal.lower():
+            continue
+        if text.lower().endswith(".safetensors"):
+            text = text[:-12]
+        return text
+    stem = Path(title or internal).stem
+    if stem and stem.lower() != Path(internal).stem.lower():
+        return stem
+    return ""
+
+def node_rows(
+    node: dict[str, Any], lookup: dict[str, str] | None = None
+) -> list[dict[str, str]]:
+    """Display rows: linked sockets first, then widgets. No link payloads as text."""
+    inputs = node.get("inputs") if isinstance(node.get("inputs"), dict) else {}
+    rows: list[dict[str, str]] = []
+    for key, val in inputs.items():
+        if is_link(val):
+            rows.append({"kind": "link", "key": str(key), "value": ""})
+    cls = str(node.get("class_type") or "")
+    if cls == "LoraLoader":
+        label = lora_symbolic_name(node, lookup)
+        if label:
+            rows.append({"kind": "widget", "key": "name", "value": label})
+    for key, val in inputs.items():
+        if is_link(val):
+            continue
+        rows.append(
+            {"kind": "widget", "key": str(key), "value": _fmt_value(key, val, node)}
+        )
+    return rows
+
+def node_title(node: dict[str, Any], prompt: Prompt | None = None, nid: str = "") -> str:
+    cls = str(node.get("class_type") or "")
+    if cls == "CLIPTextEncode" and prompt and nid:
+        if _clip_role(nid, prompt) == 1:
+            return "CLIP Text Encode (Negative Prompt)"
+        if _clip_role(nid, prompt) == 0:
+            return "CLIP Text Encode (Prompt)"
+    return CLASS_TITLE.get(cls, cls or "Node")
+
+def slot_color(name: str, class_type: str = "") -> str:
+    key = (name or "").lower()
+    if key in SLOT_COLOR:
+        return SLOT_COLOR[key]
+    return OUTPUT_COLOR.get(class_type, "#9E9E9E")
+
+def swap_payloads(prompt: Prompt, id_a: str, id_b: str) -> Prompt:
+    """Swap non-link inputs and ``_meta`` of two same-class nodes."""
+    import copy
+
+    out = copy.deepcopy(prompt)
+    a, b = str(id_a), str(id_b)
+    if a == b:
+        raise ValueError("Pick two different nodes")
+    na = out.get(a)
+    nb = out.get(b)
+    if not isinstance(na, dict) or not isinstance(nb, dict):
+        raise ValueError("Unknown node")
+    if str(na.get("class_type") or "") != str(nb.get("class_type") or ""):
+        raise ValueError("Can only swap two nodes of the same type")
+    ia = dict(na.get("inputs") or {})
+    ib = dict(nb.get("inputs") or {})
+    for key in set(ia) | set(ib):
+        va, vb = ia.get(key), ib.get(key)
+        if is_link(va) or is_link(vb):
+            continue
+        ia[key], ib[key] = vb, va
+    na["inputs"] = ia
+    nb["inputs"] = ib
+    meta_a = na.get("_meta")
+    meta_b = nb.get("_meta")
+    if meta_b is not None:
+        na["_meta"] = meta_b
+    else:
+        na.pop("_meta", None)
+    if meta_a is not None:
+        nb["_meta"] = meta_a
+    else:
+        nb.pop("_meta", None)
+    return out
+
+def toggle_live_selection(selected: list[str], nid: str) -> list[str]:
+    """Toggle one card in the two-id selection the Swap button reads."""
+    nid = str(nid)
+    if nid in selected:
+        return [s for s in selected if s != nid]
+    if len(selected) >= 2:
+        return [selected[1], nid]
+    return [*selected, nid]
+
+OUTPUT_COLOR: dict[str, str] = {
+    "UNETLoader": SLOT_COLOR["model"],
+    "CLIPLoader": SLOT_COLOR["clip"],
+    "VAELoader": SLOT_COLOR["vae"],
+    "LoraLoader": SLOT_COLOR["model"],
+    "CLIPTextEncode": SLOT_COLOR["positive"],
+    "EmptyFlux2LatentImage": SLOT_COLOR["latent"],
+    "EmptyLatentImage": SLOT_COLOR["latent"],
+    "EmptySD3LatentImage": SLOT_COLOR["latent"],
+    "RandomNoise": SLOT_COLOR["noise"],
+    "KSamplerSelect": SLOT_COLOR["sampler"],
+    "BasicScheduler": SLOT_COLOR["sigmas"],
+    "Flux2Scheduler": SLOT_COLOR["sigmas"],
+    "CFGGuider": SLOT_COLOR["guider"],
+    "SamplerCustomAdvanced": SLOT_COLOR["latent"],
+    "VAEDecode": SLOT_COLOR["image"],
+}
+
+_COLUMN = _GRAPH_COLUMNS
 
 
 @dataclass(frozen=True)
@@ -144,7 +459,7 @@ class GraphModel:
 def _widget_rows(nid: str, node: dict[str, Any], lookup: dict[str, str]) -> list[tuple[str, str]]:
     return [
         (r["key"], r["value"])
-        for r in graph_view.node_rows(node, lookup)
+        for r in node_rows(node, lookup)
         if r["kind"] == "widget"
     ]
 
@@ -191,7 +506,7 @@ def _column_order(nid: str, node: dict[str, Any]) -> tuple[int, int]:
 def layout(prompt: Prompt, loras: dict[str, str] | None = None) -> GraphModel:
     """Prompt JSON to a fresh model. Pure; the only store read is the LoRA lookup."""
     if loras is None:
-        loras = graph_view.lora_lookup()
+        loras = lora_lookup()
     ids = {str(k) for k, v in prompt.items() if isinstance(v, dict)}
     cards: dict[str, dict[str, Any]] = {}
     for nid, node in prompt.items():
@@ -199,9 +514,9 @@ def layout(prompt: Prompt, loras: dict[str, str] | None = None) -> GraphModel:
         if not isinstance(node, dict):
             continue
         cls = str(node.get("class_type") or "Node")
-        title = f"#{nid}  {graph_view.node_title(node, prompt, nid)}"
-        ins = [k for k, v in (node.get("inputs") or {}).items() if graph_view.is_link(v)]
-        outs = [name for name, _typ in graph_view._lg_outputs(cls)]
+        title = f"#{nid}  {node_title(node, prompt, nid)}"
+        ins = [k for k, v in (node.get("inputs") or {}).items() if is_link(v)]
+        outs = [name for name, _typ in _lg_outputs(cls)]
         rows = _widget_rows(nid, node, loras)
         note = clip_note(node)
         w, h = _card_size(title, rows, len(ins), len(outs), note)
@@ -235,14 +550,14 @@ def layout(prompt: Prompt, loras: dict[str, str] | None = None) -> GraphModel:
         for nid in nids:
             card = cards[nid]
             ins = tuple(
-                Port(name=k, key=k, kind="in", color=graph_view.slot_color(k, card["cls"]),
+                Port(name=k, key=k, kind="in", color=slot_color(k, card["cls"]),
                      y=HEADER_H + BODY_PAD + i * ROW_H + ROW_H / 2)
                 for i, k in enumerate(card["ins"])
             )
             base = len(ins)
             outs = tuple(
                 Port(name=name, key=f"out_{i}", kind="out",
-                     color=graph_view.slot_color(name.lower(), card["cls"]),
+                     color=slot_color(name.lower(), card["cls"]),
                      y=HEADER_H + BODY_PAD + (base + i) * ROW_H + ROW_H / 2)
                 for i, name in enumerate(card["outs"])
             )
@@ -265,17 +580,17 @@ def layout(prompt: Prompt, loras: dict[str, str] | None = None) -> GraphModel:
 
     edges: list[Edge] = []
     by_id = {n.id: n for n in nodes}
-    for src, dst, key in graph_view.graph_edges(prompt):
+    for src, dst, key in graph_edges(prompt):
         if src not in ids or dst not in ids or src not in by_id or dst not in by_id:
             continue
-        slot = graph_view._lg_origin_slot(prompt[src] if isinstance(prompt[src], dict) else {}, key)
+        slot = _lg_origin_slot(prompt[src] if isinstance(prompt[src], dict) else {}, key)
         edges.append(
             Edge(
                 source=src,
                 source_key=f"out_{slot}",
                 target=dst,
                 target_key=key,
-                color=graph_view.slot_color(key, str((prompt[src] or {}).get("class_type") or "")),
+                color=slot_color(key, str((prompt[src] or {}).get("class_type") or "")),
             )
         )
     return GraphModel(nodes=tuple(nodes), edges=tuple(edges), origin=("layout", ""))
@@ -302,7 +617,7 @@ def hit_test(model: GraphModel, sx: float, sy: float) -> Node | None:
 
 def toggle_selection(selected: tuple[str, ...], nid: str) -> tuple[str, ...]:
     """Two-id selection: a third pick drops the oldest. Pressing a picked node clears it."""
-    return tuple(graph_view.toggle_live_selection(list(selected), nid))
+    return tuple(toggle_live_selection(list(selected), nid))
 
 
 def begin_drag(model: GraphModel, sx: float, sy: float) -> tuple[GraphModel, str | None]:
@@ -340,3 +655,23 @@ def fit_view(model: GraphModel, width: float, height: float, *, padding: float =
     ox = (width - right * scale) / 2
     oy = (height - bottom * scale) / 2
     return model.with_view(ViewTransform(ox, oy, scale))
+
+
+def _fmt_value(key: str, val: Any, node: dict[str, Any] | None = None) -> str:
+    if key == "lora_name" and node:
+        title = str(((node.get("_meta") or {}).get("title") or "")).strip()
+        if title:
+            return Path(title).name
+    raw = str(val)
+    if key in ("lora_name", "unet_name", "clip_name", "vae_name") and (
+        raw.startswith("http://") or raw.startswith("https://")
+    ):
+        name = Path(unquote(urlparse(raw).path)).name
+        raw = name if name.endswith(".safetensors") else raw
+    if "\\" in raw or "/" in raw:
+        raw = raw.replace("\\", "/").split("/")[-1]
+    if key == "text":
+        return raw.replace("\n", " ")[:72]
+    if key in ("lora_name", "name", "unet_name", "clip_name", "vae_name"):
+        return raw[:80]
+    return raw[:48]

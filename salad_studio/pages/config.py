@@ -134,6 +134,8 @@ class ConfigPage(Page):
             return
         profiles.set_active(name)
         self.win.apply_profile(stored)
+        self.show_profile()
+        self.show_policy(stored.policy)
         self.host.note(f"Loaded profile {name}", level="info")
 
     def add_profile(self, _e: Any = None) -> None:
@@ -150,6 +152,8 @@ class ConfigPage(Page):
         profiles.upsert(p)
         profiles.set_active(p.name)
         self.win.apply_profile(p)
+        self.show_profile()
+        self.show_policy(p.policy)
         self.host.note(f"Added profile {p.name}", level="ok")
 
     def save_profile(self, _e: Any = None) -> None:
@@ -185,9 +189,13 @@ class ConfigPage(Page):
                 self.host.note(f"Deleted {name}; recreated the default profile", level="ok")
                 self.win.apply_profile(p)
             else:
-                active = profiles.get_active() or sorted(left)[0]
+                active = profiles.get_active()
+                active = active if active in left else sorted(left)[0]
+                profiles.set_active(active)
                 self.win.apply_profile(left[active])
                 self.host.note(f"Deleted {name}", level="ok")
+            self.show_profile()
+            self.show_policy(self.win.profile.policy)
 
         self.host.ask("Salad Studio",
                       f"Delete profile {name!r}? The last profile is recreated as a default. "
@@ -283,14 +291,16 @@ class ConfigPage(Page):
         from salad_studio import image_deploy
 
         settings = image_deploy.load_settings()
-        entry = image_deploy.entry_by_ref(image_deploy.entries(None, settings), str(self.image.value or ""))
+        pick = str(self.image.value or "") or (image_deploy.tag_options(None, settings) or [""])[0]
+        entry = image_deploy.entry_by_ref(image_deploy.entries(None, settings), pick)
         return str(entry.get("name")) if entry else ""
 
     def _show_environment(self) -> None:
         from salad_studio import image_deploy
 
         settings = image_deploy.load_settings()
-        entry = image_deploy.entry_by_ref(image_deploy.entries(None, settings), str(self.image.value or ""))
+        pick = str(self.image.value or "") or (image_deploy.tag_options(None, settings) or [""])[0]
+        entry = image_deploy.entry_by_ref(image_deploy.entries(None, settings), pick)
         include = bool(self.show_tokens.value)
         rows = (image_deploy.env_rows(entry, image_deploy.extra_env(settings, self._image_name()),
                                       self._token_map()) if entry else [])
@@ -658,6 +668,8 @@ class ConfigPage(Page):
         profiles.upsert(p)
         profiles.set_active(name)
         self.win.apply_profile(p)
+        self.show_profile()
+        self.show_policy(p.policy)
         self.host.note(f"Created profile {name}", level="ok")
 
     def remove_vast(self, _e: Any = None) -> None:

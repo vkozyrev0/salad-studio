@@ -186,3 +186,30 @@ class TheQueue(Case):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheHistoryStripIsFilled(Case):
+    def test_a_finished_plate_reaches_the_strip(self) -> None:
+        from PIL import Image
+
+        from salad_studio import flet_services
+
+        flet_services.OUT_DIR.mkdir(parents=True, exist_ok=True)
+        path = flet_services.OUT_DIR / "studio_strip_probe.jpg"
+        Image.new("RGB", (40, 30), (200, 30, 30)).save(path)
+        self.addCleanup(path.unlink, True)
+        self.win.refresh_history_strip()
+        strip = self.win.shell.strip
+        names = [c.tooltip for c in strip.list.controls]
+        self.assertIn(path.name, names, "the newest plate is on the strip")
+        self.assertFalse(strip.empty.visible, "the empty line goes once a plate is there")
+
+    def test_a_strip_click_opens_the_plate_it_names(self) -> None:
+        opened: list = []
+        self.win._open_plate = opened.append
+        paths = [Path("a.jpg"), Path("b.jpg")]
+        self.win.shell.strip.show([("a.jpg", None), ("b.jpg", None)],
+                                  lambda index: self.win._open_plate(paths[index]))
+        click(self.win.shell.strip.list.controls[1])
+        self.assertEqual([path.name for path in opened], ["b.jpg"],
+                         "the second thumb opens the second plate")

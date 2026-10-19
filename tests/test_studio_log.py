@@ -124,10 +124,12 @@ class ExplainHttp(unittest.TestCase):
 
 class SourceLogsTab(unittest.TestCase):
     def test_app_has_logs_tab(self) -> None:
-        src = (PKG / "app.py").read_text(encoding="utf-8")
-        self.assertIn('text="Logs"', src)
-        self.assertIn("_build_logs_tab", src)
-        self.assertIn("on_log=self.log", src)
+        page = (PKG / "pages" / "logs_page.py").read_text(encoding="utf-8")
+        self.assertIn('super().__init__("Logs"', page)
+        self.assertIn("refresh_lines", page)
+        services = (PKG / "flet_services.py").read_text(encoding="utf-8")
+        self.assertIn("on_log=self.log", services)
+        self.assertIn('"Logs",', (PKG / "flet_shell.py").read_text(encoding="utf-8"))
         self.assertIn("explain_http", (PKG / "generator.py").read_text(encoding="utf-8"))
         self.assertIn("wait_gateway_ready", (PKG / "generator.py").read_text(encoding="utf-8"))
 

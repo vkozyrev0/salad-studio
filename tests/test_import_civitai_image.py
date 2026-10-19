@@ -22,17 +22,7 @@ for _p in (PKG, HERE.parent):
 from salad_studio import comfy_import  # noqa: E402
 from tests.test_launch import _TempPaths  # noqa: E402
 
-try:
-    import tkinter as tk
-except ImportError as _tk_err:
-    tk = None  # type: ignore[assignment]
-    _TK_IMPORT_ERROR = _tk_err
-else:
-    _TK_IMPORT_ERROR = None
-
 FIXTURE = HERE / "civitai_fixtures" / "image_125073040.json"
-
-
 FIXTURES = HERE / "civitai_fixtures"
 
 
@@ -58,97 +48,63 @@ def _redirect_convert_off_the_network(case: unittest.TestCase) -> None:
     case.addCleanup(setattr, ls, "EXTRAS_PATH", saved)
 
 
-@unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
 class ImportTabLoraManagerImage(unittest.TestCase):
-    """Image 123550044: Import → Convert → Generate POSTs a clean copy."""
+    """Image 123550044: Import, Fetch, Convert, then Generate POSTs a clean copy."""
 
     def setUp(self) -> None:
-        try:
-            probe = tk.Tk()
-            probe.withdraw()
-            probe.destroy()
-        except tk.TclError as e:
-            self.skipTest(f"Tk cannot initialize: {e}")
         self._td = tempfile.TemporaryDirectory()
         self.addCleanup(self._td.cleanup)
         self.tmp = Path(self._td.name)
         self._ctx = _TempPaths(self.tmp)
         self._ctx.__enter__()
         self.addCleanup(lambda: self._ctx.__exit__(None, None, None))
-        from salad_studio import app as app_mod
+        from salad_studio import tokens as studio_tokens
+        from salad_studio.pages.import_page import ImportPage
+        from tests._flet_host import Host
 
-        self.app_mod = app_mod
         self.fixture = json.loads(
             (FIXTURES / "image_123550044.json").read_text(encoding="utf-8")
         )
-        self.app = app_mod.SaladStudio(show=False)
-        self.app.withdraw()
-        self.addCleanup(self.app.destroy)
-        self.app.update_idletasks()
+        self.host = Host()
+        self.host.load_profiles()
+        self.page = ImportPage(self.host)
+        self.host.store_page("Import", self.page)
+        studio_tokens.write_token("salad", "lora-manager-key")
+        studio_tokens.write_token("civitai", "lora-manager-civitai-token")
         _redirect_convert_off_the_network(self)
 
     def _fetch_and_convert(self) -> None:
-        app = self.app
-        app._goto_tab("Import")
-        app.var_imp_image_url.set(self.fixture["source"])
-        app._on_fetch_civitai_image()
-        app.update_idletasks()
-        app._on_import_civitai()
-        app.update_idletasks()
+        self.page.url.value = self.fixture["source"]
+        self.page.fetch_civitai()
+        self.page.convert()
 
     def test_generate_posts_a_copy_with_no_pack_types_and_the_prompt(self) -> None:
-        app = self.app
-        errors: list[str] = []
-        with mock.patch.object(
-            self.app_mod.messagebox, "showerror", lambda *a, **k: errors.append(str(a))
-        ):
-            self._fetch_and_convert()
-        self.assertEqual(errors, [], "the import must not raise a dialog")
+        from salad_studio import flet_services, generator
 
-        tokens = self.app_mod.tokens
-        tokens.write_token("salad", "lora-manager-key")
-        tokens.write_token("civitai", "lora-manager-civitai-token")
+        self._fetch_and_convert()
+        self.assertEqual(self.host.dialogs, [], "the import must not raise a dialog")
+        editor = self.host.pages["Prompt Editor"]
+        payload = generator.parse_request_json(editor.text())
         captured: dict = {}
-        plate = "QUJD"
-        outcome: list[BaseException] = []
 
         def _req(url, key=None, data=None, timeout=30):
             if str(url).endswith("/ready"):
                 return 200, b"ok"
             captured["url"] = str(url)
             captured["body"] = json.loads(data.decode("utf-8")) if data else {}
-            return 200, json.dumps({"images": [plate]}).encode()
+            return 200, json.dumps({"images": ["QUJD"]}).encode()
 
+        target = self.host.form.profile(self.host.stored_profile())
         with tempfile.TemporaryDirectory() as out_td, mock.patch.object(
-            self.app_mod.generator.salad_gen, "_req", side_effect=_req
-        ), mock.patch.object(self.app_mod, "OUT_DIR", Path(out_td)), mock.patch.object(
-            self.app_mod.messagebox, "showerror", lambda *a, **k: errors.append(str(a))
-        ):
-            app.gen_queue = self.app_mod.salad_queue.SaladQueue(
-                on_log=app._on_queue_log, sleep=lambda _s: None
-            )
-            app.var_gateway.set(self.app_mod.profiles.load_all()["klein"].gateway)
-            app.var_salad_status.set("Ready")
-
-            def body() -> None:
-                try:
-                    app._on_generate()
-                    deadline = time.time() + 30
-                    while time.time() < deadline and not captured:
-                        app.update()
-                        time.sleep(0.02)
-                except BaseException as exc:  # noqa: BLE001 - re-raised below
-                    outcome.append(exc)
-                finally:
-                    app.quit()
-
-            app.after(0, body)
-            app.mainloop()
-        if outcome:
-            raise outcome[0]
-
-        self.assertEqual(errors, [], "Generate must not raise a dialog")
+            generator.salad_gen, "_req", side_effect=_req
+        ), mock.patch.object(flet_services, "OUT_DIR", Path(out_td)):
+            generator.generate_from_payload(gateway=target.gateway,
+                                            key=self.host.services.salad_key(),
+                                            payload=payload, out_dir=Path(out_td),
+                                            line=target.name, checksum=f"checksum-{id(self)}")
+        self.assertEqual(self.host.dialogs, [], "Generate must not raise a dialog")
         self.assertTrue(captured.get("body"), "Generate never POSTed")
+        self.assertEqual(captured["url"], f"{target.gateway.rstrip('/')}/prompt")
         posted = captured["body"]["prompt"]
         classes = sorted(
             {str(node.get("class_type")) for node in posted.values() if isinstance(node, dict)}
@@ -173,58 +129,43 @@ class ImportTabLoraManagerImage(unittest.TestCase):
         self.assertIn(expected, texts)
 
 
-@unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
 class ImportTabCivitaiImage(unittest.TestCase):
+    """Image 125073040: Fetch from the fixture, Convert onto the Prompt Editor."""
+
     def setUp(self) -> None:
-        try:
-            probe = tk.Tk()
-            probe.withdraw()
-            probe.destroy()
-        except tk.TclError as e:
-            self.skipTest(f"Tk cannot initialize: {e}")
         self._td = tempfile.TemporaryDirectory()
         self.addCleanup(self._td.cleanup)
         self.tmp = Path(self._td.name)
         self._ctx = _TempPaths(self.tmp)
         self._ctx.__enter__()
         self.addCleanup(lambda: self._ctx.__exit__(None, None, None))
-        from salad_studio import app as app_mod
+        from salad_studio.pages.import_page import ImportPage
+        from tests._flet_host import Host
 
-        self.app_mod = app_mod
         self.fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
-        self.app = app_mod.SaladStudio(show=False)
-        self.app.withdraw()
-        self.addCleanup(self.app.destroy)
-        self.app.update_idletasks()
+        self.host = Host()
+        self.host.load_profiles()
+        self.page = ImportPage(self.host)
+        self.host.store_page("Import", self.page)
         _redirect_convert_off_the_network(self)
 
     def _fetch(self) -> None:
         """Press Fetch from Civitai, served from the fixture."""
-        app = self.app
-        app._goto_tab("Import")
-        app.var_imp_image_url.set(self.fixture["source"])
-        app._on_fetch_civitai_image()
-        app.update_idletasks()
+        self.page.url.value = self.fixture["source"]
+        self.page.fetch_civitai()
 
     def _convert(self) -> None:
         """Press Convert to Prompt Editor on whatever the page holds."""
-        self.app._on_import_civitai()
-        self.app.update_idletasks()
+        self.page.convert()
 
     def test_the_import_produces_a_runnable_klein_request(self) -> None:
-        app = self.app
-        errors: list[str] = []
-        with mock.patch.object(
-            self.app_mod.messagebox, "showerror", lambda *a, **k: errors.append(str(a))
-        ):
-            self._fetch()
-            self._convert()
-
-        self.assertEqual(errors, [], "the import must not raise a dialog")
-        status = app.status.get()
-        self.assertIn("after import", status, f"the page must report the import: {status!r}")
-        self.assertIn("added UNETLoader", status)
-        payload = json.loads(app.editor_text.get("1.0", "end"))
+        self._fetch()
+        self._convert()
+        self.assertEqual(self.host.dialogs, [], "the import must not raise a dialog")
+        note = self.host.notes[-1][1]
+        self.assertIn("after import", note, f"the page must report the import: {note!r}")
+        self.assertIn("added UNETLoader", note)
+        payload = json.loads(self.host.pages["Prompt Editor"].text())
         prompt = payload["prompt"]
         classes = [node.get("class_type") for node in prompt.values()]
 
@@ -247,12 +188,13 @@ class ImportTabCivitaiImage(unittest.TestCase):
             )
         self.assertIn("SamplerCustomAdvanced", classes)
         self.assertNotIn("SeedVR2VideoUpscaler", classes)
-        self.assertIn("imported Civitai paste", app.log_text.get("1.0", "end"))
+        self.assertIn("imported Civitai paste",
+                      " ".join(line for _level, line in self.host.services.log_lines))
 
     def test_the_fetched_paste_is_the_upscaler_workflow(self) -> None:
         """The paste is real; it is the route that changed."""
         self._fetch()
-        stash = self.app._import_workflow_text()
+        stash = self.page.workflow_text()
         obj = comfy_import._parse_json_blob(stash)
         self.assertGreater(comfy_import.comfy_node_count(obj), 0, "the paste carries nodes")
         self.assertFalse(
@@ -260,7 +202,7 @@ class ImportTabCivitaiImage(unittest.TestCase):
             "this workflow has no sampler, no diffusion loader and no text encode",
         )
         self.assertIn("SeedVR2VideoUpscaler", stash)
-        self.assertIn("realistic", self.app.import_meta.get("1.0", "end"))
+        self.assertIn("realistic", self.page.meta.value)
 
 
 if __name__ == "__main__":

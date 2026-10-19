@@ -25,11 +25,16 @@ import salad_queue as top_queue  # noqa: E402
 from salad_studio import salad_queue as pkg_queue  # noqa: E402
 
 # The modules that build a real window without going through `_TempPaths`.
+# Every module that builds a window. Each one's setUpModule runs TempStores,
+# which moves the queue ledger off the user's store for the length of the module.
 WINDOW_MODULES = (
-    "tests.test_json_editor",
+    "tests.test_app_assist",
+    "tests.test_app_layout",
+    "tests.test_app_lists",
+    "tests.test_app_logs",
+    "tests.test_app_prompt_wiring",
     "tests.test_profiles",
     "tests.test_prompt_history",
-    "tests.test_theme",
     "tests.test_tokens",
 )
 

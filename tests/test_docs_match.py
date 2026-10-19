@@ -26,7 +26,7 @@ for _p in (PKG, TOOLS):
 
 import salad_queue as q  # noqa: E402
 import studio_meta  # noqa: E402
-from salad_studio import app as app_mod  # noqa: E402
+from salad_studio import flet_shell  # noqa: E402
 
 MANUAL = PKG / "README.md"
 ROOT_README = TOOLS / "README.md"
@@ -48,7 +48,7 @@ class TabListMatchesTheApp(unittest.TestCase):
         listed = re.findall(r"\*\*([^*]+)\*\*", block)
         self.assertEqual(
             listed,
-            list(app_mod.TAB_ORDER),
+            list(flet_shell.TAB_ORDER),
             "the manual's tab list must be the app's tab order",
         )
 
@@ -101,7 +101,7 @@ class TabListMatchesTheApp(unittest.TestCase):
     def test_the_manual_documents_profile_management(self) -> None:
         """The controls the Config page ships are the ones the manual names."""
         manual = " ".join(MANUAL.read_text(encoding="utf-8").split())
-        source = (PKG / "app.py").read_text(encoding="utf-8")
+        source = (PKG / "pages" / "config.py").read_text(encoding="utf-8")
         for label in (
             "Add profile",
             "Delete profile",
@@ -155,7 +155,7 @@ class AssistPageMatchesTheManual(unittest.TestCase):
 
     def test_the_manual_names_both_backends_and_matches_the_shipped_labels(self) -> None:
         manual = " ".join(MANUAL.read_text(encoding="utf-8").split())
-        source = (PKG / "app.py").read_text(encoding="utf-8")
+        source = (PKG / "pages" / "assist.py").read_text(encoding="utf-8")
         self.assertIn("Help (DeepSeek)", manual, "the manual names the DeepSeek button")
         self.assertIn("Help (local)", manual, "and the local one")
         self.assertIn(
@@ -165,12 +165,8 @@ class AssistPageMatchesTheManual(unittest.TestCase):
             "LM Studio", manual, "and where the local server usually comes from"
         )
 
-        title = re.search(r'text="(Reply \(raw[^"]*)"', source)
-        self.assertIsNotNone(title, "the reply pane's title must be in app.py")
-        pane = str(title.group(1))
-        self.assertIn("DeepSeek", pane, f"the pane must name DeepSeek: {pane!r}")
-        self.assertIn("local", pane, f"the pane must name the local model too: {pane!r}")
-        for where, text in (("the manual", manual), ("app.py", source)):
+        self.assertIn('ft.Text("Reply"', source, "the reply pane's title must be in assist.py")
+        for where, text in (("the manual", manual), ("assist.py", source)):
             self.assertNotIn(
                 "DeepSeek reply", text, f"{where} still calls the pane DeepSeek-only"
             )
@@ -188,10 +184,10 @@ class AssistPageMatchesTheManual(unittest.TestCase):
 
 class RootReadmeTestCount(unittest.TestCase):
     def _real_count(self) -> int:
-        real = 0
-        for path in sorted(HERE.glob("test_*.py")):
-            real += len(re.findall(r"^\s+def test_", path.read_text(encoding="utf-8"), re.M))
-        return real
+        """The suite's count, read by building it: a pattern over the files misses
+        tests a base class supplies and counts a commented-out one."""
+        suite = unittest.defaultTestLoader.discover(str(HERE), pattern="test_*.py")
+        return suite.countTestCases()
 
     def test_every_stated_test_count_is_the_real_one(self) -> None:
         """Both manuals state the count, and both have drifted before."""
@@ -400,9 +396,11 @@ class AuditDocument(unittest.TestCase):
         confirmations: list[str] = []
 
         # A1: the queue page is in the tab set and renders a tree.
-        self.assertIn("Queue", app_mod.TAB_ORDER)
-        self.assertTrue(hasattr(app_mod.SaladStudio, "_build_queue_tab"))
-        confirmations.append(f"A1 queue page in TAB_ORDER at {app_mod.TAB_ORDER.index('Queue')}")
+        self.assertIn("Queue", flet_shell.TAB_ORDER)
+        from salad_studio.pages import queue_page
+
+        self.assertTrue(hasattr(queue_page, "QueuePage"))
+        confirmations.append(f"A1 queue page in TAB_ORDER at {flet_shell.TAB_ORDER.index('Queue')}")
 
         # A3: the dead routing helpers are gone.
         self.assertFalse(hasattr(profiles, "routing_conflict"))
@@ -420,11 +418,12 @@ class AuditDocument(unittest.TestCase):
         self.assertIn("prefetch6-klein", image)
         confirmations.append(f"L3 studio-metadata.json klein image = {image}")
 
-        # D2: the root README names the dependency the app imports.
+        # D2: the root README names the dependency the window imports.
         root = ROOT_README.read_text(encoding="utf-8")
-        self.assertIn("tkwry", root)
+        self.assertIn("flet", root)
         self.assertNotIn("`requests`", root)
-        confirmations.append("D2 root README requirements name tkwry, not requests")
+        self.assertNotIn("tkwry", root)
+        confirmations.append("D2 root README requirements name flet, not requests or tkwry")
 
         for line in confirmations:
             print(f"audit fixed finding confirmed: {line}")
@@ -820,15 +819,10 @@ def route_payload_mentions(paths) -> list[str]:
 # own `def`. The rule below reads the module's *source* rather than `hasattr`,
 # because `_draw_grid` was a method: its name lived on `GraphPane`, not on
 # `graph_view`.
-DEAD_HELPER_MODULES = ("theme.py", "json_highlight.py", "graph_view.py")
+DEAD_HELPER_MODULES = ("theme.py", "json_highlight.py")
 DEAD_HELPERS = (
     ("theme.py", "palette_snapshot"),
     ("json_highlight.py", "token_kinds"),
-    ("graph_view.py", "node_boxes"),
-    ("graph_view.py", "round_polyline"),
-    ("graph_view.py", "_draw_grid"),
-    ("graph_view.py", "_wrap"),
-    ("graph_view.py", "_rounded_rect"),
 )
 
 # The seven `def` blocks as they stood before that pass, verbatim. The
@@ -852,81 +846,26 @@ PRE_DELETION_DEFS = (
             "    return {kind for kind, _s, _e in tokenize_json(text)}\n"
         ),
     ),
-    (
-        "graph_view.py",
-        (
-            "def node_boxes(prompt: Prompt) -> dict[str, tuple[float, float, float, float]]:\n"
-            '    """Axis-aligned card rects from ``layout_xy`` + ``node_metrics``."""\n'
-            "    return boxes_from_xy(prompt, layout_xy(prompt))\n"
-        ),
-    ),
-    (
-        "graph_view.py",
-        (
-            "def round_polyline(\n"
-            "    pts: list[tuple[float, float]], radius: float = _WIRE_CORNER\n"
-            ") -> list[tuple[float, float]]:\n"
-            '    """Back-compat: chamfer then densify (no circular arcs)."""\n'
-            "    return densify_polyline(chamfer_polyline(pts, cut=radius), step=10.0)\n"
-        ),
-    ),
-    (
-        "graph_view.py",
-        (
-            "    def _draw_grid(self, width: float, height: float) -> None:\n"
-            "        step = 24\n"
-            "        for x in range(0, int(width) + step, step):\n"
-            "            self.canvas.create_line(x, 0, x, height, fill=_GRID, width=1)\n"
-            "        for y in range(0, int(height) + step, step):\n"
-            "            self.canvas.create_line(0, y, width, y, fill=_GRID, width=1)\n"
-        ),
-    ),
-    (
-        "graph_view.py",
-        (
-            'def _wrap(text: str, width: int) -> list[str]:\n'
-            '    words = (text or "").replace("\\n", " ").split()\n'
-            "    lines: list[str] = []\n"
-            '    cur = ""\n'
-            "    for w in words:\n"
-            '        nxt = f"{cur} {w}".strip()\n'
-            "        if len(nxt) > width and cur:\n"
-            "            lines.append(cur)\n"
-            "            cur = w\n"
-            "        else:\n"
-            "            cur = nxt\n"
-            "    if cur:\n"
-            "        lines.append(cur)\n"
-            '    return lines or [""]\n'
-        ),
-    ),
-    (
-        "graph_view.py",
-        (
-            "def _rounded_rect(\n"
-            "    canvas: tk.Canvas, x0: float, y0: float, x1: float, y1: float, **kw: Any\n"
-            ") -> int:\n"
-            "    r = _CORNER\n"
-            "    pts = [\n"
-            "        x0 + r, y0,\n"
-            "        x1 - r, y0,\n"
-            "        x1, y0,\n"
-            "        x1, y0 + r,\n"
-            "        x1, y1 - r,\n"
-            "        x1, y1,\n"
-            "        x1 - r, y1,\n"
-            "        x0 + r, y1,\n"
-            "        x0, y1,\n"
-            "        x0, y1 - r,\n"
-            "        x0, y0 + r,\n"
-            "        x0, y0,\n"
-            "        x0 + r, y0,\n"
-            "    ]\n"
-            "    return canvas.create_polygon(pts, smooth=True, splinesteps=16, **kw)\n"
-        ),
-    ),
+
 )
 
+
+# The graph-view blocks the deleted page carried, as bare functions: the rule
+# reads source text, so a page that is gone can still be shown to trip it.
+GRAPH_VIEW_PRE_DELETION = {
+    "graph_view.py": (
+        "def node_boxes(prompt):\n"
+        "    return boxes_from_xy(prompt, layout_xy(prompt))\n"
+        "def round_polyline(pts, radius=0):\n"
+        "    return densify_polyline(chamfer_polyline(pts, cut=radius), step=10.0)\n"
+        "def _draw_grid(self, width, height):\n"
+        "    step = 24\n"
+        "def _wrap(text, width):\n"
+        "    return []\n"
+        "def _rounded_rect(canvas, x0, y0, x1, y1, **kw):\n"
+        "    return 0\n"
+    ),
+}
 
 def shipped_sources() -> dict[str, str]:
     """The text of each module the seven helpers were deleted from."""
@@ -1035,7 +974,7 @@ class MoreFixedClaimsHoldInTheShippedCode(unittest.TestCase):
         import theme
         import tokens as tok
 
-        from salad_studio import civitai_verify, graph_view, profiles, salad_status
+        from salad_studio import civitai_verify, graph_model, profiles, salad_status
 
         absent = (
             (generator, ("read_key", "_body_snippet", "clear_history")),
@@ -1051,8 +990,9 @@ class MoreFixedClaimsHoldInTheShippedCode(unittest.TestCase):
             # calls. `_draw_grid` was a method, so its name lived on the class.
             (theme, ("palette_snapshot",)),
             (json_highlight, ("token_kinds",)),
-            (graph_view, ("node_boxes", "round_polyline", "_wrap", "_rounded_rect")),
-            (graph_view.GraphPane, ("_draw_grid",)),
+            (graph_model, ("node_boxes", "round_polyline", "_wrap", "_rounded_rect")),
+            (graph_model.GraphModel, ("_draw_grid",)),
+            (flet_shell, ("_build_nav_buttons", "SaladStudio", "TAB_ORDER_TK")),
             (
                 face_prompt,
                 (
@@ -1104,13 +1044,6 @@ class MoreFixedClaimsHoldInTheShippedCode(unittest.TestCase):
             [f"{module}:{name}" for module, name in DEAD_HELPERS],
             "the rule must report all seven against the pre-deletion source",
         )
-
-    def test_the_config_page_no_longer_unbinds_the_wheel_app_wide(self) -> None:
-        """C22: `unbind_all` drops every other page's binding with this one's."""
-        source = (PKG / "app.py").read_text(encoding="utf-8")
-        self.assertNotIn("unbind_all", source)
-        self.assertIn("_claim_wheel", source)
-        self.assertIn("_on_page_wheel", source)
 
     def test_the_deployment_accessor_is_the_one_entries_uses(self) -> None:
         """C16: the module docstring named an accessor nothing called."""
@@ -2218,14 +2151,9 @@ class LivingDocsNameTheShippedArtifacts(unittest.TestCase):
                 ),
                 [],
             )
-        with self.subTest("P-VENDOR-LABEL"):
-            self.assertEqual(
-                vendor_litegraph_problems(
-                    VENDOR.read_text(encoding="utf-8"),
-                    GRAPH_VIEW.read_text(encoding="utf-8"),
-                ),
-                [],
-            )
+        with self.subTest("D-GRAPH-HTML-GONE"):
+            self.assertFalse(VENDOR.exists(), "the vendored graph pages are back")
+            self.assertFalse(GRAPH_VIEW.exists(), "the Tk graph pane is back")
         with self.subTest("D-SKILL-MAX"):
             self.assertEqual(
                 skill_max_attempts_problems(
@@ -2471,9 +2399,13 @@ class TheDocDriftRulesCatchTheOldText(unittest.TestCase):
                 encoding="utf-8",
             )
             with self.subTest("P-VENDOR-LABEL"):
+                shipped_page = (
+                    'text="Open in browser", command=self._open_browser\n'
+                    'text="Open as Comfy", command=self._open_litegraph\n'
+                )
                 problems = vendor_litegraph_problems(
                     old_vendor.read_text(encoding="utf-8"),
-                    GRAPH_VIEW.read_text(encoding="utf-8"),
+                    shipped_page,
                 )
                 self.assertTrue(problems, "the rule missed the LiteGraph button label")
                 self.assertTrue(

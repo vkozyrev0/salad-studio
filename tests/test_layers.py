@@ -1,10 +1,10 @@
-"""The seven non-UI layers run in a process where tkinter is never imported.
+"""The seven non-UI layers run in a process where no UI toolkit is imported.
 
 A subprocess drives one real call per layer -- import, persistence, logging,
 Salad communication, Vast.ai communication, image deployment, AI communication
--- and then asserts that ``tkinter`` is not in ``sys.modules``. The UI layer is
-the one that is allowed to import it, so a regression here means widget code
-crept back into a layer.
+-- and then asserts that neither ``tkinter`` nor ``flet`` is in ``sys.modules``.
+The pages and the window are the only code allowed to import a UI toolkit, so
+a regression here means widget code crept back into a layer.
 """
 from __future__ import annotations
 
@@ -134,14 +134,14 @@ assert (positive, negative) == ("P", "N"), (positive, negative)
 print(f"ai: instruction {len(system)} chars, parsed ({positive}, {negative})")
 
 # --- the point of the probe ---------------------------------------------
-imported = sorted(name for name in sys.modules if name.split(".")[0] == "tkinter")
-assert not imported, f"a non-UI layer imported tkinter: {imported}"
-print("layers: tkinter never imported")
+imported = sorted(name for name in sys.modules if name.split(".")[0] in ("tkinter", "flet"))
+assert not imported, f"a non-UI layer imported a UI toolkit: {imported}"
+print("layers: no UI toolkit imported")
 '''
 
 
 class LayerSeparability(unittest.TestCase):
-    def test_every_layer_runs_without_tkinter(self) -> None:
+    def test_every_layer_runs_without_a_ui_toolkit(self) -> None:
         proc = subprocess.run(
             [sys.executable, "-c", PROBE],
             cwd=str(TOOLS),
@@ -159,12 +159,12 @@ class LayerSeparability(unittest.TestCase):
                 any(line.startswith(prefix) for line in lines),
                 f"no result line for {prefix}\n{output}",
             )
-        self.assertIn("layers: tkinter never imported", output)
+        self.assertIn("layers: no UI toolkit imported", output)
 
-    def test_the_ui_module_is_the_one_that_imports_tkinter(self) -> None:
-        """The other half of the split: the window still lives in app.py."""
-        source = (PKG / "app.py").read_text(encoding="utf-8")
-        self.assertIn("import tkinter as tk", source)
+    def test_only_the_pages_and_the_window_import_flet(self) -> None:
+        """The other half of the split: the window is flet_app, and it imports flet."""
+        source = (PKG / "flet_app.py").read_text(encoding="utf-8")
+        self.assertIn("import flet as ft", source)
         for module in (
             "ai_helper.py",
             "comfy_import.py",
@@ -182,7 +182,7 @@ class LayerSeparability(unittest.TestCase):
         ):
             text = (PKG / module).read_text(encoding="utf-8")
             self.assertNotIn(
-                "import tkinter",
+                "import flet",
                 text,
                 f"{module} must stay importable without the UI layer",
             )

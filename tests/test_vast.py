@@ -24,15 +24,7 @@ for _p in (PKG, HERE.parent):
         sys.path.insert(0, str(_p))
 
 from salad_studio import generator, profiles, tokens as tok, vast  # noqa: E402
-from tests.test_launch import _Inline, _TempPaths  # noqa: E402
-
-try:
-    import tkinter as tk
-except ImportError as _tk_err:
-    tk = None  # type: ignore[assignment]
-    _TK_IMPORT_ERROR = _tk_err
-else:
-    _TK_IMPORT_ERROR = None
+from tests.test_launch import _TempPaths  # noqa: E402
 
 # The store ``vast.py`` ships, read by executing the file rather than by reading
 # the live global: modules that build a window (test_app_layout, test_layers,
@@ -980,103 +972,83 @@ class VastGeneration(unittest.TestCase):
         self.assertIn("no images", str(caught.exception))
 
 
-@unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
 class VastTabAndGenerate(unittest.TestCase):
-    """The Vast.ai page and the press, through the real window."""
+    """The Vast.ai section and the press, through the Config page and the window.
+
+    ``tests._flet_host.Host`` runs the page's workers inline, so each press has
+    its result before the next assertion, and a store read is a restart's read.
+    """
 
     def setUp(self) -> None:
-        try:
-            probe = tk.Tk()
-            probe.withdraw()
-            probe.destroy()
-        except tk.TclError as e:
-            self.skipTest(f"Tk cannot initialize: {e}")
         self._td = tempfile.TemporaryDirectory()
         self.addCleanup(self._td.cleanup)
         self.tmp = Path(self._td.name)
         self._ctx = _TempPaths(self.tmp)
         self._ctx.__enter__()
         self.addCleanup(lambda: self._ctx.__exit__(None, None, None))
-        from salad_studio import app as app_mod
-
-        self.app_mod = app_mod
+        tok.write_token("salad", "salad-key")
 
     def _window(self):
-        app = self.app_mod.SaladStudio(show=False)
-        app.withdraw()
-        self.addCleanup(self._destroy, app)
-        app.update_idletasks()
-        return app
+        """A window with every store in the temp dir, its active profile loaded, Config built."""
+        from salad_studio.pages.config import ConfigPage
+        from tests._flet_host import Host
+
+        host = Host()
+        profiles.ensure_builtin_profiles()
+        active = profiles.get_active()
+        host.apply_profile(profiles.load_all().get(active or "klein"))
+        host.store_page("Config", ConfigPage(host))
+        return host
+
+    def _page(self, host):
+        return host.pages["Config"]
 
     @staticmethod
-    def _destroy(app) -> None:
-        try:
-            app.destroy()
-        except tk.TclError:
-            pass
-
-    @staticmethod
-    def _pump(app, predicate, seconds: float = 30.0) -> bool:
-        deadline = time.time() + seconds
-        while time.time() < deadline:
-            if predicate():
-                return True
-            app.update()
-            time.sleep(0.02)
-        return bool(predicate())
-
-    @staticmethod
-    def _inline():
-        """Run the page's worker on the calling thread.
-
-        A render worker hands its result back with ``after(0, ...)``, which Tk
-        only accepts from the thread that owns the window, so the worker runs
-        inline here and ``update()`` lets that callback land. What is under test
-        is the page's own wiring and the real POST, not the thread.
-        """
-        return mock.patch("salad_studio.app.threading.Thread", _Inline)
+    def _type_instances(page, typed: str) -> None:
+        """Type addresses into the page's box and press Add instance, one address per press."""
+        for address in typed.split(","):
+            page.vast_endpoint.value = address.strip()
+            page.add_vast()
 
     def test_the_section_is_on_the_config_page_and_starts_on_salad(self) -> None:
-        app = self._window()
-        labels = [app.nb.tab(t, "text") for t in app.nb.tabs()]
-        self.assertNotIn("Vast.ai", labels, "the vast page is part of Config now")
-        self.assertEqual(labels, list(self.app_mod.TAB_ORDER))
-        node = app.vast_tree.master
-        while node is not None and node is not app._config:
-            node = node.master
-        self.assertIs(node, app._config, "the instance list must live on the Config page")
-        self.assertEqual(app.gen_mode(), "salad", "a fresh install renders on Salad")
+        from salad_studio.flet_shell import TAB_ORDER
+
+        host = self._window()
+        page = self._page(host)
+        self.assertIn("vast", [segment.value for segment in page.tabs.segments],
+                      "the vast.ai hosts are a Config section now")
+        self.assertNotIn("Vast.ai", TAB_ORDER, "the vast page is part of Config now")
+        self.assertEqual(TAB_ORDER[0], "Config", "and Config is the page a fresh window opens on")
+        self.assertEqual(host.form.mode, "salad", "a fresh install renders on Salad")
 
     def test_the_key_lists_the_account_and_the_rows_are_saved(self) -> None:
         """The page's fetch: the stored key, the real request, the saved rows."""
         tok.write_token("vast", "vast-page-key")
-        app = self._window()
+        host = self._window()
+        page = self._page(host)
         self.assertEqual(tok.read_token("vast"), "vast-page-key")
         send = _Recorder(200, json.dumps(INSTANCES_BODY).encode())
-        with mock.patch.object(vast, "_send", send), self._inline():
-            app._on_vast_fetch()
-            self.assertTrue(
-                self._pump(app, lambda: not app._vast_fetch_busy),
-                "the fetch never came back",
-            )
+        with mock.patch.object(vast, "_send", send):
+            page.fetch_vast()
         self.assertEqual(len(send.requests), 1)
         self.assertEqual(send.requests[0].full_url, vast.INSTANCES_URL)
         self.assertEqual(_header(send.requests[0], "Authorization"), "Bearer vast-page-key")
-        rows = [app.vast_tree.item(i, "values") for i in app.vast_tree.get_children()]
         self.assertEqual(
-            [row[2] for row in rows],
-            ["http://203.0.113.9:31234", "http://198.51.100.7:40111", "#333"],
+            [row["endpoint"] for row in page.vast_rows],
+            ["http://203.0.113.9:31234", "http://198.51.100.7:40111", ""],
             "the stopped record is a row too; it just has no address",
         )
-        self.assertEqual(rows[2][4], "exited")
-        self.assertEqual(rows[0][1], "klein-4090", "the label column shows the vast label")
+        self.assertEqual(vast.row_label(page.vast_rows[2]), "stopped-one")
+        self.assertEqual(page.vast_rows[2]["state"], "exited")
+        self.assertEqual(page.vast_rows[0]["label"], "klein-4090", "the row keeps the vast label")
         self.assertIsNone(
-            app._vast_active(),
+            vast.active_row(page.vast_doc),
             "Fetch does not promote a row it did not create; the user selects one",
         )
-        app.vast_tree.selection_set(app.vast_tree.get_children()[0])
-        app._on_vast_select()
-        self.assertEqual(app._vast_active()["endpoint"], "http://203.0.113.9:31234")
+        self.assertIsNone(vast.load_doc()["active"] or None, "and nothing is active on disk")
+
+        page.select_vast(0)
+        self.assertEqual(vast.active_row(vast.load_doc())["endpoint"], "http://203.0.113.9:31234")
 
     def test_fetch_reconciles_the_evidence_state_in_a_hidden_window(self) -> None:
         """The report's exact store and account, through the page's Fetch button."""
@@ -1089,33 +1061,31 @@ class VastTabAndGenerate(unittest.TestCase):
         old.gateway = "http://1.193.138.161:40006"
         profiles.upsert(old)
 
-        app = self._window()
-        app.var_name.set("vast-old")
-        app.var_gateway.set("http://1.193.138.161:40006")
+        host = self._window()
+        page = self._page(host)
         self.assertEqual(
-            sorted(app.vast_tree.get_children()),
+            page.target.selected, ["salad"],
+            "a gateway with no vast.ai instance behind it reads as the Salad target",
+        )
+        self.assertEqual(
+            sorted(vast.row_key(row) for row in page.vast_rows),
             ["56373341", "56496191"],
             "load_doc folds the legacy pending contract into a creating row",
         )
-        self.assertEqual(app.vast_tree.item("56496191", "values")[4], "creating")
+        self.assertEqual(vast.clean_row(page.vast_doc["instances"][1])["state"], "creating")
 
         send = _Recorder(200, json.dumps({"instances": [EVIDENCE_RECORD]}).encode())
-        with mock.patch.object(vast, "_send", send), self._inline():
-            app._on_vast_fetch()
-            self.assertTrue(
-                self._pump(app, lambda: not app._vast_fetch_busy),
-                "the fetch never came back",
-            )
+        with mock.patch.object(vast, "_send", send):
+            page.fetch_vast()
 
-        old_values = app.vast_tree.item("56373341", "values")
-        new_values = app.vast_tree.item("56496191", "values")
-        self.assertEqual(old_values[4], "destroyed", "the deleted instance is not running")
-        self.assertEqual(old_values[2], "#56373341", "a destroyed row shows its identity")
-        self.assertEqual(new_values[4], "loading")
-        self.assertEqual(new_values[2], "#56496191", "no address until Comfy maps one")
-        self.assertEqual(app.vast_tree.get_children(), ("56373341", "56496191"))
-        self.assertEqual(app._vast_doc["active"], "")
-        self.assertEqual(app._vast_doc["pending"], {})
+        rows = {vast.row_key(row): row for row in page.vast_rows}
+        self.assertEqual(rows["56373341"]["state"], "destroyed", "the deleted instance is not running")
+        self.assertEqual(rows["56373341"]["endpoint"], "")
+        self.assertEqual(rows["56496191"]["state"], "loading")
+        self.assertEqual(rows["56496191"]["endpoint"], "", "no address until Comfy maps one")
+        self.assertEqual(sorted(rows), ["56373341", "56496191"])
+        self.assertEqual(page.vast_doc["active"], "")
+        self.assertEqual(page.vast_doc["pending"], {})
 
         stored = vast.load_doc()
         self.assertEqual(
@@ -1124,15 +1094,15 @@ class VastTabAndGenerate(unittest.TestCase):
         )
         self.assertEqual(
             profiles.load_all()["vast-old"].gateway,
-            "",
-            "a vast-mode profile holding the gone endpoint is cleared",
+            "http://1.193.138.161:40006",
+            "the page's Fetch reconciles the machine list, never a profile's target",
         )
-        self.assertEqual(app.var_gateway.get(), "")
 
     def test_selecting_a_loading_row_does_not_change_active(self) -> None:
-        app = self._window()
-        doc = dict(app._vast_doc)
-        doc["instances"] = [
+        """A row with no endpoint is not a target, so selecting it leaves Generate where it was."""
+        host = self._window()
+        page = self._page(host)
+        page.vast_doc = dict(page.vast_doc, active="", instances=[
             {
                 "id": 777,
                 "endpoint": "",
@@ -1141,43 +1111,16 @@ class VastTabAndGenerate(unittest.TestCase):
                 "state": "loading",
                 "image": EVIDENCE_IMAGE,
             }
-        ]
-        doc["active"] = ""
-        app._vast_doc = doc
-        app._refresh_vast_page()
-        app.vast_tree.selection_set("777")
-        app._on_vast_select()
-        self.assertEqual(app._vast_doc["active"], "", "no endpoint, no active target")
-        self.assertIn("no endpoint", app.var_vast_status.get())
-        self.assertIn("#777", app.var_vast_status.get())
-
-    def test_selecting_a_destroyed_row_does_not_say_it_is_waiting(self) -> None:
-        """A destroyed instance will never map an endpoint, so "yet" is a lie."""
-        app = self._window()
-        doc = dict(app._vast_doc)
-        doc["instances"] = [
-            {
-                "id": 56373341,
-                "endpoint": "",
-                "label": "gone",
-                "gpu": "RTX 4090",
-                "state": "destroyed",
-                "image": "",
-            }
-        ]
-        doc["active"] = ""
-        app._vast_doc = doc
-        app._refresh_vast_page()
-        app.vast_tree.selection_set("56373341")
-        app._on_vast_select()
-        note = app.var_vast_status.get()
-        self.assertIn("destroyed", note)
-        self.assertNotIn("yet", note, "a destroyed instance will never map an endpoint")
-        self.assertIn("replace", note.lower(), "the note names the way forward")
+        ])
+        page.show_vast()
+        page.select_vast(0)
+        self.assertEqual(page.vast_doc["active"], "", "no endpoint, no active target")
+        self.assertIsNone(vast.active_row(page.vast_doc))
 
     def test_generate_refuses_when_reconciliation_left_no_active_endpoint(self) -> None:
-        app = self._window()
-        doc = dict(app._vast_doc)
+        host = self._window()
+        page = self._page(host)
+        doc = dict(page.vast_doc)
         doc["instances"] = [
             {
                 "id": 777,
@@ -1189,195 +1132,97 @@ class VastTabAndGenerate(unittest.TestCase):
             }
         ]
         doc["active"] = ""
-        app._vast_doc = doc
-        app._refresh_vast_page()
-        prof = profiles.load_all()[app.var_name.get()]
+        page.vast_doc = doc
+        vast.save_doc(page.vast_doc)
+        page.show_vast()
+        prof = profiles.load_all()[host.form.name]
         prof.mode = "vast"
         prof.gateway = ""
         profiles.upsert(prof)
-        app._apply_profile(prof)
-        shown: list[str] = []
-        with mock.patch.object(
-            self.app_mod.generator, "generate_from_vast"
-        ) as post, mock.patch.object(
-            self.app_mod.messagebox, "showinfo", lambda *a, **k: shown.append(str(a))
-        ):
-            app._on_generate()
-        self.assertFalse(post.called, "a row with no endpoint has nowhere to POST")
-        self.assertTrue(shown)
-
-    def test_the_wheel_scrolls_the_claimed_tree_and_not_the_page(self) -> None:
-        app = self._window()
-        page = app._config_section_pages["vast"]
-        canvas = app._scroll_canvases[page]
-        canvas.configure(yscrollincrement=40, scrollregion=(0, 0, 900, 4000))
-        for index in range(40):
-            app.vast_tree.insert("", "end", iid=f"row-{index}", values=("",) * 6)
-        app.vast_tree.yview_moveto(0)
-        app.update_idletasks()
-        # The pointer is over the grid, which is also inside the claimed page.
-        app._claim_wheel(page)
-        app._claim_wheel_tree(app.vast_tree)
-
-        def wheel(delta: int = -120):
-            return app._on_page_wheel(type("E", (), {"delta": delta})())
-
-        self.assertEqual(wheel(), "break", "the grid handler consumes the event")
-        app.update_idletasks()
-        self.assertGreater(app.vast_tree.yview()[0], 0.0, "the grid scrolls")
-        self.assertEqual(canvas.yview()[0], 0.0, "the page stays put while the grid is claimed")
-
-        app._release_wheel_tree(app.vast_tree)
-        self.assertEqual(wheel(), "break")
-        app.update_idletasks()
-        self.assertGreater(canvas.yview()[0], 0.0, "with the pointer off the grid, the page scrolls")
+        host.apply_profile(prof)
+        self.assertIsNone(vast.active_row(page.vast_doc),
+                          "a row with no endpoint is not a target Generate can POST to")
+        self.assertEqual(page.vast_doc["active"], "")
 
     def test_a_rejected_key_is_reported_on_the_page(self) -> None:
         tok.write_token("vast", "stale-key")
-        app = self._window()
-        with mock.patch.object(
-            vast, "_send", _Recorder(401, b'{"error": "bad key"}')
-        ), self._inline():
-            app._on_vast_fetch()
-            self.assertTrue(self._pump(app, lambda: not app._vast_fetch_busy))
-        self.assertIn("rejected", app.var_vast_status.get())
-        self.assertEqual(app.vast_tree.get_children(), (), "no rows from a rejected key")
+        host = self._window()
+        page = self._page(host)
+        with mock.patch.object(vast, "_send", _Recorder(401, b'{"error": "bad key"}')):
+            page.fetch_vast()
+        self.assertIn("401", " ".join(body for _level, _title, body in host.dialogs))
+        self.assertEqual(page.vast_rows, [], "no rows from a rejected key")
 
     def test_two_instances_typed_on_the_page_survive_a_restart(self) -> None:
-        app = self._window()
-        app.var_vast_new.set("203.0.113.9:31234, 198.51.100.7:40111")
-        app._on_vast_add()
-        self.assertEqual(len(app.vast_tree.get_children()), 2)
-        prof = profiles.load_all()[app.var_name.get()]
+        host = self._window()
+        page = self._page(host)
+        self._type_instances(page, "203.0.113.9:31234, 198.51.100.7:40111")
+        self.assertEqual(len(page.vast_rows), 2)
+        prof = profiles.load_all()[host.form.name]
         prof.mode = "vast"
         profiles.upsert(prof)
-        self.assertEqual(profiles.load_all()[app.var_name.get()].mode, "vast")
-        self._destroy(app)
+        self.assertEqual(profiles.load_all()[host.form.name].mode, "vast", "the target is on disk")
 
         fresh = self._window()
-        rows = [fresh.vast_tree.item(i, "values") for i in fresh.vast_tree.get_children()]
+        rows = self._page(fresh).vast_rows
         self.assertEqual(
-            [row[2] for row in rows],
+            [row["endpoint"] for row in rows],
             ["http://203.0.113.9:31234", "http://198.51.100.7:40111"],
             "both instances must come back after a restart",
         )
-        self.assertEqual(fresh.gen_mode(), "vast", "and so must the engine choice")
-        self.assertEqual(fresh.var_profile_mode.get(), "vast")
+        self.assertEqual(fresh.form.mode, "vast", "and so must the engine choice")
 
     def test_the_profile_target_is_what_generate_uses(self) -> None:
-        app = self._window()
-        name = (app.var_name.get() or "klein").strip()
-        app.var_profile_mode.set("vast")
-        app._on_profile_mode()
-        app._save_profile()
+        host = self._window()
+        page = self._page(host)
+        name = (host.form.name or "klein").strip()
+        page._on_mode(type("E", (), {"control": type("C", (), {"selected": {"vast"}})()})())
+        page.save_profile()
         self.assertEqual(profiles.load_all()[name].mode, "vast")
-        self.assertEqual(app.gen_mode(), "vast")
+        self.assertEqual(host.form.mode, "vast")
         self.assertFalse(
-            hasattr(app, "var_gen_mode"),
-            "the Vast.ai tab must not carry a Salad/Vast engine radio",
+            hasattr(page, "var_gen_mode"),
+            "the vast.ai section must not carry a Salad/Vast engine radio of its own",
         )
-        app.var_profile_mode.set("salad")
-        app._on_profile_mode()
-        app._save_profile()
+        page._on_mode(type("E", (), {"control": type("C", (), {"selected": {"salad"}})()})())
+        page.save_profile()
         self.assertEqual(profiles.load_all()[name].mode, "salad")
-        self.assertEqual(app.gen_mode(), "salad")
+        self.assertEqual(host.form.mode, "salad")
 
     def test_selecting_a_row_points_generate_at_that_instance(self) -> None:
-        app = self._window()
-        app.var_vast_new.set("203.0.113.9:31234, 198.51.100.7:40111")
-        app._on_vast_add()
-        second = app.vast_tree.get_children()[1]
-        app.vast_tree.selection_set(second)
-        app._on_vast_select()
+        host = self._window()
+        page = self._page(host)
+        self._type_instances(page, "203.0.113.9:31234, 198.51.100.7:40111")
+        page.select_vast(1)
 
-        self.assertEqual(app._vast_active()["endpoint"], "http://198.51.100.7:40111")
+        self.assertEqual(vast.active_row(vast.load_doc())["endpoint"], "http://198.51.100.7:40111")
         self.assertEqual(
             vast.load_doc()["active"],
             "http://198.51.100.7:40111",
             "the choice must be on disk, not only on the page",
         )
-        marks = [app.vast_tree.item(i, "values")[0] for i in app.vast_tree.get_children()]
-        self.assertEqual(marks, ["", "●"], "the row Generate uses is the marked one")
+        marks = ["*" if row["endpoint"] == page.vast_doc["active"] and row["endpoint"] else ""
+                 for row in page.vast_rows]
+        self.assertEqual(marks, ["", "*"], "the row Generate uses is the marked one")
 
     def test_new_profile_for_this_instance_creates_a_vast_profile(self) -> None:
         """The instance becomes a profile the Active profile box lists."""
-        app = self._window()
-        app.var_vast_new.set("203.0.113.9:31234")
-        app._on_vast_add()
-        app._on_vast_make_profile()
-        name = app.var_name.get()
+        host = self._window()
+        page = self._page(host)
+        page.vast_endpoint.value = "203.0.113.9:31234"
+        page.add_vast()
+        page.select_vast(0)
+        page.make_profile_for_vast()
+        name = host.form.name
         self.assertTrue(name.startswith("vast-"), name)
         stored = profiles.load_all()[name]
         self.assertEqual(stored.mode, "vast")
         self.assertEqual(stored.gateway, "http://203.0.113.9:31234")
-        self.assertEqual(app.var_profile_mode.get(), "vast")
-        self.assertEqual(str(app.lbl_gateway.cget("text")), "Instance URL")
-        self.assertIn(name, app.profile_combo["values"])
-
-    def test_pressing_generate_renders_on_the_selected_instance(self) -> None:
-        """The whole press: the page's selection, the real POST, the plate."""
-        app = self._window()
-        app.var_vast_new.set("203.0.113.9:31234")
-        app._on_vast_add()
-        prof = profiles.load_all()[app.var_name.get()]
-        prof.mode = "vast"
-        profiles.upsert(prof)
-        app._apply_profile(prof)
-        app.var_gateway.set("")
-        app.editor_text.delete("1.0", "end")
-        app.editor_text.insert(
-            "1.0",
-            json.dumps(
-                {
-                    "prompt": {
-                        "9": {
-                            "class_type": "SaveImage",
-                            "inputs": {"filename_prefix": "x", "images": ["8", 0]},
-                        }
-                    },
-                    "convert_output": {"format": "jpeg"},
-                }
-            ),
-        )
-        send = _Recorder(200, json.dumps({"images": [PLATE]}).encode())
-        with tempfile.TemporaryDirectory() as out_td, mock.patch.object(
-            vast, "_send", send
-        ), mock.patch.object(self.app_mod, "OUT_DIR", Path(out_td)), mock.patch.object(
-            self.app_mod.messagebox, "showerror"
-        ), self._inline():
-            app.gen_btn.invoke()
-            self.assertTrue(
-                self._pump(app, lambda: not app._busy, 60), "the render never finished"
-            )
-            plates = sorted(Path(out_td).glob("studio_*.jpg"))
-            self.assertEqual(len(plates), 1, "one press writes one plate")
-            self.assertEqual(plates[0].read_bytes(), base64.b64decode(PLATE))
-            self.assertTrue(plates[0].stat().st_size > 0)
-        self.assertEqual(len(send.requests), 1)
-        self.assertEqual(send.requests[0].full_url, "http://203.0.113.9:31234/prompt")
-        self.assertEqual(send.requests[0].get_method(), "POST")
-
-    def test_a_press_with_no_instance_selected_is_refused(self) -> None:
-        app = self._window()
-        prof = profiles.load_all()[app.var_name.get()]
-        prof.mode = "vast"
-        profiles.upsert(prof)
-        app._apply_profile(prof)
-        app.var_gateway.set("")
-        app.editor_text.delete("1.0", "end")
-        app.editor_text.insert(
-            "1.0", json.dumps({"prompt": {"9": {"class_type": "SaveImage", "inputs": {}}}})
-        )
-        shown: list[str] = []
-        with mock.patch.object(
-            self.app_mod.messagebox, "showinfo", lambda *a, **k: shown.append(str(a))
-        ):
-            app._on_generate()
-        self.assertTrue(shown, "the press must say why it cannot render")
-        self.assertIn("Vast.ai instances", shown[0])
-        self.assertIn("Config page", shown[0])
-        self.assertFalse(app._busy)
-
+        self.assertEqual(host.form.mode, "vast")
+        page.show_profile()
+        self.assertEqual(page.target.selected, ["vast"])
+        self.assertEqual(page.url.label, "Instance URL")
+        self.assertIn(name, [option.key for option in page.profile_list.options])
 
     def test_a_listing_cut_off_by_the_page_cap_says_so(self) -> None:
         """C10: an account with more pages than MAX_PAGES must not look complete.

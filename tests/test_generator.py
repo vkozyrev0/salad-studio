@@ -118,7 +118,7 @@ _PROBE_URL_EDITS = [
             "            # GET below still runs. The GET is the last method: with neither\n"
             "            # answering, fall out for the summary rather than this pass's own\n"
             "            # reason, which names only one of the two.\n"
-            '            if method == "GET":\n'
+            "            if last:\n"
             "                break\n"
             "            continue\n"
         ),

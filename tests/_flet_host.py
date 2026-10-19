@@ -135,6 +135,20 @@ class Host:
     def dialog(self, title: str, body: str, *, level: str = "info") -> None:
         self.dialogs.append((level, title, body))
 
+    def guard(self, flag: str, *buttons: Any) -> bool:
+        if self.services.busy_flags.get(flag):
+            self.notes.append(("warn", f"{flag} already running"))
+            return False
+        self.services.busy_flags[flag] = True
+        for button in buttons:
+            button.disabled = True
+        return True
+
+    def release(self, flag: str, *buttons: Any) -> None:
+        self.services.busy_flags[flag] = False
+        for button in buttons:
+            button.disabled = False
+
     def ask(self, title: str, body: str, on_yes: Callable[[], None]) -> None:
         self.asks.append((title, body, on_yes))
 

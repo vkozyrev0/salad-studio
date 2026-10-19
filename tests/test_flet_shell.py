@@ -37,7 +37,7 @@ class Opening(unittest.TestCase):
         shell.open("B")
         shell.open("A")
         self.assertEqual(builds, ["x", "x"])
-        self.assertIs(shell.body.content, shell.pages["A"])
+        self.assertIs(shell.body.content.controls[-1], shell.pages["A"])
         self.assertEqual(shell.current, "A")
 
     def test_the_open_page_is_marked_on_the_rail(self) -> None:

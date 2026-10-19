@@ -1,474 +1,182 @@
-"""History-strip tests: drive the live HistoryStrip on a withdrawn Tk root.
+"""The bottom history strip, driven as a user drives it: thumbnails, empty state, click, arrows.
 
-Covers the module's behavioral surface the audit flagged as untested
-(M17): `set_paths`, `_rebuild`, `_photo_for`, `_load_thumb`,
-`_layout_thumbs`, `_scroll_left`, `_scroll_right`, `_scroll_pixels`,
-`_on_mousewheel`, `_emit_open`.
-
-The root is created and withdrawn before any widget work, so no window
-is ever shown. `test_theme.py` covers only the palette; this module
-covers what the strip does with real files.
+The strip builds without a client, so the tests hand it the same ``(name, png)``
+list the window builds and then click the shipped handlers, where a Flet page
+would dispatch them.
 """
 from __future__ import annotations
 
-import re
+import io
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from unittest.mock import patch
+
+import flet as ft
+from PIL import Image
 
 HERE = Path(__file__).resolve().parent
 TOOLS = HERE.parent
 PKG = TOOLS / "salad_studio"
-if str(PKG) not in sys.path:
-    sys.path.insert(0, str(PKG))
-if str(TOOLS) not in sys.path:
-    sys.path.insert(0, str(TOOLS))
+for p in (str(TOOLS), str(PKG)):
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
-try:
-    import tkinter as tk
-except ImportError as _tk_err:  # pragma: no cover - host without Tcl
-    tk = None  # type: ignore[assignment]
-    _TK_IMPORT_ERROR: object = _tk_err
-else:
-    _TK_IMPORT_ERROR = None
+from salad_studio import flet_theme  # noqa: E402
+from salad_studio.flet_shell import HistoryStrip  # noqa: E402
 
-try:
-    from PIL import Image
-except ImportError as _pil_err:  # pragma: no cover - host without Pillow
-    Image = None  # type: ignore[assignment]
-    _PIL_IMPORT_ERROR: object = _pil_err
-else:
-    _PIL_IMPORT_ERROR = None
-
-_TK_OK = tk is not None
-_TK_ERROR: object = _TK_IMPORT_ERROR
-
-# JPEG is lossy, so a decoded solid fill is only approximately the value
-# that was written.
-_JPEG_TOLERANCE = 10
+EMPTY_TEXT = "No plates yet. A finished render appears here."
 
 
-def setUpModule() -> None:
-    """Probe Tk once; every test skips cleanly when Tcl cannot start."""
-    global _TK_OK, _TK_ERROR
-    if tk is None:
-        return
+def _thumbnail(path: Path) -> bytes | None:
+    """The window's own thumbnail, read off a real file."""
     try:
-        root = tk.Tk()
-    except tk.TclError as e:
-        _TK_OK = False
-        _TK_ERROR = e
-        return
-    root.withdraw()
-    root.destroy()
+        with Image.open(path) as img:
+            img.thumbnail((ShowingThumbs.THUMB, ShowingThumbs.THUMB))
+            out = io.BytesIO()
+            img.convert("RGB").save(out, "PNG")
+            return out.getvalue()
+    except OSError:
+        return None
 
 
-class _Event:
-    """Stand-in for a Tk event object; handlers read delta/num only."""
+def run_click(control: ft.Control) -> None:
+    """Deliver the click a user makes on a control."""
+    handler = getattr(control, "on_click", None)
+    assert handler is not None, f"{type(control).__name__} has no click handler"
+    handler(ft.ControlEvent(str(control), "click"))
 
-    def __init__(self, **fields: Any) -> None:
-        self.__dict__.update(fields)
+
+def visible_thumbs(strip: HistoryStrip) -> list[ft.Container]:
+    return [c for c in strip.list.controls if c.visible]
 
 
-@unittest.skipIf(tk is None, f"tkinter unavailable: {_TK_IMPORT_ERROR}")
-@unittest.skipIf(Image is None, f"Pillow unavailable: {_PIL_IMPORT_ERROR}")
-class HistoryStripOnWithdrawnRoot(unittest.TestCase):
-    """Construct the shipped HistoryStrip on a hidden root and drive it."""
-
-    THUMB: Sequence[int] = (64, 64)
+class StripWithoutAClient(unittest.TestCase):
+    THUMB = 140
 
     def setUp(self) -> None:
-        if not _TK_OK:
-            self.skipTest(f"Tk cannot initialize: {_TK_ERROR}")
-        from salad_studio.history_strip import HistoryStrip
-        from salad_studio.theme import apply_theme
-
-        self.HistoryStrip = HistoryStrip
-        self.apply_theme = apply_theme
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.dir = Path(self.tmp.name)
-
-        self.opens: list[Path] = []
-        self.root = tk.Tk()
-        self.root.withdraw()  # no window may ever appear on screen
-        self.addCleanup(self._destroy_root)
-        apply_theme(self.root)
-        self.strip = HistoryStrip(
-            self.root,
-            on_open=self.opens.append,
-            thumb_size=self.THUMB,
-        )
-        self.strip.pack(fill="both", expand=True)
-        self.root.update_idletasks()
-        self.canvas = self.strip.canvas
-
-    def _destroy_root(self) -> None:
-        try:
-            self.root.destroy()
-        except Exception:
-            pass
-
-    # ---- fixtures / observables -------------------------------------
+        self.colors = flet_theme.canvas_colors(True)
 
     def _jpeg(self, name: str, size: tuple[int, int], colour: tuple[int, int, int]) -> Path:
+        """A JPEG as the generator writes one: saved with PIL, then re-read from disk."""
         path = self.dir / name
-        Image.new("RGB", size, colour).save(path)
+        Image.new("RGB", size, colour).save(path, quality=95)
         return path
 
-    def _thumb_items(self) -> tuple[int, ...]:
-        return tuple(self.canvas.find_withtag("thumb"))
+    def _strip(self, opens: list[object] | None = None) -> HistoryStrip:
+        seen = opens if opens is not None else []
+        return HistoryStrip(self.colors, on_open=seen.append)
 
-    def _region(self) -> tuple[int, int, int, int]:
-        raw = str(self.canvas.cget("scrollregion")).split()
-        self.assertEqual(len(raw), 4, f"unparsable scrollregion {raw!r}")
-        return tuple(int(float(v)) for v in raw)  # type: ignore[return-value]
 
-    def _left(self) -> float:
-        return float(self.canvas.xview()[0])
+class ShowingThumbs(StripWithoutAClient):
+    def test_an_empty_strip_says_so_in_those_words(self) -> None:
+        strip = self._strip()
+        strip.show([], lambda _i: None)
 
-    def _bbox(self, item: int) -> tuple[int, int, int, int]:
-        box = self.canvas.bbox(item)
-        self.assertIsNotNone(box, "thumb item has no bounding box")
-        self.assertEqual(len(box), 4, f"unparsable bbox {box!r}")
-        return (int(box[0]), int(box[1]), int(box[2]), int(box[3]))
+        self.assertTrue(strip.empty.visible, "the empty state is what an empty gallery shows")
+        self.assertEqual(strip.empty.value, EMPTY_TEXT)
+        self.assertFalse(strip.list.visible, "an empty gallery shows no thumbnails")
+        self.assertEqual(strip.list.controls, [])
 
-    def _pixel(self, item: int, x: int, y: int) -> tuple[int, int, int]:
-        """Read a pixel out of the Tk photo the canvas is displaying."""
-        name = str(self.canvas.itemcget(item, "image"))
-        self.assertTrue(name, "canvas image item has no photo")
-        return tuple(int(v) for v in self.root.tk.call(name, "get", x, y))  # type: ignore[return-value]
-
-    def _assert_close(
-        self,
-        got: Sequence[int],
-        want: Sequence[int],
-        *,
-        tolerance: int = _JPEG_TOLERANCE,
-        msg: str = "",
-    ) -> None:
-        self.assertEqual(len(got), len(want), msg)
-        for g, w in zip(got, want, strict=False):
-            self.assertLessEqual(abs(g - w), tolerance, f"{msg}: {tuple(got)} != {tuple(want)}")
-
-    def _click_thumb(self, item: int) -> None:
-        """Run the shipped <Button-1> binding for a thumb item.
-
-        The root is withdrawn (no window may appear), so Tk cannot deliver
-        a real pointer event. Tk keeps the binding as a Tcl command; calling
-        it with the substitution values tkinter expects executes the very
-        binding a real click would, including the shipped callback.
-        """
-        script = str(self.canvas.tag_bind(item, "<Button-1>"))
-        self.assertTrue(script, "thumb item has no <Button-1> binding")
-        command = script.split("[", 1)[1].split(" ", 1)[0]
-        values = {
-            "%#": "0",
-            "%b": "0",
-            "%f": "0",
-            "%h": "100",
-            "%k": "0",
-            "%s": "0",
-            "%t": "0",
-            "%w": "100",
-            "%x": "10",
-            "%y": "10",
-            "%A": "?",
-            "%E": "0",
-            "%K": "??",
-            "%N": "0",
-            "%W": str(self.canvas),
-            "%T": "ButtonPress",
-            "%X": "0",
-            "%Y": "0",
-            "%D": "0",
-        }
-        tokens = re.findall(r"%[A-Za-z#]", script)
-        self.assertTrue(tokens, f"binding script has no substitutions: {script!r}")
-        self.root.tk.call(command, *[values[t] for t in tokens])
-
-    def _set_paths(self, paths: Iterable[Path]) -> None:
-        self.strip.set_paths(paths)
-        self.root.update_idletasks()
-
-    # ---- set_paths / _rebuild / _photo_for / _load_thumb / _layout_thumbs --
-
-    def test_real_jpeg_places_one_thumb_at_thumb_size(self) -> None:
+    def test_one_real_jpeg_shows_one_thumbnail_of_that_file(self) -> None:
         src = self._jpeg("solid.jpg", (300, 180), (200, 40, 60))
+        strip = self._strip()
 
-        self._set_paths([src])
+        strip.show([("solid", _thumbnail(src))], lambda _i: None)
 
-        items = self._thumb_items()
-        self.assertEqual(len(items), 1, "one path must place exactly one thumb")
-        box = self._bbox(items[0])
-        self.assertEqual(box[2] - box[0], self.THUMB[0], "thumb width is the configured size")
-        self.assertEqual(box[3] - box[1], self.THUMB[1], "thumb height is the configured size")
+        thumbs = visible_thumbs(strip)
+        self.assertEqual(len(thumbs), 1, "one plate places exactly one thumbnail")
+        self.assertNotIn("?", [c.content.value for c in thumbs if isinstance(c.content, ft.Text)],
+                         "a readable file must not render the placeholder")
+        image = thumbs[0].content
+        self.assertIsInstance(image, ft.Image)
+        self.assertIsInstance(image.src, bytes)
+        with Image.open(io.BytesIO(image.src)) as shown:
+            width, height = shown.size
+            self.assertLessEqual(max(width, height), self.THUMB, "the plate fits the thumb box")
+            self.assertEqual((width, height), (self.THUMB, round(self.THUMB * 180 / 300)),
+                             "the plate keeps its shape, scaled to the box")
+            pixel = shown.convert("RGB").getpixel((width // 2, height // 2))
+        for got, want in zip(pixel, (200, 40, 60)):
+            self.assertLessEqual(abs(got - want), 10, f"centre pixel {pixel} is not the file's colour")
 
-        region = self._region()
-        self.assertGreaterEqual(region[2], self.THUMB[0], "scrollregion must cover the thumb")
-        self.assertGreaterEqual(region[3], self.THUMB[1], "scrollregion must cover the thumb height")
+    def test_thumbs_keep_the_newest_first_order_and_each_can_be_named(self) -> None:
+        strip = self._strip()
 
-        # The displayed pixels are the file's, not the placeholder's.
-        self._assert_close(self._pixel(items[0], 32, 32), (200, 40, 60), msg="solid jpeg centre")
-        self.assertEqual(self._left(), 0.0, "a fresh strip starts scrolled to the left")
+        strip.show([("plate2", b"newest"), ("plate1", b"middle"), ("plate0", b"oldest")],
+                   lambda _i: None)
 
-    def test_scrollregion_grows_with_more_thumbs(self) -> None:
-        one = self._jpeg("one.jpg", (300, 180), (200, 40, 60))
-        self._set_paths([one])
-        single_w = self._region()[2]
+        shown = visible_thumbs(strip)
+        self.assertEqual(len(shown), 3)
+        self.assertEqual([c.content.src for c in shown], [b"newest", b"middle", b"oldest"],
+                         "the list the window hands over is shown left to right, untouched")
+        self.assertEqual([c.tooltip for c in shown], ["plate2", "plate1", "plate0"])
 
-        paths = [self._jpeg(f"m{i}.jpg", (300, 180), (20 * i, 90, 150)) for i in range(3)]
-        self._set_paths(paths)
+    def test_each_thumb_opens_the_plate_in_its_own_position(self) -> None:
+        opened: list[str] = []
+        strip = self._strip()
+        strip.show([("newest", b"n"), ("middle", b"m"), ("oldest", b"o")], opened.append)
 
-        self.assertEqual(len(self._thumb_items()), 3)
-        wide = self._region()[2]
-        self.assertGreater(wide, single_w, "three thumbs need a wider scrollregion")
-        self.assertGreaterEqual(wide, 3 * self.THUMB[0], "every thumb needs room in the region")
+        for thumb in visible_thumbs(strip):
+            run_click(thumb)
 
-    def test_set_paths_replaces_previous_thumbs(self) -> None:
-        first = [self._jpeg(f"a{i}.jpg", (300, 180), (200, 40, 60)) for i in range(3)]
-        self._set_paths(first)
-        old_ids = set(self._thumb_items())
-        self.assertEqual(len(old_ids), 3)
-        wide_w = self._region()[2]
+        self.assertEqual(opened, [0, 1, 2], "a click reports the plate the user pointed at")
 
-        replacement = self._jpeg("only.jpg", (300, 180), (40, 200, 60))
-        self._set_paths([replacement])
+    def test_a_plate_without_a_thumbnail_still_shows_and_opens(self) -> None:
+        strip = self._strip()
+        strip.show([("missing", None)], lambda _i: None)
 
-        new_ids = set(self._thumb_items())
-        self.assertEqual(len(new_ids), 1, "set_paths replaces, it does not append")
-        self.assertFalse(new_ids & old_ids, "the previous items must be gone from the canvas")
-        self.assertLess(self._region()[2], wide_w, "region shrinks back to the new content")
+        thumbs = visible_thumbs(strip)
+        self.assertEqual(len(thumbs), 1, "an unreadable plate keeps its slot")
+        self.assertIsInstance(thumbs[0].content, ft.Text)
+        self.assertEqual(thumbs[0].content.value, "?")
+        self.assertEqual(thumbs[0].tooltip, "missing")
+        self.assertTrue(callable(thumbs[0].on_click), "an unreadable plate is still clickable")
 
-    def test_missing_file_renders_themed_placeholder(self) -> None:
-        from salad_studio.theme import rgb
+    def test_showing_a_new_list_replaces_the_old_one(self) -> None:
+        strip = self._strip()
+        strip.show([("a", b"a"), ("b", b"b"), ("c", b"c")], lambda _i: None)
+        self.assertEqual(len(visible_thumbs(strip)), 3)
 
-        self._set_paths([self.dir / "does-not-exist.jpg"])
+        strip.show([("only", b"x")], lambda _i: None)
+        self.assertEqual([c.content.src for c in visible_thumbs(strip)], [b"x"])
 
-        items = self._thumb_items()
-        self.assertEqual(len(items), 1)
-        placeholder = rgb("border")
-        self.assertEqual(self._pixel(items[0], 0, 0), placeholder)
-        self.assertEqual(self._pixel(items[0], 32, 32), placeholder)
-        box = self._bbox(items[0])
-        self.assertEqual(box[2] - box[0], self.THUMB[0])
+        strip.show([], lambda _i: None)
+        self.assertEqual(visible_thumbs(strip), [])
+        self.assertTrue(strip.empty.visible, "the empty words come back when the list empties")
 
-    def test_unreadable_file_and_directory_render_placeholder(self) -> None:
-        from salad_studio.theme import rgb
 
-        bogus = self.dir / "bogus.jpg"
-        bogus.write_text("this is not an image", encoding="utf-8")
+class Scrolling(unittest.TestCase):
+    def setUp(self) -> None:
+        self.colors = flet_theme.canvas_colors(True)
+        self.strip = HistoryStrip(self.colors, on_open=lambda _p: None)
+        self.strip.show([(f"p{n}", b"x") for n in range(5)], lambda _i: None)
+        arrows = self.strip.content.controls
+        self.left, self.right = arrows[0], arrows[-1]
 
-        self._set_paths([bogus])
-        items = self._thumb_items()
-        self.assertEqual(len(items), 1)
-        self.assertEqual(self._pixel(items[0], 32, 32), rgb("border"))
+    def test_the_arrows_sit_on_either_side_and_point_outward(self) -> None:
+        self.assertEqual(self.left.content, "◀")
+        self.assertEqual(self.right.content, "▶")
+        self.assertEqual(self.left.tooltip, "Older")
+        self.assertEqual(self.right.tooltip, "Newer")
 
-        # A directory is not a file either -> same placeholder path.
-        self._set_paths([self.dir])
-        items = self._thumb_items()
-        self.assertEqual(len(items), 1)
-        self.assertEqual(self._pixel(items[0], 32, 32), rgb("border"))
+    def test_the_arrows_scroll_the_strip(self) -> None:
+        """The click reaches the list: the right arrow walks up, the left arrow walks back."""
+        rests = [0, 120]
+        moves: list[float] = []
+        self.strip.list.scroll_to = lambda **kw: moves.append(kw["offset"])
 
-    def test_wide_image_is_letterboxed_on_the_well_colour(self) -> None:
-        from salad_studio.theme import rgb
+        for rest, click in zip(rests, (self.right, self.left)):
+            with patch.object(type(self.strip.list), "scroll_offset", rest, create=True):
+                run_click(click)
 
-        wide = self._jpeg("wide.jpg", (400, 80), (10, 220, 30))
-
-        self._set_paths([wide])
-
-        items = self._thumb_items()
-        self.assertEqual(len(items), 1)
-        item = items[0]
-        box = self._bbox(item)
-        self.assertEqual((box[2] - box[0], box[3] - box[1]), tuple(self.THUMB))
-
-        # Top band is the letterbox background; the middle row is the photo.
-        self.assertEqual(self._pixel(item, 32, 2), rgb("well"))
-        self._assert_close(self._pixel(item, 32, 32), (10, 220, 30), msg="letterboxed photo")
-
-    def test_empty_or_none_paths_clear_the_strip(self) -> None:
-        paths = [self._jpeg(f"c{i}.jpg", (300, 180), (200, 40, 60)) for i in range(2)]
-        self._set_paths(paths)
-        self.assertEqual(len(self._thumb_items()), 2)
-
-        self._set_paths([])
-        self.assertEqual(self._thumb_items(), ())
-
-        self._set_paths([self.dir / "x.jpg"])
-        self.assertEqual(len(self._thumb_items()), 1)
-        self.strip.set_paths(None)  # shipped signature tolerates None
-        self.root.update_idletasks()
-        self.assertEqual(self._thumb_items(), ())
-
-    def test_layout_handler_is_bound_and_keeps_items_placed(self) -> None:
-        paths = [self._jpeg(f"l{i}.jpg", (300, 180), (200, 40, 60)) for i in range(2)]
-        self._set_paths(paths)
-        items = self._thumb_items()
-        self.assertEqual(len(items), 2)
-        self.assertTrue(str(self.canvas.bind("<Configure>")), "relayout must be bound to <Configure>")
-
-        before = [tuple(self.canvas.coords(i)) for i in items]
-        region_before = self._region()
-        self.strip._on_canvas_configure()
-        self.root.update_idletasks()
-
-        self.assertEqual([tuple(self.canvas.coords(i)) for i in items], before)
-        self.assertEqual(self._region(), region_before)
-        for item in items:
-            self.assertNotEqual(tuple(self.canvas.coords(item)), (0.0, 0.0), "thumbs must be laid out")
-
-    # ---- scrolling --------------------------------------------------
-
-    def test_region_is_wider_than_canvas_and_buttons_scroll(self) -> None:
-        paths = [self._jpeg(f"s{i}.jpg", (300, 180), (200, 40, 60)) for i in range(5)]
-        self._set_paths(paths)
-        self.assertEqual(len(self._thumb_items()), 5)
-
-        self.assertGreater(self._region()[2], int(self.canvas.winfo_width()))
-        self.assertEqual(self._left(), 0.0)
-
-        self.strip._scroll_right()
-        self.root.update_idletasks()
-        scrolled = self._left()
-        self.assertGreater(scrolled, 0.0, "_scroll_right must advance xview")
-
-        self.strip._scroll_left()
-        self.root.update_idletasks()
-        self.assertEqual(self._left(), 0.0, "_scroll_left must return to the start")
-
-        # The shipped chevrons are wired to those same handlers.
-        self.strip.right_btn.invoke()
-        self.root.update_idletasks()
-        self.assertGreater(self._left(), 0.0)
-
-        self.strip.left_btn.invoke()
-        self.root.update_idletasks()
-        self.assertEqual(self._left(), 0.0)
-
-        self.strip._scroll_pixels(0)
-        self.root.update_idletasks()
-        self.assertEqual(self._left(), 0.0, "a zero-pixel scroll must be a no-op")
-
-    def test_mousewheel_and_linux_scroll_shift_the_view(self) -> None:
-        paths = [self._jpeg(f"w{i}.jpg", (300, 180), (200, 40, 60)) for i in range(5)]
-        self._set_paths(paths)
-        self.assertGreater(self._region()[2], int(self.canvas.winfo_width()))
-
-        self.strip._scroll_right()
-        self.root.update_idletasks()
-        mid = self._left()
-        self.assertGreater(mid, 0.0)
-
-        self.assertEqual(self.strip._on_mousewheel(_Event(delta=120)), "break")
-        self.root.update_idletasks()
-        notched = self._left()
-        self.assertLess(notched, mid, "a positive wheel delta scrolls back toward the start")
-
-        self.assertEqual(self.strip._on_mousewheel(_Event(delta=0)), "break")
-        self.assertEqual(self._left(), notched, "a zero delta must not move the view")
-
-        self.assertEqual(self.strip._on_mousewheel(_Event()), "break")
-        self.assertEqual(self._left(), notched, "an event without delta must not move the view")
-
-        # Small deltas take the fine-grained branch.
-        self.assertEqual(self.strip._on_mousewheel(_Event(delta=-30)), "break")
-        self.root.update_idletasks()
-        fine = self._left()
-        self.assertGreater(fine, notched, "a small negative delta scrolls forward")
-
-        self.assertEqual(self.strip._on_linux_scroll(_Event(num=5)), "break")
-        self.root.update_idletasks()
-        forward = self._left()
-        self.assertGreater(forward, fine, "button-5 scrolls forward")
-
-        self.assertEqual(self.strip._on_linux_scroll(_Event(num=4)), "break")
-        self.root.update_idletasks()
-        self.assertLess(self._left(), forward, "button-4 scrolls back")
-
-        back = self._left()
-        self.assertEqual(self.strip._on_linux_scroll(_Event(num=0)), "break")
-        self.assertEqual(self._left(), back, "an unknown button must not move the view")
-
-    # ---- open callback ----------------------------------------------
-
-    def test_clicking_a_thumb_opens_that_exact_path(self) -> None:
-        first = self._jpeg("first.jpg", (300, 180), (200, 40, 60))
-        second = self._jpeg("second.jpg", (300, 180), (40, 200, 60))
-        self._set_paths([first, second])
-        items = self._thumb_items()
-        self.assertEqual(len(items), 2)
-
-        for item in items:
-            self._click_thumb(item)
-
-        self.assertEqual(self.opens, [first, second], "each thumb must open its own file")
-
-    # ---- keyboard ----------------------------------------------------
-
-    def test_the_strip_takes_focus_and_walks_with_the_arrow_keys(self) -> None:
-        """The strip was mouse-only: every widget took no focus and a thumb
-        answered only <Button-1>."""
-        first = self._jpeg("k1.jpg", (300, 180), (200, 40, 60))
-        second = self._jpeg("k2.jpg", (300, 180), (40, 200, 60))
-        self._set_paths([first, second])
-        self.assertEqual(str(self.canvas.cget("takefocus")), "1")
-        self.assertIsNone(self.strip.selected_index(), "nothing is selected before a key")
-        self.strip._on_key(None, "Right")
-        self.assertEqual(self.strip.selected_index(), 0, "Right from nothing selects the first")
-        self.strip._on_key(None, "Right")
-        self.assertEqual(self.strip.selected_index(), 1)
-        self.strip._on_key(None, "Right")
-        self.assertEqual(self.strip.selected_index(), 1, "the end is a wall")
-        self.strip._on_key(None, "Home")
-        self.assertEqual(self.strip.selected_index(), 0)
-        self.strip._on_key(None, "End")
-        self.assertEqual(self.strip.selected_index(), 1)
-
-    def test_enter_opens_the_selected_thumb(self) -> None:
-        first = self._jpeg("e1.jpg", (300, 180), (200, 40, 60))
-        second = self._jpeg("e2.jpg", (300, 180), (40, 200, 60))
-        self._set_paths([first, second])
-        self.strip._on_key(None, "End")
-        self.strip._on_key(None, "End")
-        self.assertEqual(self.strip.selected_index(), 1, "the first End only lands on the ring")
-        self.strip._open_selected()
-        self.assertEqual(self.opens, [second], "Enter opens the ringed thumb")
-
-    def test_the_selected_thumb_is_ringed_and_only_that_one(self) -> None:
-        paths = [self._jpeg(f"r{i}.jpg", (64, 64), (40 * i, 60, 90)) for i in range(3)]
-        self._set_paths(paths)
-        self.assertEqual(len(self.canvas.find_withtag("ring")), 0)
-        self.strip._on_key(None, "Home")
-        self.assertEqual(len(self.canvas.find_withtag("ring")), 2, "a mark and a ring")
-        self.strip._select(2)
-        coords = self.canvas.coords(self._thumb_items()[2])
-        ring = [c for c in self.canvas.find_withtag("ring") if self.canvas.type(c) == "rectangle"]
-        self.assertEqual(len(ring), 1, "the ring follows the selection")
-        self.assertEqual(list(self.canvas.coords(ring[0])[:2]), [coords[0], coords[1]])
-
-    def test_a_click_also_moves_the_ring_so_enter_opens_the_clicked_thumb(self) -> None:
-        first = self._jpeg("c1.jpg", (300, 180), (200, 40, 60))
-        second = self._jpeg("c2.jpg", (300, 180), (40, 200, 60))
-        self._set_paths([first, second])
-        self._click_thumb(self._thumb_items()[1])
-        self.assertEqual(self.strip.selected_index(), 1)
-        self.assertEqual(self.opens, [second])
-
-    def test_emit_open_without_callback_is_silent(self) -> None:
-        strip = self.HistoryStrip(self.root, thumb_size=(32, 32))
-        self.addCleanup(strip.destroy)
-        self.assertIsNone(strip.on_open, "on_open defaults to None")
-        path = self._jpeg("nohandler.jpg", (300, 180), (200, 40, 60))
-        strip.set_paths([path])
-        self.root.update_idletasks()
-
-        strip._emit_open(path)  # must not raise
-        item = strip.canvas.find_withtag("thumb")[0]
-        script = str(strip.canvas.tag_bind(item, "<Button-1>"))
-        self.assertTrue(script, "thumb binding must exist even without a callback")
+        self.assertEqual(len(moves), 2, "each arrow press scrolls the list once")
+        self.assertGreater(moves[0], rests[0], "the right arrow walks toward the newer plates")
+        self.assertLess(moves[1], rests[1], "the left arrow walks back toward the oldest")
 
 
 if __name__ == "__main__":

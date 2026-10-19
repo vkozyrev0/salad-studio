@@ -374,7 +374,7 @@ def _probe_url(url: str, opener: Any | None = None) -> tuple[int, str]:
     carries ``?token=``.
     """
     send = opener or urllib.request.urlopen
-    for method, extra in (("HEAD", {}), ("GET", {"Range": "bytes=0-0"})):
+    for method, extra, last in (("HEAD", {}, False), ("GET", {"Range": "bytes=0-0"}, True)):
         headers = {"User-Agent": salad_gen.UA, "accept": "*/*", **extra}
         try:
             req = urllib.request.Request(url, headers=headers, method=method)
@@ -390,12 +390,12 @@ def _probe_url(url: str, opener: Any | None = None) -> tuple[int, str]:
             if method == "HEAD" and code in (400, 403, 405, 501):
                 continue
             return code, method
-        except Exception:  # noqa: BLE001, any transport failure is inconclusive
+        except Exception as exc:  # noqa: BLE001, any transport failure is inconclusive
             # A HEAD transport failure is inconclusive on its own, so the ranged
             # GET below still runs. The GET is the last method: with neither
             # answering, fall out for the summary rather than this pass's own
             # reason, which names only one of the two.
-            if method == "GET":
+            if last:
                 break
             continue
     return 0, "no probe worked"

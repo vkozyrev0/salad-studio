@@ -153,9 +153,22 @@ def _control_colors(roles: dict[str, str]) -> dict[str, str]:
     }
 
 
-def canvas_colors(dark: bool) -> dict[str, str]:
+def canvas_colors(dark: bool, _dark: bool | None = None) -> dict[str, str]:
+    """The page palette. The second argument is kept so ``canvas_colors(True, dark=…)`` still reads."""
     base = DARK_CANVAS if dark else LIGHT_CANVAS
-    return {**base, **_control_colors(DARK if dark else LIGHT)}
+    return {
+        **base,
+        **_control_colors(DARK if dark else LIGHT),
+        "info": PALETTE["info"],
+        "unknown": PALETTE["unknown"],
+        "valid": PALETTE["valid"],
+        "invalid": PALETTE["invalid"],
+        "accent": PALETTE["accent"],
+        "accent_fg": PALETTE["accent_fg"],
+        "surface_hi": PALETTE["surface_hi"],
+        "button": PALETTE["button"],
+        "select_fg": PALETTE["select_fg"],
+    }
 
 
 def check_contrast() -> list[str]:

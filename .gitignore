@@ -13,3 +13,6 @@ __pycache__/
 # embedded repo.
 salad_klein/custom_nodes/
 salad_klein/weights/
+
+# Session scratch: spike scripts, logs, screenshots. Never committed.
+.audit/

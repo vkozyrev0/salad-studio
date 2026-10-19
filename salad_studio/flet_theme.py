@@ -138,8 +138,24 @@ def apply(page: ft.Page) -> None:
     page.theme_mode = ft.ThemeMode.DARK
 
 
+def _control_colors(roles: dict[str, str]) -> dict[str, str]:
+    """Every role a widget reads, so a page never takes a hex from anywhere else."""
+    return {
+        "on_surface": roles["on_surface"],
+        "muted": roles["on_surface_variant"],
+        "primary_container": roles["primary_container"],
+        "on_primary_container": roles["on_primary_container"],
+        "surface_container": roles["surface_container"],
+        "outline": roles["outline"],
+        "error": roles["error"],
+        "ok": PALETTE["valid"] if roles["surface"] == PALETTE["bg"] else "#2F6B44",
+        "warn": PALETTE["warn"] if roles["surface"] == PALETTE["bg"] else "#8A5A12",
+    }
+
+
 def canvas_colors(dark: bool) -> dict[str, str]:
-    return DARK_CANVAS if dark else LIGHT_CANVAS
+    base = DARK_CANVAS if dark else LIGHT_CANVAS
+    return {**base, **_control_colors(DARK if dark else LIGHT)}
 
 
 def check_contrast() -> list[str]:

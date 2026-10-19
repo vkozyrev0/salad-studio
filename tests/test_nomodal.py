@@ -1,107 +1,102 @@
-"""The no-dialog guard's contract, driven the way a caller meets it.
+"""The Flet dialogs open and close without holding a modal loop.
 
-``tests/_nomodal.py`` replaces the Tk dialogs with recorders so no test can
-raise a modal. These assert the behavior the module docstring now states: a call
-is recorded rather than shown, the question dialogs answer ``True`` and the
-notice dialogs ``"ok"``, a destructive confirmation answers ``False`` until the
-test sets ``DESTRUCTIVE_ANSWER``, a ``mock.patch.object`` still shadows the recorder and
-restores it, and importing the ``tests`` package installs the guard. (T4 in
-docs/history/62-salad-studio-audit-2026-10-14.md.)
+The Tk messageboxes blocked the thread until someone clicked. ``Window.dialog``
+and ``Window.ask`` add an ``AlertDialog`` to the real page's overlay with
+``open=True``, return at once, and the buttons take it back out of the
+overlay. The page carries a stub session and records its repaints instead of
+sending them, so this runs with no client.
 """
 from __future__ import annotations
 
-import inspect
-import textwrap
+import sys
 import unittest
+from pathlib import Path
 from unittest import mock
 
-from tests import _nomodal
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-try:
-    from tkinter import messagebox
-except ImportError:  # pragma: no cover - a run with no Tk at all
-    messagebox = None
+import flet as ft  # noqa: E402
 
-QUESTIONS = ("askyesno", "askokcancel", "askretrycancel", "askyesnocancel")
-NOTICES = ("showinfo", "showwarning", "showerror")
-GALLERY = "Delete 3 image(s) from disk and clear the gallery? This cannot be undone."
-
-# The destructive branch, removed, is the old recorder that answered yes.
-_DESTRUCTIVE_EDITS = (
-    (
-        "        if kind in _ANSWERS and _is_destructive(message):\n"
-        "            return DESTRUCTIVE_ANSWER\n",
-        "",
-    ),
-)
+from salad_studio import flet_theme  # noqa: E402
+from salad_studio.flet_app import Window  # noqa: E402
+from tests._flet_window import Session, TempStores  # noqa: E402
 
 
-def _old_form(func, edits):
-    source = textwrap.dedent(inspect.getsource(func))
-    for new, old in edits:
-        assert new in source, f"{func.__name__} no longer holds {new!r}"
-        source = source.replace(new, old, 1)
-    namespace: dict = {}
-    exec(compile(source, f"<old {func.__name__}>", "exec"), func.__globals__, namespace)
-    return namespace[func.__name__]
+def _window() -> tuple[Window, ft.Page]:
+    page = ft.Page(Session())
+    shell = mock.Mock(colors=flet_theme.canvas_colors(dark=True))
+    return Window(page, mock.Mock(), shell), page
 
 
-class TheNoModalGuard(unittest.TestCase):
+def _repaint_probe(test: unittest.TestCase, box: ft.AlertDialog) -> list[str]:
+    """Record each repaint of the box, the way Flet receives it with no client."""
+    steps: list[str] = []
+
+    def update() -> None:
+        steps.append("closed" if box.open is False else "open")
+
+    box.update = update
+    test.addCleanup(setattr, box, "update", type(box).update.__get__(box))
+    return steps
+
+
+def _press(box: ft.AlertDialog, label: str) -> None:
+    button = next(a for a in box.actions if a.content == label)
+    button.on_click(mock.Mock(control=button))
+
+
+class TheDialogSurface(unittest.TestCase):
     def setUp(self) -> None:
-        if messagebox is None or not _nomodal.install():
-            self.skipTest("tkinter is unavailable, so there is no dialog to guard")
-        _nomodal.reset()
+        self.stores = TempStores().__enter__()
 
-    def test_a_dialog_call_is_recorded_not_shown(self) -> None:
-        answer = messagebox.showinfo("A title", "A body")
-        self.assertEqual(_nomodal.CALLS, [("showinfo", "A title", "A body")])
-        self.assertEqual(answer, "ok")
+    def tearDown(self) -> None:
+        self.stores.__exit__(None, None, None)
 
-    def test_the_question_defaults_are_the_documented_ones(self) -> None:
-        for kind in QUESTIONS:
-            with self.subTest(kind=kind):
-                self.assertIs(getattr(messagebox, kind)("Q", "M"), True)
-        for kind in NOTICES:
-            with self.subTest(kind=kind):
-                self.assertEqual(getattr(messagebox, kind)("Q", "M"), "ok")
+    def test_dialog_returns_at_once_with_its_box_open_on_the_overlay(self) -> None:
+        window, page = _window()
+        self.assertIsNone(window.dialog("Salad Studio", "Gallery is already empty."))
+        [box] = page.overlay
+        self.assertIsInstance(box, ft.AlertDialog)
+        self.assertTrue(box.open)
+        self.assertIn("Gallery is already empty.", box.content.value)
+        self.assertEqual([a.content for a in box.actions], ["OK"])
 
-    def test_a_patch_shadows_the_guard_and_restores_it(self) -> None:
-        guarded = messagebox.askyesno
-        with mock.patch.object(messagebox, "askyesno", return_value=False) as ask:
-            self.assertIsNot(messagebox.askyesno, guarded)
-            self.assertIs(messagebox.askyesno("Q", "M"), False)
-            self.assertEqual(ask.call_count, 1)
-            self.assertEqual(_nomodal.CALLS, [], "the patched dialog must not record")
-        self.assertIs(messagebox.askyesno, guarded, "the recorder must come back")
+    def test_ok_removes_the_box_from_the_overlay(self) -> None:
+        window, page = _window()
+        window.dialog("Salad Studio", "done")
+        [box] = page.overlay
+        steps = _repaint_probe(self, box)
+        _press(box, "OK")
+        self.assertFalse(box.open)
+        self.assertEqual(page.overlay, [])
+        self.assertEqual(steps, ["closed"], "closing repaints the box")
 
-    def _assert_a_destructive_prompt_is_refused(self) -> None:
-        answer = messagebox.askyesno("Salad Studio", GALLERY)
-        self.assertIs(answer, False)
-        self.assertEqual(_nomodal.CALLS[-1], ("askyesno", "Salad Studio", GALLERY))
+    def test_a_destructive_ask_waits_for_yes_before_it_acts(self) -> None:
+        window, page = _window()
+        act = mock.Mock()
+        self.assertIsNone(window.ask("Salad Studio", "Delete 3 image(s)?", act))
+        [box] = page.overlay
+        self.assertEqual([a.content for a in box.actions], ["No", "Yes"])
+        self.assertTrue(box.modal)
+        act.assert_not_called()
 
-    def test_a_destructive_prompt_defaults_to_refusal(self) -> None:
-        """A delete confirmation is refused until the test sets the opt-in."""
-        self._assert_a_destructive_prompt_is_refused()
-        _nomodal.DESTRUCTIVE_ANSWER = True
-        try:
-            self.assertIs(messagebox.askyesno("Salad Studio", GALLERY), True)
-        finally:
-            _nomodal.DESTRUCTIVE_ANSWER = False
-        self.assertIs(messagebox.askyesno("Q", "M"), True, "a plain question still says yes")
+        _press(box, "No")
+        act.assert_not_called()
+        self.assertFalse(box.open)
+        self.assertEqual(page.overlay, [], "No closes the box and leaves the gallery")
 
-        old = _old_form(_nomodal._recorder, _DESTRUCTIVE_EDITS)("askyesno")
-        with mock.patch.object(messagebox, "askyesno", old):
-            with self.assertRaises(AssertionError):
-                self._assert_a_destructive_prompt_is_refused()
-            self.assertIs(
-                messagebox.askyesno("Salad Studio", GALLERY),
-                True,
-                "the old recorder said yes, which is what deleted the gallery",
-            )
-
-    def test_importing_the_tests_package_installs_the_guard(self) -> None:
-        self.assertTrue(_nomodal._INSTALLED)
-        self.assertEqual(messagebox.showinfo.__module__, _nomodal.__name__)
+    def test_yes_closes_the_box_and_then_acts(self) -> None:
+        window, page = _window()
+        act = mock.Mock()
+        window.ask("Salad Studio", "Delete 3 image(s)?", act)
+        [box] = page.overlay
+        _press(box, "Yes")
+        act.assert_called_once_with()
+        self.assertFalse(box.open)
+        self.assertEqual(page.overlay, [])
 
 
 if __name__ == "__main__":

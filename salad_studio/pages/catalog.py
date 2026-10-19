@@ -129,6 +129,17 @@ class CatalogPage(Page):
         if not self.selected:
             self.host.dialog("Salad Studio", "Select a catalog entry first.")
             return
+        wanted = str(self.name.value or "").strip()
+        clash = prompt_catalog.find_by_name(wanted) if wanted else None
+        if clash is not None and str(clash.get("id")) != self.selected:
+            # Renaming onto another entry's name would replace that entry: ask.
+            self.host.dialog(
+                "Salad Studio",
+                f"'{wanted}' is already a catalog entry under short name {clash.get('name')!r}. "
+                "Pick another name.",
+                level="error",
+            )
+            return
         try:
             entry = prompt_catalog.update_entry(self.selected, name=str(self.name.value or ""),
                                                 description=str(self.description.value or ""))

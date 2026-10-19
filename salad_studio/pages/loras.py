@@ -172,13 +172,18 @@ class LorasPage(Page):
         if item is None:
             self.host.dialog("Salad Studio", "Select a LoRA first.", level="error")
             return
+        before = dict(item)
         try:
             lora_store.edit_lora(str(item.get("id")), **self._form())
         except ValueError as exc:
             self.host.dialog("Salad Studio", f"Could not edit the LoRA: {exc}", level="error")
             return
         self.refresh()
-        self.host.note(f"Saved the edits to {self.name.value}", level="ok")
+        changed = [key for key in ("name", "base") if str(before.get(key) or "") != str(
+            lora_store.find_lora(str(item.get("id")), None).get(key) or "")]
+        note = (f"Saved the edits to {self.name.value}" if changed
+                else f"Saved the strengths of {self.name.value}")
+        self.host.note(note, level="ok")
 
     def verify_selected(self, _e: Any = None) -> None:
         item = self._selected_item()

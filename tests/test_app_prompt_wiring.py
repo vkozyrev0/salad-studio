@@ -19,7 +19,7 @@ for _p in (HERE / ".." / "salad_studio", HERE.parent):
 
 import flet as ft  # noqa: E402
 
-from salad_studio import lora_store, request_json  # noqa: E402
+from salad_studio import lora_store, prompt_catalog, request_json  # noqa: E402
 from salad_studio.flet_pages import Form  # noqa: E402
 from tests._flet_window import TempStores, click, dialog_body, hidden_window, mount_opened, shown_texts  # noqa: E402
 
@@ -292,6 +292,19 @@ class ThePromptCatalog(Case):
         self.assertIn("Loaded 'Sunrise'", self.win.shell.status.value)
         self.assertIn("Loaded 'Sunrise'", self.catalog.catalog_status.value)
 
+    def test_a_rename_onto_another_entry_is_refused(self) -> None:
+        self.carry("Sunrise")
+        self.carry("Sunset")
+        sunset = prompt_catalog.find_by_name("Sunset")
+        self.assertEqual(self.catalog.selected, str(sunset["id"]))
+        self.catalog.name.value = "Sunrise"
+        self.catalog.save_meta()
+        self.assertIn("already a catalog entry", dialog_body(self.page.overlay[-1]))
+        self.assertEqual(prompt_catalog.get_entry(str(sunset["id"]))["name"], "Sunset",
+                         "the other entry keeps its name")
+        sunrise = prompt_catalog.find_by_name("Sunrise")
+        self.assertIsNotNone(sunrise, "and the entry it would have replaced is still there")
+
     def test_catalog_needs_a_name_and_nothing_is_stored(self) -> None:
         self.catalog.add()
         self.assertEqual([dialog_body(box) for box in self.page.overlay],
@@ -480,3 +493,4 @@ class SettingsShowsEveryControl(Case):
         for lora_id in flux1:
             item = lora_store.find_lora(lora_id)
             self.assertTrue(lora_store.compatible_with_graph(item, "flux1"))
+

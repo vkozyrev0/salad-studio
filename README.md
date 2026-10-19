@@ -15,7 +15,7 @@ Run from the repo root. The window opens on the secondary display when there is 
 Tests are `unittest`. Run the commands separately:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1172 tests, ~15-30 min
+python -m unittest discover -s tests -p "test_*.py"    # 1175 tests, ~15-30 min
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```

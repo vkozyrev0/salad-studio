@@ -26,6 +26,20 @@ PROBE_KEYS: tuple[str, ...] = ("path", "port", "initial_delay_seconds", "period_
                                "timeout_seconds", "success_threshold", "failure_threshold")
 
 
+def _document() -> dict[str, Any]:
+    """The metadata document as it is on disk now: an edited document shows without a restart."""
+    from salad_studio import studio_meta
+
+    return studio_meta.load()
+
+
+def _image_entries(settings: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every image this page can deploy."""
+    from salad_studio import image_deploy
+
+    return image_deploy.entries(_document(), settings)
+
+
 class ConfigPage(Page):
     def __init__(self, host: Any) -> None:
         super().__init__("Config", "Profiles, images and the two hostings.", host.colors)
@@ -254,7 +268,7 @@ class ConfigPage(Page):
         from salad_studio import image_deploy
 
         settings = image_deploy.load_settings()
-        tags = image_deploy.tag_options(None, settings)
+        tags = image_deploy.tag_options(_document(), settings)
         self.image = w.combo(tags, value=tags[0] if tags else "", label_text="Image", width=380,
                              on_change=lambda _e: self._show_environment())
         self.show_tokens = w.check("show token values", False, on_change=lambda _e: self._show_environment())
@@ -287,30 +301,34 @@ class ConfigPage(Page):
         )
         self._show_environment()
 
-    def _image_name(self) -> str:
+    def _pick(self) -> str:
+        """The image the box names, or the first one it offers: a box with no
+        choice shows its first option, and the environment belongs to that one.
+        A stored image's name stands for it: ``add_env`` files rows under the key."""
         from salad_studio import image_deploy
 
-        settings = image_deploy.load_settings()
-        pick = str(self.image.value or "") or (image_deploy.tag_options(None, settings) or [""])[0]
-        entry = image_deploy.entry_by_ref(image_deploy.entries(None, settings), pick)
-        return str(entry.get("name")) if entry else ""
+        clean = lambda tag: (image_deploy.entry_by_ref(_image_entries(image_deploy.load_settings()), tag)
+                             or {}).get("key", "")
+        if self.image.value and clean(str(self.image.value)):
+            return str(self.image.value)
+        first = (image_deploy.tag_options(_document(), image_deploy.load_settings()) or [""])[0]
+        return first or str(self.image.value or "")
 
     def _show_environment(self) -> None:
         from salad_studio import image_deploy
 
         settings = image_deploy.load_settings()
-        pick = str(self.image.value or "") or (image_deploy.tag_options(None, settings) or [""])[0]
-        entry = image_deploy.entry_by_ref(image_deploy.entries(None, settings), pick)
+        entry = image_deploy.entry_by_ref(_image_entries(settings), self._pick())
         include = bool(self.show_tokens.value)
-        rows = (image_deploy.env_rows(entry, image_deploy.extra_env(settings, self._image_name()),
-                                      self._token_map()) if entry else [])
+        rows = image_deploy.env_rows(entry, image_deploy.extra_env(settings, entry["key"]),
+                                     self._token_map()) if entry else []
         self.env_list.controls = [
             ft.Text(f"{row.get('name')}={image_deploy.shown_value(row, include_values=include)}",
                     size=12, font_family="Consolas", selectable=True)
             for row in rows
         ] or [ft.Text("(no entries)", size=12, color=self.colors["muted"])]
         self.commands.value = (image_deploy.deploy_script(
-            entry, image_deploy.extra_env(settings, self._image_name()), include_values=include)
+            entry, image_deploy.extra_env(settings, entry["key"]), include_values=include)
             if entry else "(no image selected)")
         refresh(self.env_list, self.commands)
 
@@ -334,7 +352,8 @@ class ConfigPage(Page):
             self.host.note("Refused: Name the environment variable first", level="warn")
             return
         settings = image_deploy.load_settings()
-        settings, refusal = image_deploy.add_env(settings, self._image_name(), name,
+        ref = (image_deploy.entry_by_ref(_image_entries(settings), self._pick()) or {}).get("key", "")
+        settings, refusal = image_deploy.add_env(settings, ref, name,
                                                  str(self.env_value.value or ""))
         if refusal:
             self.host.note(f"Refused: {refusal}", level="warn")
@@ -353,7 +372,8 @@ class ConfigPage(Page):
             self.host.note("Refused: type the NAME of the extra to remove", level="warn")
             return
         settings = image_deploy.load_settings()
-        settings, removed = image_deploy.remove_env(settings, self._image_name(), name)
+        ref = (image_deploy.entry_by_ref(_image_entries(settings), self._pick()) or {}).get("key", "")
+        settings, removed = image_deploy.remove_env(settings, ref, name)
         image_deploy.save_settings(settings)
         self._show_environment()
         self.host.note(f"Removed {name}" if removed else f"Refused: {name} is documented, not an extra",
@@ -641,7 +661,7 @@ class ConfigPage(Page):
         if row is None:
             self.host.note("Refused: select an instance first", level="warn")
             return
-        entry = image_deploy.entry_by_ref(image_deploy.entries(None, image_deploy.load_settings()),
+        entry = image_deploy.entry_by_ref(_image_entries(image_deploy.load_settings()),
                                           str(self.image.value or ""))
         image = str((entry or {}).get("tag") or "")
         key = vast.row_key(row)

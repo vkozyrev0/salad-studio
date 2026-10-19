@@ -1,8 +1,7 @@
 # Salad Studio (not Eldermark)
 
 Windows helper for SaladCloud ComfyUI image generation and preview, separate
-from `eldermark`. Run `python -m salad_studio` or
-`python salad_studio/app.py`.
+from `eldermark`. Run `python -m salad_studio`.
 
 **Top action bar**: Generate, live status every 2 s, and ready (green), starting
 (amber) and not-started (red) container counts; a press during a render queues.
@@ -78,7 +77,7 @@ each side.
   live row; a contract with no mapped port appears as **creating**, and Fetch
   promotes it when its port maps, unless another instance is active. A
   vast-mode profile holding a destroyed address is repointed or cleared. The
-  create and endpoint wait run off the Tk thread, bounded at about five minutes,
+  create and endpoint wait run off the UI thread, bounded at about five minutes,
   polling for an endpoint, not `/ready`; press Generate again once reachable.
 
   The key authenticates the control API only. A render queues on the profile's
@@ -113,8 +112,8 @@ each side.
   narrows to names containing the text, any case; **Clear** restores all, and a
   narrowed grid still sorts.
 - **Prompt Editor**. The JSON body POSTed to the target's `/prompt`. The graph
-  is **JointJS in a WebView2 pane**; see
-  [the prompt graph pane](#prompt-graph-pane-jointjs-in-webview2). Selecting
+  is **drawn on a Flet canvas**; see
+  [the prompt graph pane](#prompt-graph-pane-painted-from-the-model). Selecting
   LoRAs on Prompt Settings rebuilds the `LoraLoader` chain here; **Rebuild from
   JSON** reverses it. **Validate** runs the same `parse_request_json` gate as
   Generate, and also fails on a missing Civitai token or an unverified weight
@@ -255,7 +254,7 @@ each side.
   load with a log line and left running, so opening Studio never shuts down a
   container you started by hand. The status probe may only **follow** a
   container the record already owns (`SaladQueue.refresh`); a dispatched request
-  claims its container for that session only, and the check runs off the Tk
+  claims its container for that session only, and the check runs off the UI
   thread.
 
 Klein group, prefetch image, Civitai-vs-Comfy quality, and startup probes:
@@ -281,7 +280,6 @@ flet is imported.
 
 | Layer | Modules |
 |---|---|
-| UI (being deleted with the Tk app) | `app.py`, `graph_view.py`, `history_strip.py` |
 | UI | `flet_app.py`, `flet_shell.py`, `flet_services.py`, `flet_pages.py`, `flet_pump.py`, `flet_theme.py`, `flet_widgets.py`, `desktop.py`, `__main__.py`, `graph_model.py`, `graph_canvas.py`, `editor_logic.py`, `theme.py`, `ui_state.py`, `json_highlight.py` |
 | Import | `comfy_import.py`, `civitai_verify.py`, `request_json.py` |
 | Persistence | `tokens.py`, `prompt_history.py`, `prompt_catalog.py`, `lora_store.py`, `profiles.py`, `hostings.py`, `studio_meta.py` |
@@ -325,7 +323,7 @@ the root [`README.md`](../README.md) (Configuration, Known limitations).
 Run the commands separately:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1242 tests, ~15-30 min
+python -m unittest discover -s tests -p "test_*.py"    # 1172 tests, ~15-30 min
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```
@@ -339,9 +337,11 @@ container are in
 [doc 23](../docs/workflow/23-salad-container-group-deployment.md).
 `salad_status.py` is its client.
 
-## Prompt graph pane: JointJS in WebView2
+## Prompt graph pane: painted from the model
 
-JointJS (`@joint/core` 4.2.5) in a tkwry WebView2 child; cache in
-`%LOCALAPPDATA%\SaladStudio\WebView2`. **Open in browser** loads the same HTML;
-**Open as Comfy** opens LiteGraph. Tests: `test_graph_view.py` class
-`JointGraphExport`. [Decision record](../docs/history/65-salad-studio-prompt-graph-decision-2026-10-17.md).
+The pane draws `graph_model.GraphModel` straight onto a Flet canvas, cards and
+wires on two layers so a drag repaints only the wires. The layout keeps the
+JointJS pane's look: one column per class, cards sized to their rows, and a
+right-angled wire from each output port to its input port. Tests:
+`test_graph_model.py` and `test_graph_canvas.py`.
+[Decision record](../docs/history/65-salad-studio-prompt-graph-decision-2026-10-17.md).

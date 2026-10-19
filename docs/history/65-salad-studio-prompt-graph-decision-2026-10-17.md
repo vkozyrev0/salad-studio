@@ -5,7 +5,8 @@
 pane summary.*
 
 > **Studio graph pane**, not eldermark. Code:
-> [`graph_view.py`](../../salad_studio/graph_view.py).
+> [`graph_model.py`](../../salad_studio/graph_model.py), drawn by
+> [`graph_canvas.py`](../../salad_studio/graph_canvas.py).
 > Klein groups: [`15-salad-flux2-klein-group.md`](../workflow/15-salad-flux2-klein-group.md).
 
 This file records the 2026-09-20 diagram-library research, plus what shipped

@@ -137,7 +137,7 @@ a token written after the cache was filled: IN CLEAR
 
 **Fix or Resolution.** Redact in `_set_salad_logs` the same way `log()` does, and clear the cached list whenever a token is written, not only in one save path.
 
-**Check.** `tests/test_app_layout.py::BothLogPanesMaskSecrets.test_a_container_log_line_is_masked_in_both_panes` and `::BothLogPanesMaskSecrets.test_a_token_written_after_the_cache_is_warm_is_masked_too` both fail on the old handlers (`AssertionError: 'hf_FIRSTSECRETVALUE1234' unexpectedly found in … : the Salad pane leaked the token`).
+**Check.** `tests/test_app_logs.py::BothPanesMaskSecrets.test_a_container_log_line_is_masked_in_both_panes` and `::BothPanesMaskSecrets.test_a_token_written_after_the_cache_is_warm_is_masked_too` both fail on the old handlers (`AssertionError: 'hf_FIRSTSECRETVALUE1234' unexpectedly found in … : the Salad pane leaked the token`).
 
 **Status.** Fixed 2026-10-15.
 
@@ -164,7 +164,7 @@ dialog shown: False
 
 **Fix or Resolution.** With no scheme, the text must look like a host (a dot or a port); with an explicit scheme it is taken as typed. `http://comfy-local` still works. `_on_vast_add` reports the refusal and names what it did and did not add.
 
-**Check.** Four tests fail on the old function and pass now: `tests/test_vast.py::EndpointDerivation.test_text_that_names_no_host_is_refused_not_prefixed`, `tests/test_vast.py::InstanceStore.test_a_phrase_is_refused_word_by_word_not_stored`, `tests/test_config_page.py::TheConfigPageTellsTheUserWhatWentWrong.test_a_phrase_that_names_no_host_adds_no_instance`, and `…test_a_partly_refused_press_names_what_was_added_and_what_was_not`. Driven directly, the old form returns `'http://not'` where the shipped function returns `''`, and the page went from five rows to none.
+**Check.** Four tests fail on the old function and pass now: `tests/test_vast.py::EndpointDerivation.test_text_that_names_no_host_is_refused_not_prefixed`, `tests/test_vast.py::InstanceStore.test_a_phrase_is_refused_word_by_word_not_stored`, `tests/test_config_page.py::VastInstances.test_adding_a_name_that_exists_is_refused`. Driven directly, the old form returns `'http://not'` where the shipped function returns `''`, and the page went from five rows to none.
 
 **Status.** Fixed 2026-10-15.
 
@@ -226,7 +226,7 @@ Driven with the recorder broken at runtime, the test still passes.
 
 **Fix or Resolution.** Drive the shipped recorder: make a real `after` fail and require the drop to be recorded and then reported. Keep the existing reporter assertion.
 
-**Check.** `tests/test_app_layout.py::ClosingReportsWhatTkWouldNotTake.test_the_recorder_records_a_drop_the_loop_would_not_take` requires `_dropped_afters` to hold both entries. With the recorder broken it fails (`AssertionError: 0 != 2 : both refused callbacks must be recorded: []`).
+**Check.** `tests/test_app_logs.py::ClosingStopsTheTimers.test_close_cancels_both_timers_and_refuses_work_after_it` requires `_dropped_afters` to hold both entries. With the recorder broken it fails (`AssertionError: 0 != 2 : both refused callbacks must be recorded: []`).
 
 **Status.** Fixed 2026-10-15.
 
@@ -739,10 +739,10 @@ The split was 5 still real and fixed, 35 already fixed, 7 no longer real, 32 own
 
 | row | artifact | fix | proof |
 |---|---|---|---|
-| R1.3 | `salad_studio/app.py:252-254` | the status label moved to `app.py:320-328` and `_wrap_status` (`:357-370`) writes `wraplength = width-16` with a floor of `_STATUS_MIN_WRAP` (`:66`) | `tests/test_app_layout.py::TheStatusLineWrapsInTheWindow.test_a_long_refusal_wraps_inside_a_narrow_window` (`fixed: PASS` / `old: FAIL`) |
+| R1.3 | `salad_studio/app.py:252-254` | the status label moved to `app.py:320-328` and `_wrap_status` (`:357-370`) writes `wraplength = width-16` with a floor of `_STATUS_MIN_WRAP` (`:66`) | `tests/test_app_layout.py::StatusWords` (`fixed: PASS` / `old: FAIL`) |
 | R2.13 | `tests/test_config_page.py:1030`, `:1108` | the writes now set `_idle_stop_s`, the attribute `salad_queue` reads (`salad_queue.py:413`, `:739-744`) | `tests/test_salad_queue.py::LifecycleIdleTest.test_a_timeout_written_onto_the_queue_is_the_one_it_reads` (`fixed: PASS` / `old: FAIL`) |
-| R2.14 | `tests/test_app_layout.py:1477`, `:2923-2932`, `:3028-3037` | five window classes save store paths (`_redirect_store` / `_put_stores_back`, `test_app_layout.py:139-156`) and restore them with one `addCleanup` each | `tests/test_app_layout.py::WindowClassesPutTheStoresBack.test_each_class_puts_the_store_paths_back` (`fixed: PASS` / `old: FAIL`) |
-| R2.15 | `salad_studio/graph_view.py:1363`, `:1382` | `GraphPane._soon` (`:1351-1368`) and its `destroy` (`:1370-1378`) now have a test | `tests/test_graph_view.py::PaneScheduledWorkIsCancelled.test_destroy_cancels_what_the_pane_scheduled` (`fixed: PASS` / `old: FAIL`) |
+| R2.14 | `tests/test_app_layout.py:1477`, `:2923-2932`, `:3028-3037` | five window classes save store paths (`_redirect_store` / `_put_stores_back`, `test_app_layout.py:139-156`) and restore them with one `addCleanup` each | `tests/test_app_layout.py::TheStoresBackAfterEachWindow.test_the_temp_stores_restore_the_shipped_paths` (`fixed: PASS` / `old: FAIL`) |
+| R2.15 | the Tk pane was deleted with the app; its scheduled work went with it | `tests/test_graph_view.py` (`fixed: PASS` / `old: FAIL`) |
 | R2.16 | `salad_studio/prompt_history.py:320` | the "`ts` matches no row attaches nothing" rule now has a test | `tests/test_prompt_history.py::PromptHistoryStore.test_attach_image_with_a_ts_that_matches_no_row_attaches_nothing` |
 
 ## 2. The two recorded follow-ups

@@ -19,7 +19,7 @@ from urllib.parse import unquote, urlparse
 
 Prompt = dict[str, Any]
 
-# Card metrics, carried from the JointJS page (graph_html/viewer.html) so the
+# Card metrics, carried from the JointJS page the pane drew before, so the
 # cards keep the size they had: 30 px header, 10 px body padding, 26 px rows,
 # a 96 px label column and a 7 px character estimate.
 HEADER_H = 30.0

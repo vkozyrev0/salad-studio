@@ -418,11 +418,12 @@ class AuditDocument(unittest.TestCase):
         self.assertIn("prefetch6-klein", image)
         confirmations.append(f"L3 studio-metadata.json klein image = {image}")
 
-        # D2: the root README names the dependency the app imports.
+        # D2: the root README names the dependency the window imports.
         root = ROOT_README.read_text(encoding="utf-8")
-        self.assertIn("tkwry", root)
+        self.assertIn("flet", root)
         self.assertNotIn("`requests`", root)
-        confirmations.append("D2 root README requirements name tkwry, not requests")
+        self.assertNotIn("tkwry", root)
+        confirmations.append("D2 root README requirements name flet, not requests or tkwry")
 
         for line in confirmations:
             print(f"audit fixed finding confirmed: {line}")
@@ -818,15 +819,10 @@ def route_payload_mentions(paths) -> list[str]:
 # own `def`. The rule below reads the module's *source* rather than `hasattr`,
 # because `_draw_grid` was a method: its name lived on `GraphPane`, not on
 # `graph_view`.
-DEAD_HELPER_MODULES = ("theme.py", "json_highlight.py", "graph_view.py")
+DEAD_HELPER_MODULES = ("theme.py", "json_highlight.py")
 DEAD_HELPERS = (
     ("theme.py", "palette_snapshot"),
     ("json_highlight.py", "token_kinds"),
-    ("graph_view.py", "node_boxes"),
-    ("graph_view.py", "round_polyline"),
-    ("graph_view.py", "_draw_grid"),
-    ("graph_view.py", "_wrap"),
-    ("graph_view.py", "_rounded_rect"),
 )
 
 # The seven `def` blocks as they stood before that pass, verbatim. The
@@ -850,81 +846,26 @@ PRE_DELETION_DEFS = (
             "    return {kind for kind, _s, _e in tokenize_json(text)}\n"
         ),
     ),
-    (
-        "graph_view.py",
-        (
-            "def node_boxes(prompt: Prompt) -> dict[str, tuple[float, float, float, float]]:\n"
-            '    """Axis-aligned card rects from ``layout_xy`` + ``node_metrics``."""\n'
-            "    return boxes_from_xy(prompt, layout_xy(prompt))\n"
-        ),
-    ),
-    (
-        "graph_view.py",
-        (
-            "def round_polyline(\n"
-            "    pts: list[tuple[float, float]], radius: float = _WIRE_CORNER\n"
-            ") -> list[tuple[float, float]]:\n"
-            '    """Back-compat: chamfer then densify (no circular arcs)."""\n'
-            "    return densify_polyline(chamfer_polyline(pts, cut=radius), step=10.0)\n"
-        ),
-    ),
-    (
-        "graph_view.py",
-        (
-            "    def _draw_grid(self, width: float, height: float) -> None:\n"
-            "        step = 24\n"
-            "        for x in range(0, int(width) + step, step):\n"
-            "            self.canvas.create_line(x, 0, x, height, fill=_GRID, width=1)\n"
-            "        for y in range(0, int(height) + step, step):\n"
-            "            self.canvas.create_line(0, y, width, y, fill=_GRID, width=1)\n"
-        ),
-    ),
-    (
-        "graph_view.py",
-        (
-            'def _wrap(text: str, width: int) -> list[str]:\n'
-            '    words = (text or "").replace("\\n", " ").split()\n'
-            "    lines: list[str] = []\n"
-            '    cur = ""\n'
-            "    for w in words:\n"
-            '        nxt = f"{cur} {w}".strip()\n'
-            "        if len(nxt) > width and cur:\n"
-            "            lines.append(cur)\n"
-            "            cur = w\n"
-            "        else:\n"
-            "            cur = nxt\n"
-            "    if cur:\n"
-            "        lines.append(cur)\n"
-            '    return lines or [""]\n'
-        ),
-    ),
-    (
-        "graph_view.py",
-        (
-            "def _rounded_rect(\n"
-            "    canvas: tk.Canvas, x0: float, y0: float, x1: float, y1: float, **kw: Any\n"
-            ") -> int:\n"
-            "    r = _CORNER\n"
-            "    pts = [\n"
-            "        x0 + r, y0,\n"
-            "        x1 - r, y0,\n"
-            "        x1, y0,\n"
-            "        x1, y0 + r,\n"
-            "        x1, y1 - r,\n"
-            "        x1, y1,\n"
-            "        x1 - r, y1,\n"
-            "        x0 + r, y1,\n"
-            "        x0, y1,\n"
-            "        x0, y1 - r,\n"
-            "        x0, y0 + r,\n"
-            "        x0, y0,\n"
-            "        x0 + r, y0,\n"
-            "    ]\n"
-            "    return canvas.create_polygon(pts, smooth=True, splinesteps=16, **kw)\n"
-        ),
-    ),
+
 )
 
+
+# The graph-view blocks the deleted page carried, as bare functions: the rule
+# reads source text, so a page that is gone can still be shown to trip it.
+GRAPH_VIEW_PRE_DELETION = {
+    "graph_view.py": (
+        "def node_boxes(prompt):\n"
+        "    return boxes_from_xy(prompt, layout_xy(prompt))\n"
+        "def round_polyline(pts, radius=0):\n"
+        "    return densify_polyline(chamfer_polyline(pts, cut=radius), step=10.0)\n"
+        "def _draw_grid(self, width, height):\n"
+        "    step = 24\n"
+        "def _wrap(text, width):\n"
+        "    return []\n"
+        "def _rounded_rect(canvas, x0, y0, x1, y1, **kw):\n"
+        "    return 0\n"
+    ),
+}
 
 def shipped_sources() -> dict[str, str]:
     """The text of each module the seven helpers were deleted from."""
@@ -2210,14 +2151,9 @@ class LivingDocsNameTheShippedArtifacts(unittest.TestCase):
                 ),
                 [],
             )
-        with self.subTest("P-VENDOR-LABEL"):
-            self.assertEqual(
-                vendor_litegraph_problems(
-                    VENDOR.read_text(encoding="utf-8"),
-                    GRAPH_VIEW.read_text(encoding="utf-8"),
-                ),
-                [],
-            )
+        with self.subTest("D-GRAPH-HTML-GONE"):
+            self.assertFalse(VENDOR.exists(), "the vendored graph pages are back")
+            self.assertFalse(GRAPH_VIEW.exists(), "the Tk graph pane is back")
         with self.subTest("D-SKILL-MAX"):
             self.assertEqual(
                 skill_max_attempts_problems(
@@ -2463,9 +2399,13 @@ class TheDocDriftRulesCatchTheOldText(unittest.TestCase):
                 encoding="utf-8",
             )
             with self.subTest("P-VENDOR-LABEL"):
+                shipped_page = (
+                    'text="Open in browser", command=self._open_browser\n'
+                    'text="Open as Comfy", command=self._open_litegraph\n'
+                )
                 problems = vendor_litegraph_problems(
                     old_vendor.read_text(encoding="utf-8"),
-                    GRAPH_VIEW.read_text(encoding="utf-8"),
+                    shipped_page,
                 )
                 self.assertTrue(problems, "the rule missed the LiteGraph button label")
                 self.assertTrue(

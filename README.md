@@ -1,6 +1,6 @@
 # salad-studio
 
-Windows tooling for SaladCloud ComfyUI image generation: a Tkinter studio that
+Windows tooling for SaladCloud ComfyUI image generation: a Flet studio that
 builds, validates, and POSTs Comfy `/prompt` graphs, plus the container image
 and prompt-recipe pipeline they run on.
 
@@ -10,22 +10,21 @@ and prompt-recipe pipeline they run on.
 python -m salad_studio
 ```
 
-Run from the repo root; `python salad_studio/app.py` also works.
+Run from the repo root. The window opens on the secondary display when there is one.
 
 Tests are `unittest`. Run the commands separately:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1242 tests, ~15-30 min
+python -m unittest discover -s tests -p "test_*.py"    # 1172 tests, ~15-30 min
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```
 
 ## Requirements
 
-Tested on Python 3.14.7 with `pillow`, `tkwry` (the WebView2 embed the graph
-pane uses), and Tk. Windows-only: it uses WebView2 and
-`%LOCALAPPDATA%\SaladStudio\WebView2` for the browser cache, and `os.startfile`
-to open plates.
+Tested on Python 3.14.7 with `flet` 1.0.4 (which brings its own desktop
+client) and `pillow`. Windows-only: it places its window with Win32 monitor
+calls and uses `os.startfile` to open plates.
 
 Generation needs a SaladCloud ComfyUI container group and a Salad API key, or a
 vast.ai instance selected on the Config page and a Vast.ai key. Building the
@@ -35,10 +34,10 @@ container needs Docker.
 
 | Path | What it is |
 |---|---|
-| `salad_studio/` | The Tkinter app; [`salad_studio/README.md`](salad_studio/README.md) is the manual. |
+| `salad_studio/` | The Flet app; [`salad_studio/README.md`](salad_studio/README.md) is the manual. |
 | `tests/` | The suite, one module per area. |
 | `salad_klein/` | Docker image, `prefetch.py`, and Klein recipes; [`salad_klein/README.md`](salad_klein/README.md) is the short form. |
-| `docs/workflow/` | Five playbooks: [23](docs/workflow/23-salad-container-group-deployment.md) deployment, [21](docs/workflow/21-klein-image-handoff.md) the Klein handoff, [15](docs/workflow/15-salad-flux2-klein-group.md) the Klein group, [14](docs/workflow/14-salad-comfy-live-findings.md) live findings, [22](docs/workflow/22-two-body-correctness-research.md) anatomy research. The graph pane is in [the manual](salad_studio/README.md#prompt-graph-pane-jointjs-in-webview2). |
+| `docs/workflow/` | Five playbooks: [23](docs/workflow/23-salad-container-group-deployment.md) deployment, [21](docs/workflow/21-klein-image-handoff.md) the Klein handoff, [15](docs/workflow/15-salad-flux2-klein-group.md) the Klein group, [14](docs/workflow/14-salad-comfy-live-findings.md) live findings, [22](docs/workflow/22-two-body-correctness-research.md) anatomy research. The graph pane is in [the manual](salad_studio/README.md#prompt-graph-pane-painted-from-the-model). |
 | `docs/history/` | Dated records: audits [57](docs/history/57-salad-studio-audit-2026-09.md), [58](docs/history/58-salad-studio-audit-2026-09-22.md), [59](docs/history/59-salad-studio-audit-2026-09-26.md), [61](docs/history/61-salad-studio-audit-2026-10-13.md), [62](docs/history/62-salad-studio-audit-2026-10-14.md), [63](docs/history/63-salad-studio-audit-2026-10-16.md), the [2026-10-17 issue pass](docs/history/64-salad-studio-issue-pass-2026-10-17.md), the [prompt-graph decision](docs/history/65-salad-studio-prompt-graph-decision-2026-10-17.md), the [2026-10-18 UI/UX audit](docs/history/65-salad-studio-ui-audit-2026-10-18.md), and the [container-restart investigation](docs/history/60-salad-container-restart-2026-09-27.md). |
 | `docs/` | The [consolidated issue record](docs/issue-records.md) for 2026-10-14 to 2026-10-16. |
 | `model_catalog.py` | Local LoRA and checkpoint cache. `fetch-klein --stage` warms the Docker build. |

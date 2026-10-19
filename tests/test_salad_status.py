@@ -401,28 +401,20 @@ class ContainerCounts(unittest.TestCase):
 
 
 class SourceButton(unittest.TestCase):
-    def test_config_has_check_button(self) -> None:
-        src = (PKG / "app.py").read_text(encoding="utf-8")
-        self.assertIn("Check Salad status", src)
-        self.assertIn("_check_salad_status", src)
-        self.assertIn("salad_status.snapshot_gateway", src)
-        self.assertIn("_schedule_salad_poll", src)
-        self.assertIn("silent=True", src)
-        self.assertIn("w is not self", src)
-        # The policy fields and their actions live on the Config page now, one
-        # policy per config; there is no Policy page to build.
-        self.assertNotIn('text="Policy"', src)
-        self.assertIn("_build_policy_section", src)
-        self.assertIn("_policy_from_form", src)
-        self.assertIn("_show_policy", src)
-        # Generate's dispatch decision: the app reads the snapshots it already
-        # has and asks salad_status whether the request may go out at all.
-        self.assertIn("generate_dispatch_reason", src)
-        self.assertIn("_last_snaps", src)
-        self.assertIn("snapshot_gateway", src)
-        self.assertIn("load_policy", src)
-        self.assertIn("Load from Salad", src)
-        self.assertIn("Apply to Salad", src)
+    def test_the_window_has_the_check_button_and_the_strip(self) -> None:
+        src = (PKG / "flet_app.py").read_text(encoding="utf-8")
+        self.assertIn('"Check Salad status"', src)
+        self.assertIn("self.services.check_salad", src)
+        self.assertIn("salad_status.strip_counts", src)
+        services = (PKG / "flet_services.py").read_text(encoding="utf-8")
+        self.assertIn("salad_status.snapshot_gateway", services)
+        self.assertIn("check_salad(silent=True)", services)
+        # The policy fields and their actions live on the Config page, one
+        # policy per profile; there is no Policy page.
+        config = (PKG / "pages" / "config.py").read_text(encoding="utf-8")
+        self.assertNotIn('ft.Text("Policy")', config)
+        self.assertIn("def apply_policy", config)
+
 
 
 class PolicyRoundtrip(unittest.TestCase):

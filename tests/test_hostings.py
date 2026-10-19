@@ -56,9 +56,12 @@ class HostingsTable(unittest.TestCase):
             self.assertTrue(callable(adapter.generate))
 
     def test_the_generate_press_dispatches_through_the_adapter(self) -> None:
-        source = (PKG / "app.py").read_text(encoding="utf-8")
-        self.assertIn("adapter = hostings.BY_KEY.get(p.mode)", source)
-        self.assertIn("adapter(self).generate(payload, p)", source)
+        """The window reads the profile's hosting from the adapter table."""
+        from salad_studio import flet_app
+
+        source = (PKG / "flet_app.py").read_text(encoding="utf-8")
+        self.assertIn("p.mode if p.mode in hostings.BY_KEY else hostings.DEFAULT", source)
+        self.assertIs(flet_app.hostings, __import__("hostings"))
 
     def test_a_vast_adapter_refuses_when_no_row_is_selected(self) -> None:
         url, reason = hostings.BY_KEY["vast"](_App()).pick_url()

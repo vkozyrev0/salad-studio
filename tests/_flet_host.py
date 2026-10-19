@@ -1,16 +1,14 @@
 """A window stand-in for a page test: the window's fields, its dialogs, and a service layer.
 
 A page reads ``host.form``, ``host.profile`` and ``host.services`` and writes
-through ``note``/``log``/``dialog``/``ask``. This object keeps all of that
-without a client, a loop or a thread, so a test types into the page's controls,
-presses the page's buttons and then reads the controls and the stores back.
+through ``note``/``log``/``dialog``/``ask``. This object keeps all of that and
+never repaints, so a test types into a page's fields, calls one of the page's
+button handlers, then reads the page's fields and the stores back.
 
-``FakeServices.background`` runs ``work`` on the calling thread and hands its
-result to ``done`` at once, and records an exception as the result, which is
-what the real ``AppServices.background`` does. ``hold`` leaves the next call in
-flight, the way a slow network call does, until ``release`` runs it.
-``open_page`` builds and records the other page a page opens, the way the
-window's shell does. ``screen`` stands in for the shell's page area.
+``FakeServices.background`` runs ``work`` on the calling thread and hands the
+result to ``done`` at once; an exception is the result, as the real
+``AppServices.background`` reports it. ``hold`` keeps the next call in flight
+until ``release`` runs it.
 """
 from __future__ import annotations
 
@@ -24,7 +22,6 @@ from salad_studio.flet_shell import Page
 class FakeServices:
     def __init__(self) -> None:
         self.offers: dict[str, dict[str, Any]] = {}
-        self.offers_selected: dict[str, Any] | None = None
         self.busy_flags: dict[str, bool] = {}
         self.snaps: dict[str, Any] = {}
         self.salad_word = ""
@@ -33,6 +30,9 @@ class FakeServices:
         self.on_generated: Callable[[Any], None] | None = None
         self.on_timer: Callable[[str], None] | None = None
         self.log_lines: list[tuple[str, str]] = []
+        self.salad_logs = ""
+        self.gen_started = 0.0
+        self.salad_key_error = ""
         self.held: list[tuple[Callable[[], Any], Callable[[Any], None]]] = []
         self.work: list[Callable[[], Any]] = []
         self.hold = False
@@ -44,6 +44,12 @@ class FakeServices:
     def token(self, kind: str) -> str:
         return tokens.read_token(kind)
 
+    def log(self, level: str, text: str) -> None:
+        self.log_lines.append((level, text))
+
+    def set_salad_logs(self, text: str) -> None:
+        self.salad_logs = text
+
     def background(self, work: Callable[[], Any], done: Callable[[Any], None]) -> None:
         self.work.append(work)
         if self.hold:
@@ -54,7 +60,7 @@ class FakeServices:
     def run(self, work: Callable[[], Any], done: Callable[[Any], None]) -> None:
         try:
             result: Any = work()
-        except Exception as exc:  # noqa: BLE001 - the page shows a worker's failure
+        except Exception as exc:  # noqa: BLE001 - a page shows its worker's failure
             result = exc
         if not self.closed:
             done(result)
@@ -73,18 +79,11 @@ class FakeServices:
 
 
 class FakePage:
-    """The flet Page the window hands a page: the overlay, the clipboard, what is attached."""
+    """The flet Page a page is handed: the overlay, the clipboard, what has been sent."""
 
     def __init__(self) -> None:
         self.overlay: list[Any] = []
         self.clipboard = ""
-        self.attached: list[Any] = []
-
-    def attach(self, control: Any) -> None:
-        self.attached.append(control)
-
-    def contains(self, control: Any) -> bool:
-        return any(control is n for n in walk(self.attached))
 
     def set_clipboard(self, text: str) -> None:
         self.clipboard = text
@@ -94,50 +93,21 @@ class FakePage:
 
 
 class Screen:
-    """The shell's page area: which page is open, and the status line under it."""
+    """The shell's page area: the open page and the window's status line."""
 
     def __init__(self, pages: dict[str, Page]) -> None:
         self.pages = pages
         self.current = ""
         self.colors = flet_theme.canvas_colors(True)
-        self.attached: list[Any] = []
         self.status = type("Status", (), {"value": "", "color": ""})()
 
-    def contains(self, control: Any) -> bool:
-        return any(control is n for n in walk(self.attached))
-
-    def open(self, name: str | Any, *, refresh_now: bool = True) -> None:
-        if isinstance(name, str) and name in self.pages:
+    def open(self, name: str, **_kwargs: Any) -> None:
+        if name in self.pages:
             self.current = name
-            return
-        config = self.pages.get("Config")
-        for attr in CONFIG_SECTIONS.values():
-            if config is not None and name is getattr(config, attr, None):
-                self.attached.append(name)
-
-    def say(self, text: str, *, level: str = "info") -> None:
-        self.status.value = text
-
-    def note(self, text: str, *, level: str = "info") -> None:
-        self.say(text, level=level)
-
-
-# The Config page's four sections, and which control each one draws.
-CONFIG_SECTIONS: dict[str, str] = {
-    "policy": "policy_section",
-    "images": "images_section",
-    "vast": "vast_section",
-}
 
 
 class Host:
-    """What a page sees of the window. Every note, line and dialog is kept.
-
-    A page repaints a control only after Flet has been given it, so
-    ``control.update()`` raises until the section that holds it has been shown:
-    the section tab hands its section to Flet, as the page does. A control the
-    host never hands over at all repaints freely.
-    """
+    """What a page sees of the window. Every note, log line, dialog and question is kept."""
 
     def __init__(self) -> None:
         self.form = Form()
@@ -149,9 +119,7 @@ class Host:
         self.dialogs: list[tuple[str, str, str]] = []
         self.asks: list[tuple[str, str, Callable[[], None]]] = []
         self.pages: dict[str, Page] = {}
-        self.page.missing = self._missing
         self.screen = Screen(self.pages)
-        self.screen.missing = self._missing
         self.pump = _ImmediatePump()
         self.colors = flet_theme.canvas_colors(True)
 
@@ -162,7 +130,7 @@ class Host:
 
     def log(self, level: str, text: str) -> None:
         self.logs.append((level, text))
-        self.services.log_lines.append((level, text))
+        self.services.log(level, text)
 
     def dialog(self, title: str, body: str, *, level: str = "info") -> None:
         self.dialogs.append((level, title, body))
@@ -188,19 +156,20 @@ class Host:
         active = profiles.get_active() or "klein"
         self.apply_profile(profiles.load_all().get(active))
 
+    def build_page(self, name: str) -> Page:
+        """Build a page the way the window does, with repaints recorded rather than sent."""
+        import flet as ft
+        from unittest import mock
+
+        with mock.patch.object(ft.Page, "update", _record_repaint):
+            return build_page(self, name)
+
     def open_page(self, name: str) -> Any:
         """Open a page, building it once, as the window's ``open_page`` does."""
         if name not in self.pages:
-            self.pages[name] = build_page(self, name)
+            self.pages[name] = self.build_page(name)
         self.screen.open(name)
         return self.pages[name]
-
-    def _missing(self, control: Any) -> bool:
-        """True until the section that holds ``control`` has been shown."""
-        config = self.pages.get("Config")
-        if config is None or control is config or control is config.body:
-            return False
-        return not self.screen.contains(control)
 
     def store_page(self, name: str, page: Any) -> None:
         """Put a page where ``open_page`` finds it, as a window's shell would."""
@@ -208,14 +177,11 @@ class Host:
 
     # -- assertions in a test's words
 
-    def messages(self) -> list[str]:
-        return [text for _level, text in self.notes]
-
     def last_note(self) -> tuple[str, str]:
         return self.notes[-1]
 
     def answer_yes(self, pick: Callable[[str], bool] | None = None) -> list[str]:
-        """Answer each confirm as ``pick(body)`` says; the default deletes everything."""
+        """Answer each question as ``pick(body)`` says; the default answers Yes to all."""
         answers: list[str] = []
         pending, self.asks = self.asks, []
         for _title, body, on_yes in pending:
@@ -223,6 +189,10 @@ class Host:
             if pick is None or pick(body):
                 on_yes()
         return answers
+
+
+def _record_repaint(page: Any, *controls: Any) -> None:
+    """A repaint lands once the page is mounted, which is what the window does at startup."""
 
 
 class _ImmediatePump:
@@ -240,76 +210,3 @@ class _ImmediatePump:
 
     def schedule(self, fn: Callable[..., None], *args: Any, **kwargs: Any) -> None:
         fn(*args, **kwargs)
-
-
-def walk(control: Any) -> list[Any]:
-    """Every control under ``control``, the control itself first."""
-    out: list[Any] = []
-    seen: set[int] = set()
-
-    def visit(node: Any) -> None:
-        if node is None or id(node) in seen:
-            return
-        seen.add(id(node))
-        out.append(node)
-        if isinstance(node, dict):
-            for value in node.values():
-                visit(value)
-            return
-        if isinstance(node, (list, tuple)):
-            for value in node:
-                visit(value)
-            return
-        content = getattr(node, "content", None)
-        visit(content)
-        for attr in ("controls", "actions", "segments", "options", "rows", "columns", "selected"):
-            visit(getattr(node, attr, None))
-
-    visit(control)
-    return out
-
-
-def texts(control: Any) -> list[str]:
-    """Every string a page shows: a Text's value, a field's value or label, a segment's label."""
-    out: list[str] = []
-    for node in walk(control):
-        value = getattr(node, "value", None)
-        if isinstance(value, str) and value:
-            out.append(value)
-        text = getattr(node, "text", None)
-        if isinstance(text, str) and text:
-            out.append(text)
-        label = getattr(node, "label", None)
-        if isinstance(label, str) and label:
-            out.append(label)
-    return out
-
-
-def button(control: Any, label: str) -> Any:
-    """The button whose text is ``label``."""
-    def word(node: Any) -> str:
-        # w.button passes the label straight to Flet, which keeps it as ``content``.
-        content = getattr(node, "content", "")
-        return content if isinstance(content, str) else str(getattr(content, "value", ""))
-
-    found = [n for n in walk(control) if hasattr(n, "on_click") and word(n) == label]
-    if len(found) != 1:
-        raise AssertionError(f"{label!r} names {len(found)} buttons, not one")
-    return found[0]
-
-
-def press(control: Any, label: str) -> Any:
-    """Click the button ``label``, as the user would."""
-    return button(control, label).on_click(None)
-
-
-def table_rows(table: Any) -> list[list[str]]:
-    """A ``w.table``'s cells as text, one list per row."""
-    out: list[list[str]] = []
-    for row in getattr(table, "rows", []) or []:
-        cells: list[str] = []
-        for cell in row.cells:
-            content = cell.content
-            cells.append(str(content.value) if hasattr(content, "value") else str(content))
-        out.append(cells)
-    return out

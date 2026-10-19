@@ -11,7 +11,8 @@ from typing import Any
 
 import flet as ft
 
-from salad_studio import flet_theme, flet_widgets as w
+import studio_meta  # noqa: E402  top-level, as image_deploy and profiles import it
+from salad_studio import flet_theme, flet_widgets as w, image_deploy
 from salad_studio.flet_pump import refresh
 from salad_studio.flet_shell import Page
 
@@ -22,21 +23,18 @@ SECTIONS: tuple[tuple[str, str], ...] = (
     ("vast", "Vast.ai"),
 )
 MODE_SEGMENTS: tuple[tuple[str, str], ...] = (("salad", "Salad gateway"), ("vast", "Vast.ai instance"))
+LABELS: dict[str, str] = {"gateway": "Gateway URL", "instance": "Instance URL"}
 PROBE_KEYS: tuple[str, ...] = ("path", "port", "initial_delay_seconds", "period_seconds",
                                "timeout_seconds", "success_threshold", "failure_threshold")
 
 
 def _document() -> dict[str, Any]:
     """The metadata document as it is on disk now: an edited document shows without a restart."""
-    from salad_studio import studio_meta
-
     return studio_meta.load()
 
 
 def _image_entries(settings: dict[str, Any]) -> list[dict[str, Any]]:
     """Every image this page can deploy."""
-    from salad_studio import image_deploy
-
     return image_deploy.entries(_document(), settings)
 
 
@@ -125,7 +123,7 @@ class ConfigPage(Page):
         self.profile_list.value = form.name
         self.name.value = form.name
         self.url.value = form.gateway
-        self.url.label = "Instance URL" if form.mode == "vast" else "Gateway URL"
+        self.url.label = LABELS["instance" if form.mode == "vast" else "gateway"]
         self.target.selected = [form.mode if form.mode in ("salad", "vast") else "salad"]
         self._fill_checkpoints()
         refresh(self.name, self.url, self.profile_list, self.target, self.checkpoint_list)
@@ -133,7 +131,7 @@ class ConfigPage(Page):
     def _on_mode(self, e: Any) -> None:
         mode = next(iter(e.control.selected), "salad")
         self.win.form.mode = mode
-        self.url.label = "Instance URL" if mode == "vast" else "Gateway URL"
+        self.url.label = LABELS["instance" if mode == "vast" else "gateway"]
         refresh(self.url)
 
     def _read_form(self) -> None:
@@ -183,6 +181,8 @@ class ConfigPage(Page):
         profiles.upsert(p)
         profiles.set_active(p.name)
         self.win.apply_profile(p)
+        self.show_profile()
+        self.show_policy(p.policy)
         self.host.note(f"Saved profile {p.name}", level="ok")
 
     def delete_profile(self, _e: Any = None) -> None:
@@ -332,15 +332,14 @@ class ConfigPage(Page):
             if entry else "(no image selected)")
         refresh(self.env_list, self.commands)
 
-    @staticmethod
-    def _token_map() -> dict[str, str]:
+    def _token_map(self) -> dict[str, str]:
         from salad_studio import tokens
 
         out: dict[str, str] = {}
         for kind, _label, _rel in tokens.TOKEN_SPECS:
             try:
-                out[kind] = tokens.read_token(kind)
-            except (OSError, AttributeError):
+                out[kind] = getattr(self.win.services, "token", tokens.read_token)(kind)
+            except (OSError, AttributeError, TypeError):
                 out[kind] = ""
         return out
 
@@ -768,13 +767,14 @@ class ConfigPage(Page):
                 if isinstance(result, Exception):
                     self.host.dialog("Salad Studio", str(result), level="error")
                     return
+                self.vast_doc = vast.load_doc()
                 self.show_vast()
                 self.host.note(f"Rented the offer {vast.offer_label(offer)}", level="ok")
 
             self.win.services.background(work, done)
 
         self.host.ask("Salad Studio",
-                      f"Rent {vast.offer_label(offer)} for ${vast.offer_value(offer):.3f}/hr? "
+                      f"Rent {vast.offer_label(offer)}? "
                       "This spends money on your vast.ai account.", go)
 
     def replace_destroyed(self, _e: Any = None) -> None:

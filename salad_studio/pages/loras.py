@@ -42,6 +42,9 @@ class LorasPage(Page):
         self.strength_model = w.field("1.0", label_text="Strength model", width=120)
         self.strength_clip = w.field("1.0", label_text="Strength clip", width=120)
         self.table_box = ft.Container(expand=True)
+        self.add_btn = w.button("Add", self.add_lora)
+        self.verify_btn = w.button("Verify", self.verify_selected)
+        self.verify_all_btn = w.button("Verify unverified", self.verify_unverified)
         self.body.content = ft.Column(
             [
                 ft.Row([self.find, self.clear_btn,
@@ -52,11 +55,7 @@ class LorasPage(Page):
                 self.ref, self.name, self.filename,
                 ft.Row([self.family, self.strength_model, self.strength_clip],
                        spacing=flet_theme.GAP["sm"]),
-                ft.Row([w.button("Add", self.add_lora), w.button("Save edits", self.save_edits),
-                        w.button("Verify", self.verify_selected),
-                        w.button("Verify unverified", self.verify_unverified),
-                        w.button("Remove extra", self.remove_selected)],
-                       spacing=flet_theme.GAP["sm"]),
+                ft.Row([self.add_btn, self.verify_btn, self.verify_all_btn], spacing=flet_theme.GAP["sm"]),
             ],
             spacing=flet_theme.GAP["sm"],
             expand=True,
@@ -151,13 +150,16 @@ class LorasPage(Page):
                                             "a local .safetensors path, or a download URL.", level="error")
             return
         form = self._form()
+        if not self.win.guard("lora_add", self.add_btn):
+            return
 
         def work() -> Any:
             return lora_store.add_lora(ref, verify=True, **form)
 
         def done(result: Any) -> None:
+            self.win.release("lora_add", self.add_btn)
             if isinstance(result, Exception):
-                self.host.dialog("Salad Studio", f"Could not add the LoRA: {result}", level="error")
+                self.host.note(f"Could not add the LoRA: {result}", level="error")
                 return
             self.ref.value = ""
             self.refresh()
@@ -183,11 +185,14 @@ class LorasPage(Page):
         if item is None:
             self.host.dialog("Salad Studio", "Select a LoRA first.", level="error")
             return
+        if not self.win.guard("lora_verify", self.verify_btn):
+            return
         lid = str(item.get("id") or "")
 
         def done(result: Any) -> None:
+            self.win.release("lora_verify", self.verify_btn)
             if isinstance(result, Exception):
-                self.host.dialog("Salad Studio", f"Could not verify the LoRA: {result}", level="error")
+                self.host.note(f"Could not verify the LoRA: {result}", level="error")
                 return
             self.refresh()
             ok = bool(result.get("verified"))
@@ -196,10 +201,13 @@ class LorasPage(Page):
         self.win.services.background(lambda: lora_store.verify_lora(lid), done)
 
     def verify_unverified(self, _e: Any = None) -> None:
+        if not self.win.guard("lora_verify", self.verify_all_btn):
+            return
+
         def done(result: Any) -> None:
+            self.win.release("lora_verify", self.verify_all_btn)
             if isinstance(result, Exception):
-                self.host.dialog("Salad Studio", f"Could not verify the unverified LoRAs: {result}",
-                                 level="error")
+                self.host.note(f"Could not verify the unverified LoRAs: {result}", level="error")
                 return
             ok, fail, _failed = result
             self.refresh()

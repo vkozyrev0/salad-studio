@@ -39,11 +39,12 @@ class TokensPage(Page):
             self.fields[slot] = field
             self.dots[slot] = dot
             rows.append(w.row([dot, field]))
+        self.check_btn = w.button("Check keys", self.check_keys)
+        self.save_btn = w.button("Save key", self.save_key)
         self.body.content = ft.Column(
             [
                 *rows,
-                w.row([w.button("Check keys", self.check_keys),
-                       w.button("Save key", self.save_key)]),
+                w.row([self.check_btn, self.save_btn]),
             ],
             spacing=flet_theme.GAP["sm"], scroll=ft.ScrollMode.ALWAYS, expand=True,
         )
@@ -82,9 +83,9 @@ class TokensPage(Page):
         self.host.note("Saved the keys; Check keys confirms each one", level="ok")
 
     def check_keys(self, _e: Any = None) -> None:
-        if self.win.services.busy_flags.get("tokens"):
+        if not self.win.guard("tokens", self.check_btn):
+            self.host.note("Check keys: a key check is already running", level="warn")
             return
-        self.win.services.busy_flags["tokens"] = True
         values = {slot: str(self.fields[slot].value or "").strip() for slot, _ in SLOTS}
 
         def work() -> Any:
@@ -97,7 +98,7 @@ class TokensPage(Page):
             return out
 
         def done(result: Any) -> None:
-            self.win.services.busy_flags["tokens"] = False
+            self.win.release("tokens", self.check_btn)
             if isinstance(result, Exception):
                 self.host.note(f"Could not check the keys: {result}", level="error")
                 return

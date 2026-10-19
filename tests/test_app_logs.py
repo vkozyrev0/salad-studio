@@ -217,3 +217,36 @@ class TheProbe(Case):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OneActionAtATime(Case):
+    """A button that starts a slow action is greyed and refuses a second press."""
+
+    def hold_background(self) -> list:
+        """Hold every background call, the way a slow network call holds it."""
+        held: list = []
+        def hold(services, work, done) -> None:
+            held.append((work, done))
+
+        patch = mock.patch.object(AppServices, "background", hold)
+        patch.start()
+        self.addCleanup(patch.stop)
+        return held
+
+    def test_tokens_check_holds_its_button(self) -> None:
+        self.hold_background()
+        tokens_page = self.win.open_page("Tokens")
+        tokens_page.check_keys()
+        self.assertTrue(tokens_page.check_btn.disabled, "the button is greyed while it runs")
+        tokens_page.check_keys()
+        self.assertEqual(self.win.shell.status.value, "Check keys: a key check is already running")
+
+    def test_loras_add_holds_its_button(self) -> None:
+        held = self.hold_background()
+        loras = self.win.open_page("LoRAs")
+        loras.ref.value = "https://civitai.com/models/1"
+        loras.add_lora()
+        self.assertTrue(held, "the add runs in the background")
+        self.assertTrue(loras.add_btn.disabled, "the button is greyed while it runs")
+        loras.add_lora()
+        self.assertEqual(len(held), 1, "a second press while it runs starts nothing")

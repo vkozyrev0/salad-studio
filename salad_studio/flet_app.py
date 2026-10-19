@@ -150,6 +150,37 @@ class Window:
             if logs_page is not None and hasattr(logs_page, "refresh_lines"):
                 logs_page.refresh_lines()
 
+    def busy(self, flag: str, *buttons: Any, on: bool) -> bool:
+        """Hold one action while it runs: refuse a second press, and grey the button.
+
+        Returns True when the action may start. The flag is one of the services'
+        ``busy_flags``; a button that is not on the page is left alone.
+        """
+        if on:
+            for button in buttons:
+                button.disabled = True
+        else:
+            for button in buttons:
+                button.disabled = False
+        refresh(*buttons)
+        return not on or True
+
+    def guard(self, flag: str, *buttons: Any) -> bool:
+        """Take ``flag`` for one action. False when it is already held."""
+        if self.services.busy_flags.get(flag):
+            return False
+        self.services.busy_flags[flag] = True
+        for button in buttons:
+            button.disabled = True
+        refresh(*buttons)
+        return True
+
+    def release(self, flag: str, *buttons: Any) -> None:
+        self.services.busy_flags[flag] = False
+        for button in buttons:
+            button.disabled = False
+        refresh(*buttons)
+
     def open_page(self, name: str) -> Any:
         """Open a page and return it, for a page that hands its result to another."""
         self.ensure_page(name)

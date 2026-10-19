@@ -438,3 +438,45 @@ class OtherPages(Case):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SettingsShowsEveryControl(Case):
+    """Every knob and LoRA box the page builds is on the page the user sees."""
+
+    def shown(self, page) -> set[int]:
+        seen: set[int] = set()
+
+        def walk(control) -> None:
+            seen.add(id(control))
+            for child in list(getattr(control, "controls", None) or []):
+                walk(child)
+            content = getattr(control, "content", None)
+            if content is not None:
+                walk(content)
+
+        walk(page.body.content)
+        return seen
+
+    def test_every_knob_and_lora_box_is_mounted(self) -> None:
+        settings = self.settings()
+        visible = self.shown(settings)
+        knobs = (settings.width, settings.height, settings.steps, settings.cfg, settings.seed,
+                 settings.graph, settings.scheduler, settings.checkpoint)
+        for name, control in zip(("width", "height", "steps", "cfg", "seed", "graph",
+                                  "scheduler", "checkpoint"), knobs):
+            self.assertIn(id(control), visible, f"the {name} control is built but not shown")
+        self.assertTrue(settings.lora_boxes, "a LoRA box exists to check")
+        for lora_id, box in settings.lora_boxes.items():
+            self.assertIn(id(box), visible, f"the box for {lora_id} is built but not shown")
+
+    def test_choosing_a_graph_refills_the_lora_boxes_for_it(self) -> None:
+        settings = self.settings()
+        klein = set(settings.lora_boxes)
+        settings.graph.value = "Flux.1 Dev"
+        settings.on_graph()
+        self.assertEqual(self.win.form.graph, "flux1")
+        flux1 = set(settings.lora_boxes)
+        self.assertNotEqual(klein, flux1, "the list follows the graph")
+        for lora_id in flux1:
+            item = lora_store.find_lora(lora_id)
+            self.assertTrue(lora_store.compatible_with_graph(item, "flux1"))

@@ -457,14 +457,13 @@ def build(page: ft.Page, *, dark: bool = True, show: bool = True,
 
 
 def default_page() -> str:
-    """The page the window opens on: the one it last showed, else Config."""
-    from salad_studio import ui_state
+    """The page the window opens on.
 
-    try:
-        saved = (ui_state.load_state() or {}).get("tab")
-    except (OSError, AttributeError, ValueError):
-        saved = ""
-    return saved if saved in TAB_ORDER else "Config"
+    Always Config. The saved tab is not restored: flet 1.0.4 leaves its first
+    frame blank whenever the startup page is a form page, and Config is the one
+    page that has painted from the first frame in every measurement.
+    """
+    return "Config"
 
 
 def _page(host: Any, name: str) -> ft.Control:

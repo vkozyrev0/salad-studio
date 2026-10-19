@@ -89,9 +89,9 @@ class QueuePage(Page):
         rows = self.rows()
         self.keys = [key for key, _cells in rows]
         index = self.keys.index(self.selected_key) if self.selected_key in self.keys else None
-        self.table_holder.controls = [w.table(COLUMNS, [cells for _k, cells in rows] or
-                                              [[""] * len(COLUMNS)], on_row=self.select_row,
-                                              selected=index)]
+        self.table_holder.controls = ([w.table(COLUMNS, [cells for _k, cells in rows],
+                                              on_row=self.select_row, selected=index)]
+                                     if rows else [])
         counts: dict[str, int] = {}
         for job in self.win.services.gen_queue.jobs():
             word = salad_queue.status_word(job.state)

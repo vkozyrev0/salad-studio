@@ -88,7 +88,7 @@ class LorasPage(Page):
         self.rows = items
         self.shown = shown
         index = next((i for i, item in enumerate(shown) if str(item.get("id")) == self.selected), None)
-        cells = [self._cells(item) for item in shown] or [["(none)"] + [""] * (len(COLUMNS) - 1)]
+        cells = [self._cells(item) for item in shown]
         table = w.table(COLUMNS, cells, on_row=self.select_row, selected=index)
         for row, item in zip(table.rows, shown):
             row.cells[0].content = ft.Text(row.cells[0].content.value, size=12,
@@ -96,7 +96,8 @@ class LorasPage(Page):
                                                               else UNVERIFIED_COLOR])
         for column_index, column in enumerate(table.columns):
             column.on_sort = lambda _e, i=column_index: self.sort(i)
-        self.table_box.content = ft.Column([table], scroll=ft.ScrollMode.ALWAYS, expand=True)
+        self.table_box.content = ft.Column([table] if cells else [], scroll=ft.ScrollMode.ALWAYS,
+                                           expand=True)
         refresh(self.table_box)
 
     def sort(self, index: int) -> None:

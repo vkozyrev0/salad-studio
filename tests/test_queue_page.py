@@ -125,7 +125,9 @@ class QueuePageTest(unittest.TestCase):
         return [str(c.label.value) for c in self.table().columns]
 
     def rows(self) -> list[tuple[str, ...]]:
-        """Every drawn row's cells; the blank row a fresh page draws reads as eight empty cells."""
+        """Every drawn row's cells; an empty table draws no rows at all."""
+        if not self.queue_page.table_holder.controls:
+            return []
         return [tuple(str(c.content.value) for c in row.cells) for row in self.table().rows]
 
     def row_texts(self) -> list[tuple[str, ...]]:
@@ -330,6 +332,8 @@ class QueuePageTest(unittest.TestCase):
                          "an unfinished request is never dropped by the window")
 
     def rows_of(self, page: QueuePage) -> list[tuple[str, ...]]:
+        if not page.table_holder.controls:
+            return []
         return [tuple(str(c.content.value) for c in row.cells) for row in page.table_holder.controls[0].rows
                 if any(str(c.content.value) for c in row.cells)]
 

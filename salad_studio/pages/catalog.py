@@ -57,7 +57,7 @@ class CatalogPage(Page):
         index = next((i for i, e in enumerate(self.entries) if str(e.get("id")) == self.selected), None)
         self.table_holder.controls = (
             [w.table(COLUMNS, cells, on_row=self.select_row, selected=index)] if cells
-            else [w.table(COLUMNS, [["", "", "", "", ""]])]
+            else []
         )
         self.empty.visible = not cells
         try:

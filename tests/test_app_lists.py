@@ -69,8 +69,9 @@ class ListSurfacesSayWhenTheyAreEmpty(Case):
         self.assertTrue(history.empty.value)
         queue = self.queue()
         self.assertEqual(queue.summary.value.count("0 request"), 1)
-        rows = queue.table_holder.controls[0].rows
-        self.assertEqual(len(rows), 1, "an empty queue shows its header and no data")
+        self.assertEqual(queue.table_holder.controls, [])
+        self.assertEqual(queue.summary.value.count("0 request"), 1,
+                         "an empty queue shows no table to click, and its summary says so")
         self.assertTrue(queue.cancel_note.value)
         strip = HistoryStrip(self.win.shell.colors, on_open=lambda _p: None)
         strip.show([], lambda _i: None)

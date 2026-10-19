@@ -63,9 +63,9 @@ class HistoryPage(Page):
                 thumb or "",
             ])
         selected = self.selected if self.selected is not None and self.selected < len(cells) else None
-        self.table_holder.controls = [w.table(COLUMNS, cells or [["", "", "", "", ""]],
-                                              on_row=self.select_row, selected=selected,
-                                              heading_height=44)]
+        self.table_holder.controls = ([w.table(COLUMNS, cells, on_row=self.select_row,
+                                              selected=selected, heading_height=44)]
+                                     if cells else [])
         self.empty.visible = not cells
         try:
             self.table_holder.update()

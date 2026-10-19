@@ -202,7 +202,41 @@ Note for G9 to G13 and G18. The brief names hover, context menu, edit, connect a
 | PK6 | No `tkinter`, `ttk`, `tkwry`, `WebView`, `joint.min.js`, `litegraph.*`, `viewer.html` or `_current.html` remains in the repo. | open |
 | PK7 | The suite count in the README matches the suite. | open |
 
-## 18. Naming for the port
+## 18. Open blockers
+
+| # | Blocker | Evidence | Next |
+|---|---|---|---|
+| B1 | The Flet shell has not been seen to paint. Every probe that built the shell showed a blank window; probes of the editor page alone painted. The probes also opened visible windows, so they are not a clean measurement. | Probes in `.audit/flet-spike/canvas/` (throwaway) | Run the shell once under a real client with the window hidden after its first frame, and read a frame with `page.take_screenshot`. Needs the operator's go for a short visible window. |
+| B2 | `graph_canvas.GraphView` has no test that a gesture reaches it through `GestureDetector`; only the shapes and the model are covered. | `tests/test_graph_canvas.py` | Drive one drag through the pane's own callbacks and assert the model moved and only the edge layer was marked. |
+| B3 | The history strip, action bar and the ten other pages are not ported. | Sections 1, 5 to 15 above | One page per commit. |
+
+## 19. Where the work lives
+
+| Commit or file | What it lands |
+|---|---|
+| `MIGRATION.md` | This inventory |
+| `salad_studio/graph_model.py` | The graph as data, and the pure gestures |
+| `salad_studio/flet_theme.py` | Material 3 scheme in light and dark, contrast-checked |
+| `salad_studio/flet_pump.py` | The frame loop and the mounted-safe `refresh` |
+| `salad_studio/editor_logic.py` | Editor rules out of the widget layer |
+| `salad_studio/flet_shell.py` | Rail, note lines, status line, shortcuts |
+| `salad_studio/graph_canvas.py` | The two-layer canvas pane |
+| `salad_studio/pages/editor.py` | The Prompt Editor page |
+| `salad_studio/flet_app.py` | The window and its page list |
+
+The graph prototype and its measurements are throwaway, in the gitignored `.audit/flet-spike/canvas/`. One node drag was timed end to end in Python, from the pointer callback to the end of `update()`, with synthetic pointer events and hidden windows.
+
+| Nodes | Edges only, redrawn (ms, avg) | Whole canvas rebuilt (ms, avg) |
+|---|---|---|
+| 13 | 1.45 | 5.00 |
+| 26 | 2.60 | 9.78 |
+| 130 | 12.99 | 81.55 |
+| 260 | 33.41 | 292.01 |
+| 520 | 91.91 | not finished in the run budget |
+
+The limit is Python time, not drawing: each frame rebuilds every edge path object and the client receives only the changed layer. Above about 100 edges the edge layer alone exceeds a 60 Hz frame, so a much larger graph will need either edge path reuse or the graph in chunks. The pane therefore keeps edges and nodes on separate canvases and a node drag repaints only the edge layer.
+
+## 20. Naming for the port
 
 Every module and class the migration adds, so the inventory and the code share one vocabulary.
 

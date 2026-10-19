@@ -257,20 +257,22 @@ Every module and class the migration adds, so the inventory and the code share o
 
 ## 21. What the Flet build measured (2026-10-19)
 
-Each line was run against the on-screen window on the second display, captured
-with `PrintWindow`, and read for a grey blank pane.
+Every line was read on the on-screen window, opened on the second monitor at
+`(5170, 685, 1180x720)`, captured with `PrintWindow`, and judged by the colours
+in the page pane.
 
-- Ten pages paint: Config, Tokens, LoRAs, Prompt Editor, Prompt Assist,
-  Prompt Catalog, Import, Prompt History, Queue, Logs. Each was opened, one at
-  a time, in a fresh process against the on-screen window.
-- Every page, Prompt Settings included, painted once `flet_app` stopped
-  importing `salad_studio.pages` and the page list moved to `flet_pages.py`.
-  The blank pane above was measured while that import was still in the module
-  and is no longer reproducible.
-- Opening a dropdown or the date picker leaves the app window on its last
-  drawn frame while its controls keep responding. It was seen on the window
-  itself, and the same frame on the first page came from the window's own
-  title-bar chrome and game-mode notifications, so it is the flet desktop
-  shell's compositing, not page code. Not fixed here.
-- The window opens on Config; the saved tab is no longer restored, because a
-  first frame on a form page could be blank.
+- In one live session, started on Config, all eleven pages paint in turn:
+  Prompt Settings, Prompt Editor, Tokens, LoRAs, Prompt Assist, Prompt Catalog,
+  Import, Prompt History, Queue and Logs were each opened and each drew its
+  controls. On the LoRAs page the Verified column draws in the verified
+  colour. (Screens saved during the run under `.audit/probe/`.)
+- In a fresh process whose only switch is Config to one page, ten pages paint
+  and Prompt Settings shows a grey pane, three runs out of three. The page is
+  built and its controls answer when the same page is reached from a live
+  session, so the difference is the first swap, not the page. B1 in section 18
+  tracks it.
+- Opening a dropdown or the date picker leaves the window on its last drawn
+  frame while its controls keep responding. The window's own title-bar chrome
+  produced the same frame earlier in the session, so this is the flet desktop
+  shell, not page code.
+- The window opens on Config; the saved tab is not restored.

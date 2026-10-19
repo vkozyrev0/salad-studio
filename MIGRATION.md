@@ -207,8 +207,9 @@ Note for G9 to G13 and G18. The brief names hover, context menu, edit, connect a
 | # | Blocker | Evidence | Next |
 |---|---|---|---|
 | B1 | Every page paints except on a first frame. A window that opens and then switches pages paints each page; a fresh window whose first hop is a page other than Config shows a grey pane, and in a clean process Prompt Settings still shows one when it is the first hop. Its controls are built and the rail shows the page, so this is flet's first swap, not page code. | Fresh-process captures in `.audit/probe/`, three runs each; section 21 | Find a first swap that paints (build the page before `page.add`, or send the swap after a frame event), then make it the only path `Shell.open` takes. |
-| B2 | `graph_canvas.GraphView` has no test that a gesture reaches it through `GestureDetector`; only the shapes and the model are covered. | `tests/test_graph_canvas.py` | Drive one drag through the pane's own callbacks and assert the model moved and only the edge layer was marked. |
-| B3 | The history strip, action bar and the ten other pages are not ported. | Sections 1, 5 to 15 above | One page per commit. |
+| B2 | A gesture through the canvas hits the graph pane's own callbacks: the model moves and only the edge layer is marked. | `tests/test_graph_canvas.py` | Done. |
+| B3 | The history strip, the action bar and the ten other pages are ported and painted in a live session. | Sections 1, 5 to 15 above; section 21 | Done. |
+| B4 | Opening a dropdown or the date picker freezes the window's drawn frame while its controls keep responding. Seen on the window itself; the window's own title-bar chrome froze it the same way, so the cause is the flet desktop shell's compositing. | Live runs in `.audit/probe/` | flet 1.0.4 is the newest release; a later client is the likely fix. |
 
 ## 19. Where the work lives
 

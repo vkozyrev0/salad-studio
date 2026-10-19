@@ -41,7 +41,7 @@ class QueuePage(Page):
         self.keys: list[str] = []
         self.selected_key: str | None = None
         self.summary = ft.Text("", size=12, color=self.colors["muted"])
-        self.note = ft.Text(CANCEL_NOTE, size=12, color=self.colors["muted"], selectable=True)
+        self.cancel_note = ft.Text(CANCEL_NOTE, size=12, color=self.colors["muted"], selectable=True)
         self.table_holder = ft.Column(expand=True, scroll=ft.ScrollMode.ALWAYS)
         self.body.content = ft.Column(
             [
@@ -51,7 +51,7 @@ class QueuePage(Page):
                        w.button("Clear finished", self.clear_finished),
                        self.summary]),
                 self.table_holder,
-                self.note,
+                self.cancel_note,
             ],
             spacing=flet_theme.GAP["sm"], expand=True,
         )
@@ -126,13 +126,18 @@ class QueuePage(Page):
             return None
 
     def _say(self, text: str) -> None:
-        self.note.value = text
+        self.cancel_note.value = text
         self.host.note(text, level="info")
 
     def cancel(self, _e: Any = None) -> None:
         job = self._job()
         if job is None:
             self._say("Queue: select a request first")
+            return
+        if not job.cancellable:
+            self._say(f"Queue: request {job.id} is {job.state} and has already been sent, "
+                      "so it cannot be cancelled")
+            self.refresh()
             return
         if self.win.services.gen_queue.cancel(job):
             self._say(f"Queue: request {job.id} cancelled before it was submitted")

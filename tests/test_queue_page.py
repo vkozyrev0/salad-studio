@@ -351,7 +351,7 @@ class QueuePageTest(unittest.TestCase):
         self.assertEqual(self.state_of(1), q.status_word(q.CANCELLED), "the row must follow the queue")
         self.assertEqual(self.host.last_note,
                          "Queue: request 1 cancelled before it was submitted")
-        self.assertEqual(self.queue_page.note.value, self.host.last_note, "the page says it too")
+        self.assertEqual(self.queue_page.cancel_note.value, self.host.last_note, "the page says it too")
 
     def test_cancel_refuses_a_request_already_sent_and_says_why(self) -> None:
         self.accept(1)
@@ -471,7 +471,7 @@ class QueuePageTest(unittest.TestCase):
         self.accept(1)
         self.open_page()
         self.assertIsInstance(self.queue_page, ft.Control)
-        self.assertIn(CANCEL_NOTE, self.queue_page.note.value)
+        self.assertIn(CANCEL_NOTE, self.queue_page.cancel_note.value)
         self.assertNotIn("profiles in flight", self.queue_page.summary.value,
                          "one profile is not two in flight")
 

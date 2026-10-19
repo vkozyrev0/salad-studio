@@ -124,7 +124,17 @@ class AssistPage(Page):
 
         def done(result: Any) -> None:
             self.win.services.busy_flags["help"] = False
-            if isinstance(result, Exception):
+            if isinstance(result, ai_helper.ReplyError):
+                # The model answered, but without the prompts: show what it
+                # said, and leave the boxes as the user left them.
+                raw = str(getattr(result, "raw", "") or "")
+                if raw:
+                    self.reply.value = raw
+                self.state.value = str(result)
+                self.host.dialog("Salad Studio", raw or str(result), level="error")
+                self.host.log("error", f"Prompt Assist: {result}")
+                refresh(self.reply)
+            elif isinstance(result, Exception):
                 self.state.value = f"{type(result).__name__}: {result}"
                 self.host.dialog("Salad Studio", str(result), level="error")
                 self.host.log("error", f"Prompt Assist: {result}")
@@ -135,9 +145,12 @@ class AssistPage(Page):
         self.win.services.background(work, done)
 
     def _show(self, reply: dict[str, Any]) -> None:
+        """A prompt the reply does not carry leaves its box as the user left it."""
         self.reply.value = str(reply.get("raw") or "")
-        self.adj_pos.value = str(reply.get("positive") or "")
-        self.adj_neg.value = str(reply.get("negative") or "")
+        if reply.get("positive"):
+            self.adj_pos.value = str(reply["positive"])
+        if reply.get("negative"):
+            self.adj_neg.value = str(reply["negative"])
         self.state.value = "The model answered"
         image = str(reply.get("image") or "")
         if image:

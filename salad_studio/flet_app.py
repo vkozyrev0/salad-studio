@@ -253,6 +253,11 @@ class Window:
         self.services.generate(payload, p, self.services.salad_key(),
                                salad_queue.request_checksum(payload))
 
+    def _vast_endpoints(self) -> set[str]:
+        return {str(row.get("endpoint") or "").strip()
+                for row in (vast.load_doc().get("instances") or [])
+                if str(row.get("endpoint") or "").strip()}
+
     def _dispatch_refusal(self, payload: dict[str, Any], p: profiles.SaladProfile) -> str:
         """Why this press cannot be queued at all, in the Tk app's words; "" when it can."""
         if p.mode == "vast":
@@ -264,6 +269,10 @@ class Window:
         if route is not None:
             self.services.log("info", f"Routed to profile {route.name!r} (gateway {route.profile.gateway})")
             p.gateway, p.name, p.mode = route.profile.gateway, route.profile.name, route.profile.mode
+        if (p.gateway or "").strip() in self._vast_endpoints():
+            return ("the Salad target holds a vast.ai instance URL, so the Salad key would be "
+                    "sent to that machine. Pick the Salad gateway on the Config page, then "
+                    "Generate again.")
         if not p.gateway:
             return "the gateway URL is empty"
         if not self.services.salad_key():

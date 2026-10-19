@@ -69,7 +69,7 @@ class ListSurfacesSayWhenTheyAreEmpty(Case):
         self.assertEqual(queue.summary.value.count("0 request"), 1)
         rows = queue.table_holder.controls[0].rows
         self.assertEqual(len(rows), 1, "an empty queue shows its header and no data")
-        self.assertTrue(queue.note.value)
+        self.assertTrue(queue.cancel_note.value)
         strip = HistoryStrip(self.win.shell.colors, on_open=lambda _p: None)
         strip.show([], lambda _i: None)
         self.assertTrue(strip.empty.visible)
@@ -177,7 +177,7 @@ class TheQueue(Case):
         self.assertTrue(self.win.shell.status.value.startswith("Queue: request"))
 
     def test_the_page_names_the_cancel_rule(self) -> None:
-        note = self.queue().note.value
+        note = self.queue().cancel_note.value
         self.assertIn("Cancel drops a request that has not been submitted yet", note)
 
 

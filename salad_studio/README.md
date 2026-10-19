@@ -272,12 +272,17 @@ switch),
 
 ## Layers
 
-`app.py` owns the window, tab wiring and thread starts; no non-UI module loads
-`tkinter`. `tests/test_layers.py` drives one real call per non-UI layer.
+`flet_app.py` owns the window; `flet_shell.py` the rail, the shortcuts and the
+status lines; `flet_services.py` the queue, the log, the probe and the timers;
+`flet_pages.py` the page list and the form the pages share; `pages/` one module
+per page. No non-UI module loads a UI toolkit, and `tests/test_layers.py`
+drives one real call per non-UI layer in a process where neither tkinter nor
+flet is imported.
 
 | Layer | Modules |
 |---|---|
-| UI | `app.py`, `__main__.py`, `graph_view.py`, `theme.py`, `ui_state.py`, `history_strip.py`, `json_highlight.py` |
+| UI (being deleted with the Tk app) | `app.py`, `graph_view.py`, `history_strip.py` |
+| UI | `flet_app.py`, `flet_shell.py`, `flet_services.py`, `flet_pages.py`, `flet_pump.py`, `flet_theme.py`, `flet_widgets.py`, `desktop.py`, `__main__.py`, `graph_model.py`, `graph_canvas.py`, `editor_logic.py`, `theme.py`, `ui_state.py`, `json_highlight.py` |
 | Import | `comfy_import.py`, `civitai_verify.py`, `request_json.py` |
 | Persistence | `tokens.py`, `prompt_history.py`, `prompt_catalog.py`, `lora_store.py`, `profiles.py`, `hostings.py`, `studio_meta.py` |
 | Logging | `studio_log.py` |

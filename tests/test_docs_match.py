@@ -1051,7 +1051,7 @@ class MoreFixedClaimsHoldInTheShippedCode(unittest.TestCase):
             (json_highlight, ("token_kinds",)),
             (graph_model, ("node_boxes", "round_polyline", "_wrap", "_rounded_rect")),
             (graph_model.GraphModel, ("_draw_grid",)),
-            (flet_shell, ("HistoryStrip", "_build_nav_buttons", "SaladStudio", "TAB_ORDER_TK")),
+            (flet_shell, ("_build_nav_buttons", "SaladStudio", "TAB_ORDER_TK")),
             (
                 face_prompt,
                 (

@@ -206,7 +206,7 @@ Note for G9 to G13 and G18. The brief names hover, context menu, edit, connect a
 
 | # | Blocker | Evidence | Next |
 |---|---|---|---|
-| B1 | The Flet shell has not been seen to paint. Every probe that built the shell showed a blank window; probes of the editor page alone painted. The probes also opened visible windows, so they are not a clean measurement. | Probes in `.audit/flet-spike/canvas/` (throwaway) | Run the shell once under a real client with the window hidden after its first frame, and read a frame with `page.take_screenshot`. Needs the operator's go for a short visible window. |
+| B1 | Every page paints except on a first frame. A window that opens and then switches pages paints each page; a fresh window whose first hop is a page other than Config shows a grey pane, and in a clean process Prompt Settings still shows one when it is the first hop. Its controls are built and the rail shows the page, so this is flet's first swap, not page code. | Fresh-process captures in `.audit/probe/`, three runs each; section 21 | Find a first swap that paints (build the page before `page.add`, or send the swap after a frame event), then make it the only path `Shell.open` takes. |
 | B2 | `graph_canvas.GraphView` has no test that a gesture reaches it through `GestureDetector`; only the shapes and the model are covered. | `tests/test_graph_canvas.py` | Drive one drag through the pane's own callbacks and assert the model moved and only the edge layer was marked. |
 | B3 | The history strip, action bar and the ten other pages are not ported. | Sections 1, 5 to 15 above | One page per commit. |
 

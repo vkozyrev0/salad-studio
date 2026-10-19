@@ -204,24 +204,21 @@ class Shell(ft.Column):
     def open(self, name: str, *, refresh_now: bool = True) -> Page:
         """Show a page, building it the first time, and hand it back.
 
-        The page goes into the mounted body **before** it is repainted, and the
-        body is repainted after the shell: a page's controls must reach the
-        client with the body that holds them, or the pane paints blank.
+        Only the body is repainted: the rail's marks go out with it. Repainting
+        the whole shell covers the LoRAs page's table, for a reason not found.
         """
-        if name == self.current and name in self.pages:
-            return
-        spec = next((s for s in self.specs if s.name == name), None)
-        if spec is None:
-            return
-        self.current = name
         if name not in self.pages:
+            spec = next((s for s in self.specs if s.name == name), None)
+            if spec is None:
+                return None
             self.pages[name] = spec.build(self.window if self.window is not None else self)
+        self.current = name
         self.body_column.controls.clear()
         self.body_column.controls.append(self.pages[name])
         for label, button in self.buttons.items():
             button.mark(label == name)
         if refresh_now:
-            self.refresh()
+            refresh(self.body)
         return self.pages[name]
 
     def refresh(self) -> None:

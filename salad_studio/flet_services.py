@@ -144,11 +144,12 @@ class AppServices:
         self.pump.schedule(fn, *args, **kwargs)
 
     def background(self, work: Callable[[], Any], done: Callable[[Any], None]) -> None:
-        """Run ``work`` on a worker thread and hand its result to ``done`` on the UI thread.
+        """Run ``work`` off the UI thread and hand its result to ``done`` on it.
 
-        The thread starts and ends inside the running loop's executor, which
-        Flet owns: a thread started any other way has no event loop to hand its
-        result to.
+        The task starts on the running loop, so anything the page does before
+        the next await lands before the page's own event handler returns. A
+        page that opens a menu only after work finishes therefore runs into
+        flet's portal handling, which leaves the window frozen.
         """
         loop = asyncio.get_running_loop()
 
@@ -158,7 +159,7 @@ class AppServices:
 
         async def run() -> None:
             try:
-                result = await loop.run_in_executor(None, work)
+                result = await asyncio.to_thread(work)
             except Exception as exc:  # noqa: BLE001 - a worker's failure is shown, not raised
                 result = exc
             finish(result)

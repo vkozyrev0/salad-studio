@@ -12,6 +12,7 @@ from typing import Callable, Protocol
 import flet as ft
 
 from salad_studio import flet_theme
+from salad_studio.flet_pump import refresh
 
 
 @dataclass(frozen=True)
@@ -127,10 +128,7 @@ class Shell(ft.Column):
         self._refresh()
 
     def _refresh(self) -> None:
-        try:
-            self.update()
-        except RuntimeError:
-            return  # built before it is on a page: the next mount paints it
+        refresh(self)
 
     def step(self, delta: int) -> None:
         names = [s.name for s in self.specs]
@@ -151,10 +149,7 @@ class Shell(ft.Column):
     def say(self, text: str) -> None:
         """Write the window status line. Safe before the shell is on the page."""
         self.status.value = text
-        try:
-            self.update()
-        except RuntimeError:
-            return  # not mounted yet: the value is already set
+        refresh(self)
 
 
 def shortcut(e: ft.KeyboardEvent) -> tuple[str, int] | None:

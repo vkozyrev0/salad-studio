@@ -17,6 +17,7 @@ import flet as ft
 from flet import canvas as cv
 
 from salad_studio import flet_theme, graph_model as gm
+from salad_studio.flet_pump import refresh
 
 Prompt = dict[str, Any]
 RepaintFn = Callable[[gm.GraphModel, bool], None]
@@ -184,10 +185,7 @@ class GraphView(ft.Container):
             self._dirty_nodes = False
         self.empty.visible = not self.model.nodes
         self.gesture.visible = bool(self.model.nodes)
-        self.edge_canvas.update()
-        self.node_canvas.update()
-        self.empty.update()
-        self.gesture.update()
+        refresh(self.edge_canvas, self.node_canvas, self.empty, self.gesture)
 
     def fit(self) -> None:
         if self.model.nodes:

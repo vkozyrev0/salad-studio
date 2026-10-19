@@ -149,7 +149,7 @@ def _widget_rows(nid: str, node: dict[str, Any], lookup: dict[str, str]) -> list
     ]
 
 
-def _clip_note(node: dict[str, Any]) -> str:
+def clip_note(node: dict[str, Any]) -> str:
     if str(node.get("class_type") or "") != "CLIPTextEncode":
         return ""
     text = str((node.get("inputs") or {}).get("text") or "").replace("\n", " ").strip()
@@ -203,7 +203,7 @@ def layout(prompt: Prompt, loras: dict[str, str] | None = None) -> GraphModel:
         ins = [k for k, v in (node.get("inputs") or {}).items() if graph_view.is_link(v)]
         outs = [name for name, _typ in graph_view._lg_outputs(cls)]
         rows = _widget_rows(nid, node, loras)
-        note = _clip_note(node)
+        note = clip_note(node)
         w, h = _card_size(title, rows, len(ins), len(outs), note)
         cards[nid] = {
             "node": node,

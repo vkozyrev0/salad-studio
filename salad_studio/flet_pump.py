@@ -9,6 +9,16 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from typing import Any
+
+
+def refresh(*controls: Any) -> None:
+    """Push controls to the client, or do nothing when they are not on a page yet."""
+    for control in controls:
+        try:
+            control.update()
+        except RuntimeError:
+            return
 
 
 class Channel:

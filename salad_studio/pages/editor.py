@@ -68,6 +68,11 @@ class EditorPage(Page):
         self.bar = bar
         self.body.content = ft.Column([self.split, self.prompts, self.bar], expand=True,
                                       spacing=flet_theme.GAP["sm"])
+        # The Tk editor opened on the window's form, not on an empty request: an
+        # empty document draws no cards and Generate refuses it. A host with no
+        # form (a page on its own, as in the page tests) keeps the empty one.
+        if getattr(self.win, "form", None) is not None:
+            self.rebuild_from_config()
 
     def note(self, text: str, *, level: str = "info") -> None:
         """An embedded page has no note line of its own: the window shows it in the bar."""

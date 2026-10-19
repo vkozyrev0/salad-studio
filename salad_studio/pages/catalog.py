@@ -144,7 +144,7 @@ class CatalogPage(Page):
             entry = prompt_catalog.update_entry(self.selected, name=str(self.name.value or ""),
                                                 description=str(self.description.value or ""))
         except (ValueError, KeyError) as exc:
-            self.host.dialog("Salad Studio", str(exc), level="error")
+            self.host.note(str(exc), level="error")
             return
         self.refresh()
         self.catalog_status.value = f"Saved '{entry.get('name')}'"

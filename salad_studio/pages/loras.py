@@ -176,7 +176,7 @@ class LorasPage(Page):
         try:
             lora_store.edit_lora(str(item.get("id")), **self._form())
         except ValueError as exc:
-            self.host.dialog("Salad Studio", f"Could not edit the LoRA: {exc}", level="error")
+            self.host.note(f"Could not edit the LoRA: {exc}", level="error")
             return
         self.refresh()
         changed = [key for key in ("name", "base") if str(before.get(key) or "") != str(

@@ -59,6 +59,7 @@ class AppServices:
 
     def __init__(self, pump: Pump) -> None:
         self.pump = pump
+        self._thumb_cache: dict[Path, tuple[Any, bytes | None]] = {}
         self.log_lines: list[tuple[str, str]] = []
         self.salad_logs: str = ""
         self.salad_logs_version = 0
@@ -156,8 +157,6 @@ class AppServices:
         page that opens a menu only after work finishes therefore runs into
         flet's portal handling, which leaves the window frozen.
         """
-        loop = asyncio.get_running_loop()
-
         def finish(result: Any) -> None:
             if not self._closing:
                 done(result)
@@ -169,6 +168,15 @@ class AppServices:
                 result = exc
             finish(result)
 
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is None or not loop.is_running():
+            # A window driven outside a loop, or with its loop stopped between
+            # frames: a task scheduled there would never start.
+            threading.Thread(target=run, daemon=True).start()
+            return
         loop.create_task(run())
 
     # -- the Salad probe
@@ -342,6 +350,27 @@ class AppServices:
                 return out.getvalue()
         except (OSError, ValueError):
             return None
+
+    def thumbs(self, paths: list[Path], size: int = THUMB) -> list[bytes | None]:
+        """The strips of every path, decoded once per path and kept until the file changes."""
+        out: list[bytes | None] = []
+        for path in paths:
+            stamp = self._stamp(path)
+            if self._thumb_cache.get(path, (None, None))[0] == stamp and stamp is not None:
+                out.append(self._thumb_cache[path][1])
+                continue
+            png = self.thumbnail(path, size)
+            self._thumb_cache[path] = (stamp, png)
+            out.append(png)
+        return out
+
+    @staticmethod
+    def _stamp(path: Path) -> tuple[int, int] | None:
+        try:
+            st = path.stat()
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size)
 
     def open_path(self, path: Path) -> None:
         os.startfile(str(path))  # type: ignore[attr-defined]

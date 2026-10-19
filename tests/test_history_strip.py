@@ -165,18 +165,17 @@ class Scrolling(unittest.TestCase):
         self.assertEqual(self.right.tooltip, "Newer")
 
     def test_the_arrows_scroll_the_strip(self) -> None:
-        """The click reaches the list: the right arrow walks up, the left arrow walks back."""
-        rests = [0, 120]
+        """The click asks the shell for a new offset: the right arrow walks up, the left back."""
         moves: list[float] = []
-        self.strip.list.scroll_to = lambda **kw: moves.append(kw["offset"])
+        self.strip._strip_scroll = moves.append
 
-        for rest, click in zip(rests, (self.right, self.left)):
-            with patch.object(type(self.strip.list), "scroll_offset", rest, create=True):
-                run_click(click)
+        run_click(self.right)
+        run_click(self.left)
 
-        self.assertEqual(len(moves), 2, "each arrow press scrolls the list once")
-        self.assertGreater(moves[0], rests[0], "the right arrow walks toward the newer plates")
-        self.assertLess(moves[1], rests[1], "the left arrow walks back toward the oldest")
+        self.assertEqual(len(moves), 2, "each arrow press asks for one move")
+        self.assertGreater(moves[0], 0, "the right arrow walks toward the newer plates")
+        self.assertLess(moves[1], moves[0], "the left arrow walks back toward the oldest")
+        self.assertGreaterEqual(moves[1], 0, "the strip never asks to go before its first plate")
 
 
 if __name__ == "__main__":

@@ -140,6 +140,7 @@ class Window:
         """The service's tick reached a control: the strip, the queue page, the state word."""
         if what in ("salad", "gen"):
             self.refresh_strip()
+            self.refresh_history_strip()
             self.salad_label.value = self.services.salad_word or "…"
         if what == "queue":
             queue_page = self.shell.pages.get("Queue")
@@ -221,6 +222,37 @@ class Window:
             self.check_button,
         ]
         self.refresh_strip()
+
+    def refresh_history_strip(self) -> None:
+        """The bottom strip: the newest plates, mounted once and filled once they decode."""
+        if getattr(self, "_strip_busy", False):
+            return
+        paths = self.services.plates()
+        self._strip_busy = True
+
+        def work() -> Any:
+            return self.services.thumbs(paths)
+
+        def done(result: Any) -> None:
+            self._strip_busy = False
+            if isinstance(result, Exception):
+                return
+            thumbs = [(path.name, png) for path, png in zip(paths, result)]
+
+            def open_index(index: int) -> None:
+                self._open_plate(paths[index])
+
+            self.shell.strip.show(thumbs, open_index)
+
+        self.services.background(work, done)
+
+    def _open_plate(self, path: Any) -> None:
+        from pathlib import Path
+
+        if not isinstance(path, Path):
+            path = Path(path)
+        message = self.services.open_path(path)
+        self.note(message, level="info" if message.startswith("Opened") else "error")
 
     def refresh_strip(self) -> None:
         from salad_studio import salad_status
@@ -414,6 +446,7 @@ def build(page: ft.Page, *, dark: bool = True, show: bool = True,
     page.on_keyboard_event = lambda e: apply_shortcut(shell, e)
     window.build_action_bar()
     window.load_profiles()
+    window.shell.strip.on_open = window._open_plate
     page.add(shell)
     page.update()
     shell.open(first if first in TAB_ORDER else default_page())

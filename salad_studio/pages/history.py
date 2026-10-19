@@ -10,6 +10,13 @@ from salad_studio import flet_theme, flet_widgets as w, prompt_history
 from salad_studio.flet_shell import Page
 
 COLUMNS = ("When", "Prompt", "Graph", "Rating", "Image")
+
+
+def _graph_label(body: dict[str, Any] | None) -> str:
+    """The graph stats on one line: the full text makes the table wider than the window."""
+    if not body:
+        return ""
+    return " ".join(prompt_history.request_stats(body).split())[:48]
 EMPTY_TEXT = "No prompts yet. Every Generate stores its request here."
 THUMB = 48
 
@@ -58,7 +65,7 @@ class HistoryPage(Page):
             cells.append([
                 time.strftime("%Y-%m-%d %H:%M", time.localtime(int(row.get("ts") or 0))),
                 prompt_history.preview(prompt_history.prompt_text_of(req) or str(row.get("text") or "")),
-                prompt_history.request_stats(req) if req else "",
+                _graph_label(req),
                 "*" * stars if stars else "",
                 thumb or "",
             ])

@@ -113,6 +113,8 @@ class HistoryStrip(ft.Container):
     def __init__(self, colors: dict[str, str], on_open: Callable[[Any], None]) -> None:
         self.colors = colors
         self.on_open = on_open
+        self._strip_scroll = None
+        self._offset = 0.0
         self.list = ft.ListView(horizontal=True, spacing=6, expand=True, height=STRIP_HEIGHT - 12)
         self.empty = ft.Text("No plates yet. A finished render appears here.",
                              size=12, color=colors["muted"])
@@ -129,10 +131,10 @@ class HistoryStrip(ft.Container):
         )
 
     def scroll(self, delta: int) -> None:
-        try:
-            self.list.scroll_to(offset=(self.list.scroll_offset or 0) + delta * 120, duration=150)
-        except (RuntimeError, AttributeError):
-            pass
+        """Move a few thumbnails. The offset is kept here: flet's ListView reports none."""
+        self._offset = max(0.0, self._offset + delta * 120)
+        if self._strip_scroll is not None:
+            self._strip_scroll(self._offset)
 
     def show(self, thumbs: list[tuple[str, bytes | None]], open_index: Callable[[int], None]) -> None:
         self.list.controls.clear()
@@ -176,6 +178,7 @@ class Shell(ft.Column):
         )
         self.action_bar = ft.Row(spacing=flet_theme.GAP["sm"], vertical_alignment=ft.CrossAxisAlignment.CENTER)
         self.strip = HistoryStrip(self.colors, on_open=lambda _p: None)
+        self.strip._strip_scroll = self.scroll_strip
         # One non-tight column holds the open page for the shell's lifetime:
         # a page swapped into a tight column is laid out at zero height and the
         # pane paints blank (measured on flet 1.0.4).
@@ -220,6 +223,19 @@ class Shell(ft.Column):
         if refresh_now:
             refresh(self.body)
         return self.pages[name]
+
+    def scroll_strip(self, offset: float) -> None:
+        """Move the history strip to ``offset``, from the frame loop: flet's scroll is a coroutine."""
+        async def move() -> None:
+            try:
+                await self.strip.list.scroll_to(offset=offset, duration=150)
+            except (RuntimeError, AttributeError):
+                return
+
+        if getattr(self.window, "pump", None) is not None:
+            self.window.pump.schedule(lambda: self.window.page.run_task(move))
+        else:
+            self.strip._offset = offset
 
     def refresh(self) -> None:
         refresh(self)

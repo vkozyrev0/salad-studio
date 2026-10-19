@@ -315,13 +315,18 @@ class LaunchCheck(unittest.TestCase):
             win.form.name, win.form.gateway = "klein", allp["klein"].gateway
 
             def counted_background(_self, work, done):
-                def run(work=work, done=done) -> None:
+                with lock:
+                    count = len(workers) + 1
+
+                def run(work=work, done=done, count=count) -> None:
                     done(work())
                     with lock:
-                        if len(workers) == 2:
+                        if count == 2:
                             both_done.set()
-                worker = threading.Thread(target=run, daemon=True, name=f"generate-{len(workers) + 1}")
-                workers.append(worker)
+
+                worker = threading.Thread(target=run, daemon=True, name=f"generate-{count}")
+                with lock:
+                    workers.append(worker)
                 worker.start()
 
             # The key probe must answer at once: an unauthorized reply outside a

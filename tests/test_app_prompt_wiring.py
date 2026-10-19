@@ -41,6 +41,8 @@ def set_value(field, text: str) -> None:
     field._values["value"] = text
 
 
+from tests._flet_window import setUpModule, tearDownModule  # noqa: F401,E402
+
 class Case(unittest.TestCase):
     def setUp(self) -> None:
         stores = TempStores()

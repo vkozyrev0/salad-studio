@@ -24,6 +24,8 @@ from tests._flet_window import (  # noqa: E402
 )
 
 
+from tests._flet_window import setUpModule, tearDownModule  # noqa: F401,E402
+
 class Case(unittest.TestCase):
     def setUp(self) -> None:
         stores = TempStores()

@@ -143,6 +143,21 @@ def _install_stub_update() -> None:
 _install_stub_update()
 
 
+_MODULE_STORES: list["TempStores"] = []
+
+
+def setUpModule() -> None:
+    """The module's tests share one set of temporary stores, the queue ledger too."""
+    stores = TempStores()
+    stores.__enter__()
+    _MODULE_STORES.append(stores)
+
+
+def tearDownModule() -> None:
+    while _MODULE_STORES:
+        _MODULE_STORES.pop().__exit__(None, None, None)
+
+
 class TempStores:
     """Every store a window reads or writes, pointed at one temp directory."""
 

@@ -33,6 +33,10 @@ from salad_studio import (  # noqa: E402
     tokens as tok, ui_state, vast,
 )
 
+# The window imports the queue top-level; this module holds the package copy.
+# The window's shared instance lives on the first, so it is reached by name.
+SERVICES_QUEUE = sys.modules["salad_queue"]
+
 
 class FakePage:
     """An ``ft.Page`` stand-in with no client: ``add`` and ``update`` record instead of sending."""
@@ -90,6 +94,7 @@ class _TempPaths:
             "images": image_deploy.SETTINGS_PATH,
             "out": flet_services.OUT_DIR,
             "shared": salad_queue._SHARED,
+            "services_shared": SERVICES_QUEUE._SHARED,
         }
         profiles.PROFILES_PATH = self.tmp / "studio-profiles.json"
         profiles.GATEWAY_KLEIN_PATH = self.tmp / "gateway-klein"
@@ -106,8 +111,10 @@ class _TempPaths:
         top_queue.LEDGER_PATH = ledger
         pkg_queue.LEDGER_PATH = ledger
         # A fresh shared queue per window: a test window must not see the jobs a
-        # previous test left on the module's one queue.
+        # previous test left on the module's one queue. The window's queue lives
+        # on the top-level module, not on the package's copy.
         salad_queue._SHARED = None
+        SERVICES_QUEUE._SHARED = None
         # The Vast.ai page reads this file at construction, and its engine
         # choice decides where Generate POSTs: no test may read the real one.
         vast.INSTANCES_PATH = self.tmp / "studio-vast.json"
@@ -140,11 +147,20 @@ class _TempPaths:
         image_deploy.SETTINGS_PATH = self.saved["images"]
         flet_services.OUT_DIR = self.saved["out"]
         salad_queue._SHARED = self.saved["shared"]
+        SERVICES_QUEUE._SHARED = self.saved.get("services_shared")
         studio_meta.reset_cache()
 
 
 def _build() -> tuple[object, FakePage]:
-    """The window the app opens on, built without a client and with no network."""
+    """The window the app opens on, built without a client and with no network.
+
+    The queue is one object per process, so a second window in the same run
+    starts from whatever the first left in it; each build starts from empty.
+    """
+    from salad_studio import salad_queue as queue_mod
+
+    queue = queue_mod.shared()
+    queue.clear_finished()
     page = FakePage()
     with mock.patch.object(flet_services.AppServices, "check_salad", lambda *a, **k: None), \
             mock.patch.object(flet_services.AppServices, "run_idle_check", lambda *a, **k: None):

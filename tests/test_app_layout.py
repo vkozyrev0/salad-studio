@@ -40,6 +40,8 @@ def key(name: str, *, ctrl: bool = True, shift: bool = False) -> ft.KeyboardEven
     return ft.KeyboardEvent("key_down", None, name, shift, ctrl, False, False)
 
 
+from tests._flet_window import setUpModule, tearDownModule  # noqa: F401,E402
+
 class Case(unittest.TestCase):
     """A hidden window on temp stores, torn down after each test."""
 

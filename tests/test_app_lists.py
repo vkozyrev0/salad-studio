@@ -31,6 +31,8 @@ def run_inline(work, done) -> None:
     done(result)
 
 
+from tests._flet_window import setUpModule, tearDownModule  # noqa: F401,E402
+
 class Case(unittest.TestCase):
     def setUp(self) -> None:
         stores = TempStores()

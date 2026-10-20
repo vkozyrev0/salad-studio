@@ -173,8 +173,8 @@ class LoraCheckboxes(Case):
 class TheSettingsFields(Case):
     def test_the_knobs_the_user_types_are_what_the_request_carries(self) -> None:
         settings = self.settings()
-        settings.width.value = "768"
-        settings.height.value = "512"
+        settings.width_field.value = "768"
+        settings.height_field.value = "512"
         settings.steps.value = "6"
         settings.seed.value = "424242"
         settings.sync_form()
@@ -191,7 +191,7 @@ class TheSettingsFields(Case):
                              scheduler="simple")
         settings = self.settings()
         settings.show_form()
-        self.assertEqual((settings.width.value, settings.height.value, settings.steps.value,
+        self.assertEqual((settings.width_field.value, settings.height_field.value, settings.steps.value,
                           settings.seed.value, settings.cfg.value), ("640", "480", "3", "9", "1.5"))
         self.assertEqual(settings.scheduler.value, "Simple (Civitai)")
 
@@ -440,8 +440,10 @@ class OtherPages(Case):
         assist = self.win.open_page("Prompt Assist")
         import_page = self.win.open_page("Import")
         editor = self.editor()
-        self.assertIsInstance(assist.help_btn, ft.Button)
-        self.assertIsInstance(assist.commit_btn, ft.Button)
+        # The two helps are ways into the same page of work; Commit is what
+        # the page is for, so it alone takes the rose.
+        self.assertIs(type(assist.help_btn), ft.OutlinedButton)
+        self.assertIs(type(assist.commit_btn), ft.Button)
         self.assertNotIsInstance(assist.local_btn, ft.Button)
         self.assertIsInstance(import_page.body.content.controls[-1].controls[1], ft.Button)
         labels = [getattr(c, "content", None) for c in assist.body.content.controls[5].controls]
@@ -473,7 +475,7 @@ class SettingsShowsEveryControl(Case):
     def test_every_knob_and_lora_box_is_mounted(self) -> None:
         settings = self.settings()
         visible = self.shown(settings)
-        knobs = (settings.width, settings.height, settings.steps, settings.cfg, settings.seed,
+        knobs = (settings.width_field, settings.height_field, settings.steps, settings.cfg, settings.seed,
                  settings.graph, settings.scheduler, settings.checkpoint)
         for name, control in zip(("width", "height", "steps", "cfg", "seed", "graph",
                                   "scheduler", "checkpoint"), knobs):

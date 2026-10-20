@@ -76,6 +76,11 @@ class LorasPage(Page):
             lora_store.comfy_lora_name(item),
         ]
 
+    @staticmethod
+    def _source_page(item: dict[str, Any]) -> str:
+        src = item.get("source") or {}
+        return str(src.get("page") or src.get("download") or "")
+
     def refresh(self, rows: list[dict[str, Any]] | None = None) -> None:
         items = lora_store.list_loras() if rows is None else rows
         text = str(self.find.value or "").strip().lower()

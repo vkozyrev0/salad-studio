@@ -197,7 +197,7 @@ class Window:
 
     def build_action_bar(self) -> None:
         shell = self.shell
-        self.gen_button = w.button("Generate", lambda _e: self.generate(), primary=True)
+        self.gen_button = w.accent_button("Generate", lambda _e: self.generate(), colors=shell.colors)
         self.gen_state = ft.Text("Idle", size=12, color=shell.colors["on_surface"])
         self.strip_dots: list[ft.Text] = []
         self.strip_counts: list[ft.Text] = []

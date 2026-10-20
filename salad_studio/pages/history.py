@@ -84,6 +84,27 @@ class HistoryPage(Page):
         if 0 <= index < len(self.rows):
             self.selected = index
             self.refresh()
+            self.reveal_row(index)
+
+    def move_selection(self, action: str) -> None:
+        """Move the grid's selection: ``first``, ``last``, ``next`` or ``prev``."""
+        count = len(self.rows)
+        if not count:
+            return
+        if action == "first":
+            self.select_row(0)
+        elif action == "last":
+            self.select_row(count - 1)
+        elif self.selected is None:
+            self.select_row(0)
+        else:
+            self.select_row(min(count - 1, self.selected + (1 if action == "next" else -1)))
+
+    def reveal_row(self, index: int) -> None:
+        """Scroll the grid so the selected row is in view."""
+        table = next((c for c in self.table_holder.controls if isinstance(c, ft.DataTable)), None)
+        if table is not None:
+            w.reveal_row(getattr(self, "win", None), table, index)
 
     def reuse(self, _e: Any = None) -> None:
         if self.selected is None or not (0 <= self.selected < len(self.rows)):

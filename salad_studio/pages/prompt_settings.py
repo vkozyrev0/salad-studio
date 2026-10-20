@@ -30,8 +30,10 @@ class SettingsPage(Page):
         self.host = host
         self.win = host
         form = host.form
-        self.width = w.field(form.width, label_text="Width", width=120, on_change=self.sync_form)
-        self.height = w.field(form.height, label_text="Height", width=120, on_change=self.sync_form)
+        # Not ``self.width`` / ``self.height``: those are the page column's
+        # own layout fields, and a control stored there lays the page out.
+        self.width_field = w.field(form.width, label_text="Width", width=120, on_change=self.sync_form)
+        self.height_field = w.field(form.height, label_text="Height", width=120, on_change=self.sync_form)
         self.steps = w.field(form.steps, label_text="Steps", width=120, on_change=self.sync_form)
         self.cfg = w.field(form.cfg, label_text="CFG", width=120, on_change=self.sync_form)
         self.seed = w.field(form.seed, label_text="Seed", width=160, on_change=self.sync_form)
@@ -50,10 +52,10 @@ class SettingsPage(Page):
         self.lora_right = ft.Column([], spacing=flet_theme.GAP["xs"])
         self._fill_loras()
         self.knobs = ft.Column(
-            [self.width, self.height, self.steps, self.cfg, self.seed,
+            [self.width_field, self.height_field, self.steps, self.cfg, self.seed,
              self.graph, self.scheduler, self.checkpoint],
             spacing=flet_theme.GAP["sm"],
-            scroll=ft.ScrollMode.ALWAYS,
+            scroll=ft.ScrollMode.AUTO,
             expand=True,
         )
         self.loras = ft.Column(
@@ -85,14 +87,14 @@ class SettingsPage(Page):
     def show_form(self, _e: Any = None) -> None:
         """Draw the window's form, after a profile is loaded from elsewhere."""
         form = self.win.form
-        self.width.value, self.height.value = form.width, form.height
+        self.width_field.value, self.height_field.value = form.width, form.height
         self.steps.value, self.cfg.value, self.seed.value = form.steps, form.cfg, form.seed
         self.graph.value = lora_store.graph_label(form.graph)
         self.scheduler.value = "Simple (Civitai)" if form.scheduler == "simple" else "Flux2 (Klein)"
         self.checkpoint.value = request_json.unet_label(self.win.profile.primary_checkpoint)
         self.selected = set(form.selected_loras)
         self._fill_loras()
-        refresh(self.width, self.height, self.steps, self.cfg, self.seed,
+        refresh(self.width_field, self.height_field, self.steps, self.cfg, self.seed,
                 self.graph, self.scheduler, self.checkpoint, self.lora_left, self.lora_right)
 
     def on_lora_toggle(self, lora_id: str, _e: Any = None) -> None:
@@ -127,8 +129,8 @@ class SettingsPage(Page):
     def sync_form(self, _e: Any = None) -> None:
         """Write the window's form back from what the controls show."""
         form = self.win.form
-        form.width = str(self.width.value or "")
-        form.height = str(self.height.value or "")
+        form.width = str(self.width_field.value or "")
+        form.height = str(self.height_field.value or "")
         form.steps = str(self.steps.value or "")
         form.cfg = str(self.cfg.value or "")
         form.seed = str(self.seed.value or "")

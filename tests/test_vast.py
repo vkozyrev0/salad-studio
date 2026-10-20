@@ -1221,7 +1221,7 @@ class VastTabAndGenerate(unittest.TestCase):
         self.assertEqual(host.form.mode, "vast")
         page.show_profile()
         self.assertEqual(page.target.selected, ["vast"])
-        self.assertEqual(page.url.label, "Instance URL")
+        self.assertEqual(page.gateway_field.label, "Instance URL")
         self.assertIn(name, [option.key for option in page.profile_list.options])
 
     def test_a_listing_cut_off_by_the_page_cap_says_so(self) -> None:

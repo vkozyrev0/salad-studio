@@ -37,9 +37,9 @@ class AssistPage(Page):
         self.state = ft.Text("", size=12, color=self.colors["muted"])
         self.reply = ft.TextField(multiline=True, min_lines=7, max_lines=20, read_only=True,
                                   expand=True, text_size=12)
-        self.help_btn = w.button("Help (DeepSeek)", lambda _e: self.start("deepseek"), primary=True)
+        self.help_btn = w.button("Help (DeepSeek)", lambda _e: self.start("deepseek"))
         self.local_btn = w.button("Help (local)", lambda _e: self.start("local"))
-        self.commit_btn = w.button("Commit to Prompts + JSON", self.commit, primary=True)
+        self.commit_btn = w.accent_button("Commit to Prompts + JSON", self.commit, colors=self.colors)
         self.body.content = ft.Column(
             [
                 ft.Row([self.local_url, self.send_image], spacing=flet_theme.GAP["sm"]),

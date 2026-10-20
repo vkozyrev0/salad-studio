@@ -21,7 +21,7 @@ def image_deploy_entry(page: Any) -> dict[str, Any] | None:
     from salad_studio import image_deploy
 
     settings = image_deploy.load_settings()
-    return image_deploy.entry_by_ref(image_deploy.entries(None, settings), str(page.image.value or ""))
+    return image_deploy.entry_by_ref(image_deploy.entries(None, settings), str(page.image_field.value or ""))
 
 
 SECTIONS: tuple[tuple[str, str], ...] = (
@@ -59,7 +59,8 @@ class ConfigPage(Page):
             on_change=self._on_section,
         )
         self.panel = ft.Container(expand=True)
-        self.body.content = ft.Column([self.tabs, self.panel], expand=True, spacing=flet_theme.GAP["sm"])
+        self.body.content = ft.Column([self.tabs, self.panel], expand=True, tight=True,
+                                      spacing=flet_theme.GAP["sm"])
         self._build_profile()
         self._build_images()
         self._build_policy()
@@ -95,7 +96,8 @@ class ConfigPage(Page):
             allow_empty_selection=False,
             on_change=self._on_mode,
         )
-        self.url = w.field(form.gateway, label_text="Gateway URL", width=420)
+        # Named ``gateway_field``: ``url`` is the page column's own hyperlink field.
+        self.gateway_field = w.field(form.gateway, label_text="Gateway URL", width=420)
         self.checkpoint = w.field("", label_text="Checkpoint filename or label", width=420,
                                   on_submit=lambda _e: self.add_checkpoint())
         self.checkpoint_list = ft.Column([], spacing=2, tight=True)
@@ -106,7 +108,7 @@ class ConfigPage(Page):
                        w.button("Save profile", self.save_profile),
                        w.button("Delete profile", self.delete_profile)]),
                 w.heading("Target", self.colors), self.target,
-                w.row([self.url, w.button("Use the selected instance", self.use_selected_instance)]),
+                w.row([self.gateway_field, w.button("Use the selected instance", self.use_selected_instance)]),
                 w.heading("Checkpoints this profile serves", self.colors),
                 w.row([self.checkpoint, w.button("Add", self.add_checkpoint),
                        w.button("Remove selected", self.remove_checkpoint)]),
@@ -144,21 +146,21 @@ class ConfigPage(Page):
         self.profile_list.options = [ft.DropdownOption(text=n, key=n) for n in sorted(profiles.load_all())]
         self.profile_list.value = form.name
         self.name.value = form.name
-        self.url.value = form.gateway
-        self.url.label = LABELS["instance" if form.mode == "vast" else "gateway"]
+        self.gateway_field.value = form.gateway
+        self.gateway_field.label = LABELS["instance" if form.mode == "vast" else "gateway"]
         self.target.selected = [form.mode if form.mode in ("salad", "vast") else "salad"]
         self._fill_checkpoints()
-        refresh(self.name, self.url, self.profile_list, self.target, self.checkpoint_list)
+        refresh(self.name, self.gateway_field, self.profile_list, self.target, self.checkpoint_list)
 
     def _on_mode(self, e: Any) -> None:
         mode = next(iter(e.control.selected), "salad")
         self.win.form.mode = mode
-        self.url.label = LABELS["instance" if mode == "vast" else "gateway"]
-        refresh(self.url)
+        self.gateway_field.label = LABELS["instance" if mode == "vast" else "gateway"]
+        refresh(self.gateway_field)
 
     def _read_form(self) -> None:
         self.win.form.name = str(self.name.value or "klein").strip() or "klein"
-        self.win.form.gateway = str(self.url.value or "").strip()
+        self.win.form.gateway = str(self.gateway_field.value or "").strip()
 
     def load_profile(self, name: str) -> None:
         from salad_studio import profiles
@@ -251,9 +253,9 @@ class ConfigPage(Page):
         if not endpoint:
             self.host.note("Refused: The selected vast.ai instance has no endpoint yet.", level="warn")
             return
-        self.url.value = endpoint
+        self.gateway_field.value = endpoint
         self.win.form.gateway = endpoint
-        refresh(self.url)
+        refresh(self.gateway_field)
         self.host.note(f"Using {endpoint}", level="info")
 
     def add_checkpoint(self, _e: Any = None) -> None:
@@ -296,7 +298,8 @@ class ConfigPage(Page):
 
         settings = image_deploy.load_settings()
         tags = image_deploy.tag_options(_document(), settings)
-        self.image = w.combo(tags, value=tags[0] if tags else "", label_text="Image", width=380,
+        # Named ``image_field``: ``image`` is the page column's own background field.
+        self.image_field = w.combo(tags, value=tags[0] if tags else "", label_text="Image", width=380,
                              on_change=lambda _e: self._show_environment())
         self.show_tokens = w.check("show token values", False, on_change=lambda _e: self._show_environment())
         self.env_name = w.field("", label_text="NAME", width=220)
@@ -316,7 +319,7 @@ class ConfigPage(Page):
         self.images_section = ft.Column(
             [
                 w.heading("Container images", self.colors),
-                w.row([self.image, self.show_tokens]),
+                w.row([self.image_field, self.show_tokens]),
                 w.heading("Environment", self.colors), self.env_list,
                 w.row([self.env_name, self.env_value, w.button("Add env", self.add_env),
                        w.button("Remove selected", self.remove_env),
@@ -336,10 +339,10 @@ class ConfigPage(Page):
 
         clean = lambda tag: (image_deploy.entry_by_ref(_image_entries(image_deploy.load_settings()), tag)
                              or {}).get("key", "")
-        if self.image.value and clean(str(self.image.value)):
-            return str(self.image.value)
+        if self.image_field.value and clean(str(self.image_field.value)):
+            return str(self.image_field.value)
         first = (image_deploy.tag_options(_document(), image_deploy.load_settings()) or [""])[0]
-        return first or str(self.image.value or "")
+        return first or str(self.image_field.value or "")
 
     def _show_environment(self) -> None:
         from salad_studio import image_deploy
@@ -690,7 +693,7 @@ class ConfigPage(Page):
             self.host.note("Refused: select an instance first", level="warn")
             return
         entry = image_deploy.entry_by_ref(_image_entries(image_deploy.load_settings()),
-                                          str(self.image.value or ""))
+                                          str(self.image_field.value or ""))
         image = str((entry or {}).get("tag") or "")
         key = vast.row_key(row)
         rows = []
@@ -786,7 +789,7 @@ class ConfigPage(Page):
             self.host.note("Refused: select an offer first", level="warn")
             return
         image = str((image_deploy_entry(self) or {}).get("tag")
-                    or getattr(self.image, "value", "") or "")
+                    or getattr(self.image_field, "value", "") or "")
 
         def go() -> None:
             def work() -> Any:
@@ -822,7 +825,7 @@ class ConfigPage(Page):
 
         settings = self._criteria()
         row = self._selected_row() or {}
-        image = str(row.get("image") or getattr(self.image, "value", "") or "")
+        image = str(row.get("image") or getattr(self.image_field, "value", "") or "")
 
         def work() -> Any:
             return vast.replace_destroyed(key=self.win.services.token("vast"),

@@ -83,8 +83,20 @@ def combo(
 
 def button(text: str, on_click: Callable[[Any], Any] | None = None, *, primary: bool = False,
            icon: Any = None, tooltip: str = "") -> ft.Control:
-    cls = ft.Button if primary else ft.OutlinedButton
-    return cls(text, on_click=on_click, icon=icon, tooltip=tooltip or None)
+    """A bar or page button. Only the window's Generate wears the rose.
+
+    A primary Button with no ``bgcolor`` of its own paints as an empty pill on
+    flet 1.0.4 (measured); ``accent_button`` sets the fill and its ink.
+    """
+    kind = ft.Button if primary else ft.OutlinedButton
+    return kind(text, on_click=on_click, icon=icon, tooltip=tooltip or None)
+
+
+def accent_button(text: str, on_click: Callable[[Any], Any] | None = None, *,
+                  colors: dict[str, str], icon: Any = None, tooltip: str = "") -> ft.Button:
+    """The rose fill of a primary action, painted from the palette."""
+    return ft.Button(text, on_click=on_click, icon=icon, tooltip=tooltip or None,
+                     bgcolor=colors["accent"], color=colors["on_primary"])
 
 
 def flat(text: str, on_click: Callable[[Any], Any], *, tooltip: str = "") -> ft.TextButton:
@@ -172,3 +184,25 @@ def split(pairs: list[tuple[str, ft.Control]], *, label_width: int = 150) -> ft.
         spacing=GAP["xs"],
         tight=True,
     )
+
+
+def reveal_row(window: Any, table: ft.DataTable, index: int) -> None:
+    """Scroll ``table`` so row ``index`` is in view, a heading above it.
+
+    A long table scrolls inside its own height; a selection moved by the keyboard
+    would otherwise run off the bottom unseen. Nothing happens without a frame
+    loop and a page to schedule the coroutine on, as in a test.
+    """
+    if getattr(window, "pump", None) is None or not hasattr(getattr(window, "page", None), "run_task"):
+        return
+    heading = abs(table.heading_row_height or 36)
+    row = max(0, abs(table.data_row_max_height or 34) - 4)
+    offset = max(0, heading + index * row - row)
+
+    async def scroll() -> None:
+        try:
+            await table.scroll_to(offset=offset, duration=100)
+        except (RuntimeError, AttributeError):
+            return
+
+    window.pump.schedule(lambda: window.page.run_task(scroll))

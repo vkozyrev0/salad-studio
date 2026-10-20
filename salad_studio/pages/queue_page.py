@@ -117,6 +117,24 @@ class QueuePage(Page):
             self.selected_key = self.keys[index]
             self.refresh()
 
+    def move_selection(self, action: str) -> None:
+        """Move the grid's selection: ``first``, ``last``, ``next`` or ``prev``."""
+        count = len(self.keys)
+        if not count:
+            return
+        index = self.keys.index(self.selected_key) if self.selected_key in self.keys else None
+        if action == "first":
+            self.select_row(0)
+        elif action == "last":
+            self.select_row(count - 1)
+        elif index is None:
+            self.select_row(0)
+        else:
+            self.select_row(min(count - 1, index + (1 if action == "next" else -1)))
+        table = next((c for c in self.table_holder.controls if isinstance(c, ft.DataTable)), None)
+        if table is not None and self.selected_key in self.keys:
+            w.reveal_row(getattr(self, "win", None), table, self.keys.index(self.selected_key))
+
     def _job(self) -> Any:
         if self.selected_key is None:
             return None

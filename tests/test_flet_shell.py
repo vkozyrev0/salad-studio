@@ -45,8 +45,8 @@ class Opening(unittest.TestCase):
         shell.open("B")
         self.assertEqual(shell.buttons["B"].bgcolor, shell.colors["primary_container"])
         self.assertIsNone(shell.buttons["A"].bgcolor)
-        self.assertEqual(shell.buttons["B"].content.weight, ft.FontWeight.W_600)
-        self.assertEqual(shell.buttons["A"].content.weight, ft.FontWeight.NORMAL)
+        self.assertEqual(shell.buttons["B"].name_label.weight, ft.FontWeight.W_600)
+        self.assertEqual(shell.buttons["A"].name_label.weight, ft.FontWeight.NORMAL)
 
 
 class Status(unittest.TestCase):
@@ -110,3 +110,132 @@ class Moving(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PagesAndTheirControls(unittest.TestCase):
+    """A page keeps its controls under names that are not the page column's own fields.
+
+    ``SettingsPage`` stored its Width and Height knobs as ``self.width`` and
+    ``self.height``. Those are ``ft.Column``'s own layout fields, so the page
+    took them and the pane painted as an empty grey block on every render.
+    """
+
+    def test_no_page_sets_a_control_on_a_field_of_its_own_column(self) -> None:
+        import dataclasses
+        import inspect
+        import sys
+        from pathlib import Path
+
+        # Pages import the repo's top-level modules (studio_meta, hostings) the
+        # way the app does; the package directory alone is not enough.
+        package, parent = (str(Path(__file__).resolve().parent.parent / part)
+                           for part in ("salad_studio", ""))
+        for path in (parent, package):
+            if path not in sys.path:
+                sys.path.insert(0, path)
+
+        from salad_studio.pages import (
+            assist, catalog, config, editor, history, import_page, logs_page, loras,
+            prompt_settings, queue_page, tokens_page,
+        )
+
+        reserved = {f.name for f in dataclasses.fields(ft.Column)} | {
+            f.name for f in dataclasses.fields(ft.Container)}
+        offenders: list[str] = []
+        for module in (assist, catalog, config, editor, history, import_page, logs_page, loras,
+                       prompt_settings, queue_page, tokens_page):
+            for name, cls in vars(module).items():
+                if not (inspect.isclass(cls) and cls.__module__ == module.__name__
+                        and issubclass(cls, ft.Column)):
+                    continue
+                source = inspect.getsource(cls)
+                hits = sorted(f for f in reserved if f"self.{f} =" in source)
+                offenders.extend(f"{name}.{f}" for f in hits)
+        self.assertEqual(offenders, [], "a page field would take the column's layout slot")
+
+    def test_the_window_opens_with_a_line_that_says_where_to_start(self) -> None:
+        from salad_studio.flet_shell import REST_TEXT
+
+        self.assertEqual(shell_with(["A"]).status.value, REST_TEXT)
+        self.assertIn("Ctrl+Tab", REST_TEXT)
+
+
+class Repainting(unittest.TestCase):
+    """A page is mounted before anything repaints it, or the client loses the window."""
+
+    def test_opening_a_page_repaints_a_control_the_client_already_has(self) -> None:
+        from unittest.mock import patch
+
+        shell = shell_with(["A", "B"])
+        seen: list[str] = []
+
+        def record(control) -> None:
+            seen.append(type(control).__name__)
+
+        with patch.object(ft.Container, "update", record):
+            shell.open("A")
+            shell.open("B")
+        self.assertEqual(seen, ["Container", "Container"],
+                         "the open page is repainted through the body, never the page")
+        self.assertIs(shell.body_column.controls[-1], shell.pages["B"])
+
+
+class Keyboard(unittest.TestCase):
+    """Ctrl moves pages from anywhere; without Ctrl the keys move what has the focus."""
+
+    def setUp(self) -> None:
+        self.shell = shell_with(["A", "B", "C"])
+        self.shell.open("A")
+
+    def press(self, key: str, *, ctrl: bool = False, shift: bool = False) -> bool:
+        return self.shell._on_key(ft.KeyboardEvent("key_down", None, key, shift, ctrl, False, False))
+
+    def test_ctrl_tab_steps_pages_whatever_the_strip_holds(self) -> None:
+        self.shell.focus = "strip"
+        self.assertTrue(self.press("Tab", ctrl=True))
+        self.assertEqual(self.shell.current, "B")
+        self.assertTrue(self.press("Tab", ctrl=True, shift=True))
+        self.assertEqual(self.shell.current, "A")
+
+    def test_the_first_arrow_puts_the_ring_on_the_first_thumb(self) -> None:
+        self.shell.focus = "strip"
+        self.shell.strip.show([("a", b"a"), ("b", b"b")], lambda _i: None)
+        self.assertTrue(self.press("Arrow Right"))
+        self.assertEqual(self.shell.strip.ring, 0)
+
+    def test_the_arrows_walk_the_ring_and_enter_opens_it(self) -> None:
+        opened: list[int] = []
+        self.shell.strip.show([("a", b"a"), ("b", b"b"), ("c", b"c")], opened.append)
+        self.shell.focus = "strip"
+        self.press("Right")
+        self.press("Arrow Left")   # the arrow names arrive in more than one spelling
+        self.press("right")
+        self.assertEqual(self.shell.strip.ring, 1)
+        self.assertTrue(self.press("Enter"))
+        self.assertEqual(opened, [1])
+
+    def test_home_and_end_move_the_ring_to_its_ends(self) -> None:
+        self.shell.strip.show([("a", b"a"), ("b", b"b"), ("c", b"c")], lambda _i: None)
+        self.shell.focus = "strip"
+        self.press("End")
+        self.assertEqual(self.shell.strip.ring, 2)
+        self.press("Home")
+        self.assertEqual(self.shell.strip.ring, 0)
+
+    def test_the_arrows_move_the_open_pages_table_instead(self) -> None:
+        class Grid:
+            def __init__(self) -> None:
+                self.moves: list[str] = []
+
+            def move_selection(self, action: str) -> None:
+                self.moves.append(action)
+
+        grid = Grid()
+        self.shell.pages["A"] = grid
+        self.assertTrue(self.press("Arrow Down"))
+        self.assertTrue(self.press("down"))
+        self.assertIn("next", grid.moves)
+        self.assertEqual(grid.moves[0], "next")
+        self.shell.focus = "strip"
+        self.shell.open("B")
+        self.assertEqual(self.shell.focus, "page", "opening a page hands the keys back to it")

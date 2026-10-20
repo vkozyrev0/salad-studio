@@ -181,7 +181,7 @@ class Repainting(unittest.TestCase):
 
 
 class Keyboard(unittest.TestCase):
-    """Ctrl moves pages from anywhere; without Ctrl the keys move what has the focus."""
+    """Ctrl moves pages from anywhere; without Ctrl the keys follow the focused place."""
 
     def setUp(self) -> None:
         self.shell = shell_with(["A", "B", "C"])
@@ -190,7 +190,13 @@ class Keyboard(unittest.TestCase):
     def press(self, key: str, *, ctrl: bool = False, shift: bool = False) -> bool:
         return self.shell._on_key(ft.KeyboardEvent("key_down", None, key, shift, ctrl, False, False))
 
-    def test_ctrl_tab_steps_pages_whatever_the_strip_holds(self) -> None:
+    def table_key(self, key: str) -> bool:
+        return self.shell._table_key(ft.KeyDownEvent("key_down", None, key))
+
+    def strip_key(self, key: str) -> bool:
+        return self.shell._strip_key(ft.KeyDownEvent("key_down", None, key))
+
+    def test_ctrl_tab_steps_pages_whatever_has_the_focus(self) -> None:
         self.shell.focus = "strip"
         self.assertTrue(self.press("Tab", ctrl=True))
         self.assertEqual(self.shell.current, "B")
@@ -198,28 +204,27 @@ class Keyboard(unittest.TestCase):
         self.assertEqual(self.shell.current, "A")
 
     def test_the_first_arrow_puts_the_ring_on_the_first_thumb(self) -> None:
-        self.shell.focus = "strip"
         self.shell.strip.show([("a", b"a"), ("b", b"b")], lambda _i: None)
-        self.assertTrue(self.press("Arrow Right"))
+        self.assertTrue(self.strip_key("Arrow Right"))
         self.assertEqual(self.shell.strip.ring, 0)
 
     def test_the_arrows_walk_the_ring_and_enter_opens_it(self) -> None:
         opened: list[int] = []
         self.shell.strip.show([("a", b"a"), ("b", b"b"), ("c", b"c")], opened.append)
         self.shell.focus = "strip"
-        self.press("Right")
-        self.press("Arrow Left")   # the arrow names arrive in more than one spelling
-        self.press("right")
+        self.strip_key("Right")
+        self.strip_key("Arrow Left")   # the arrow names arrive in more than one spelling
+        self.strip_key("right")
         self.assertEqual(self.shell.strip.ring, 1)
-        self.assertTrue(self.press("Enter"))
+        self.assertTrue(self.strip_key("Enter"))
         self.assertEqual(opened, [1])
 
     def test_home_and_end_move_the_ring_to_its_ends(self) -> None:
         self.shell.strip.show([("a", b"a"), ("b", b"b"), ("c", b"c")], lambda _i: None)
         self.shell.focus = "strip"
-        self.press("End")
+        self.strip_key("End")
         self.assertEqual(self.shell.strip.ring, 2)
-        self.press("Home")
+        self.strip_key("Home")
         self.assertEqual(self.shell.strip.ring, 0)
 
     def test_the_arrows_move_the_open_pages_table_instead(self) -> None:
@@ -232,32 +237,27 @@ class Keyboard(unittest.TestCase):
 
         grid = Grid()
         self.shell.pages["A"] = grid
-        self.assertTrue(self.press("Arrow Down"))
-        self.assertTrue(self.press("down"))
-        self.assertIn("next", grid.moves)
+        self.assertTrue(self.table_key("Arrow Down"))
+        self.assertTrue(self.table_key("down"))
         self.assertEqual(grid.moves[0], "next")
         self.shell.focus = "strip"
         self.shell.open("B")
         self.assertEqual(self.shell.focus, "page", "opening a page hands the keys back to it")
 
-    def test_an_arrow_in_a_field_leaves_the_table_alone(self) -> None:
-        from salad_studio import flet_widgets as w
+    def test_the_strip_keeps_its_own_keys_when_the_page_owns_the_arrows(self) -> None:
+        opened: list[int] = []
+        self.shell.strip.show([("a", b"a"), ("b", b"b")], opened.append)
+        self.shell.focus = "page"
+        self.shell.strip.first()
+        self.assertTrue(self.strip_key("Enter"))
+        self.assertEqual(opened, [0], "the strip's listener does not route through the page")
 
+    def test_a_key_in_a_field_is_never_a_table_move(self) -> None:
         class Grid:
-            def __init__(self) -> None:
-                self.moves: list[str] = []
-
             def move_selection(self, action: str) -> None:
-                self.moves.append(action)
+                raise AssertionError("a keystroke in a field reached the table")
 
-        grid = Grid()
-        self.shell.pages["A"] = grid
-        field = w.field("1024", label_text="Width")
-        w.TYPING_CLAIMED(ft.ControlEvent(control=field, name="focus", data=None))
-        try:
-            self.assertFalse(self.press("Arrow Down"), "the caret owns the arrow")
-            self.assertEqual(grid.moves, [])
-        finally:
-            w.TYPING_RELEASED(ft.ControlEvent(control=field, name="blur", data=None))
-        self.assertTrue(self.press("Arrow Down"))
-        self.assertEqual(grid.moves, ["next"])
+        self.shell.pages["A"] = Grid()
+        self.assertFalse(self.press("Arrow Down"),
+                         "the page-level handler only answers Ctrl keys")
+

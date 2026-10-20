@@ -14,9 +14,9 @@ from salad_studio import flet_theme
 
 GAP = flet_theme.GAP
 
-# The window asks ``field_has_focus`` before it gives an arrow to a table: while
-# a field is focused the arrows belong to the caret. A page-level key event
-# names no source control (measured on flet 1.0.4), so the fields say it here.
+# A page-level key event names no source control on flet 1.0.4 (measured), so
+# a field cannot tell the window it has the caret. These tags record it for any
+# code that asks while a keystroke is handled.
 TYPING: set[int] = set()
 
 
@@ -28,9 +28,6 @@ def TYPING_RELEASED(e: Any) -> None:
     TYPING.discard(id(e.control))
 
 
-def field_has_focus() -> bool:
-    """True while one of the window's fields holds the keyboard."""
-    return bool(TYPING)
 
 
 def heading(text: str, colors: dict[str, str]) -> ft.Text:

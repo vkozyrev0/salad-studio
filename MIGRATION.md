@@ -36,7 +36,7 @@ Status key.
 | K3 | Enter on a navigation button opens that page. Focus marks the button. | `_build_nav_buttons` | open | |
 | K4 | Prompt Editor text: Ctrl+V, Ctrl+C, Ctrl+X, Ctrl+A, Shift+Insert. | `_editor_paste`, `_editor_copy`, `_editor_cut`, `_editor_select_all` | open | |
 | K5 | Prompt Editor: a click anywhere outside the graph hands the keyboard back. | `_on_click_outside_graph`, `_release_graph_keyboard`, `_widget_in_graph` | open | Delete with the WebView. The Flet canvas never steals focus. |
-| K6 | History strip: Return opens the thumb under the keyboard ring. | `history_strip.py` | ported | `Shell._on_key`; Enter opened ring 2 in `stripprobe2.py` |
+| K6 | History strip: Return opens the thumb under the keyboard ring. | `history_strip.py` | ported | `HistoryStrip` listener opens ring 2 in `stripprobe2.py` |
 | K7 | Wheel scrolls the page under the pointer only. Vertical and horizontal. A control that takes focus is scrolled into view. | `_scrollable_page`, `_claim_wheel`, `_on_page_wheel`, `_reveal` | open | |
 | K8 | Loras grid trees own the wheel while the pointer is over them. | `_claim_wheel_tree`, `_wheel_tree` | open | |
 

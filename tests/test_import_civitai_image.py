@@ -74,7 +74,7 @@ class ImportTabLoraManagerImage(unittest.TestCase):
         _redirect_convert_off_the_network(self)
 
     def _fetch_and_convert(self) -> None:
-        self.page.url.value = self.fixture["source"]
+        self.page.url_field.value = self.fixture["source"]
         self.page.fetch_civitai()
         self.page.convert()
 
@@ -151,7 +151,7 @@ class ImportTabCivitaiImage(unittest.TestCase):
 
     def _fetch(self) -> None:
         """Press Fetch from Civitai, served from the fixture."""
-        self.page.url.value = self.fixture["source"]
+        self.page.url_field.value = self.fixture["source"]
         self.page.fetch_civitai()
 
     def _convert(self) -> None:

@@ -27,6 +27,12 @@ PALETTE: dict[str, str] = {
     "select_bg": "#3A5C4A",
     "select_fg": "#E8DCC8",
     "border": "#3A4F63",
+    # The page area under the rail and the bar. A shade above bg so the rail and
+    # the action bar read as chrome, a shade below surface so a card still lifts.
+    "ground": "#1F2C3B",
+    # A tinted fill for the page that is open on the rail. The accent at low
+    # opacity would read as a new colour; this is the surface blended toward it.
+    "select_tint": "#4A3544",
     "button": "#2E4458",
     "button_fg": "#E8DCC8",
     "status": "#16202B",
@@ -62,6 +68,9 @@ TEXT_PAIRS: tuple[tuple[str, str], ...] = (
     ("fg_muted", "surface"),
     ("fg_muted", "surface_hi"),
     ("fg_muted", "well"),
+    ("fg_muted", "ground"),
+    ("fg", "select_tint"),
+    ("fg_muted", "select_tint"),
     ("accent", "bg"),
     ("accent", "surface"),
     ("accent_hi", "surface_hi"),

@@ -29,7 +29,8 @@ class ImportPage(Page):
         self.win = host
         self.stash: str = ""
         self._fill_token: int | None = None
-        self.url = w.field("", label_text="Civitai image URL", width=560)
+        # Named ``url_field``: ``url`` is the page column's own hyperlink field.
+        self.url_field = w.field("", label_text="Civitai image URL", width=560)
         self.meta = w.field("", label_text="Civitai generation data (prompt + Steps / CFG, or Sampler / Seed / Model)",
                              multiline=True, on_change=lambda _e: self._schedule_fill())
         self.workflow = w.field("", label_text="Comfy workflow JSON (a paste is held in memory)",
@@ -47,7 +48,7 @@ class ImportPage(Page):
         self.issues_holder = ft.Container(self.issues, expand=True)
         self.body.content = ft.Column(
             [
-                w.row([self.url, w.button("Fetch from Civitai", self.fetch_civitai, primary=True)]),
+                w.row([self.url_field, w.button("Fetch from Civitai", self.fetch_civitai, primary=True)]),
                 ft.Container(self.meta, height=150),
                 ft.Container(self.workflow, expand=True, height=220),
                 w.row([*((v) for v in self.knob.values()), self.scheduler, self.unet]),
@@ -185,7 +186,7 @@ class ImportPage(Page):
     # -- actions
 
     def fetch_civitai(self, _e: Any = None) -> None:
-        raw = str(self.url.value or "").strip() or str(self.meta.value or "").strip()
+        raw = str(self.url_field.value or "").strip() or str(self.meta.value or "").strip()
         image_id = comfy_import.ls.civitai_image_id(raw)
         if not image_id and raw.isdigit():
             image_id = raw
@@ -203,7 +204,7 @@ class ImportPage(Page):
             if isinstance(result, Exception):
                 self.host.dialog("Salad Studio", str(result), level="error")
                 return
-            self.url.value = f"https://civitai.com/images/{image_id}"
+            self.url_field.value = f"https://civitai.com/images/{image_id}"
             self.meta.value = str(result.get("metadata") or "")
             workflow = str(result.get("workflow") or "").strip()
             self.stash = workflow
@@ -215,7 +216,7 @@ class ImportPage(Page):
             tool = str(result.get("tool") or "")
             word = " (Draw Things)" if "draw things" in tool.lower() else (" (Comfy)" if workflow else "")
             self.host.note(f"Fetched {image_id}{word}", level="ok")
-            refresh(self.url, self.meta, self.workflow)
+            refresh(self.url_field, self.meta, self.workflow)
 
         self.win.services.background(work, done)
 
@@ -231,7 +232,7 @@ class ImportPage(Page):
     def convert(self, _e: Any = None) -> None:
         workflow = self.workflow_text()
         meta = str(self.meta.value or "").strip()
-        url = str(self.url.value or "").strip()
+        url = str(self.url_field.value or "").strip()
         if url and comfy_import.ls.civitai_image_id(url) and not comfy_import.ls.civitai_image_id(meta):
             meta = url + "\n" + meta
         _, raw_graph = comfy_import.split_pastes(meta, workflow)
@@ -262,7 +263,7 @@ class ImportPage(Page):
         self.stash = ""
         self.meta.value = ""
         self.workflow.value = ""
-        self.url.value = ""
+        self.url_field.value = ""
         for field in self.knob.values():
             field.value = ""
         self.scheduler.value = "Flux2 (Klein)"
@@ -270,7 +271,7 @@ class ImportPage(Page):
         self.set_issues(None)
         self.host.note("Import paste cleared", level="info")
         try:
-            for field in (self.meta, self.workflow, self.url, *self.knob.values(), self.scheduler, self.unet):
+            for field in (self.meta, self.workflow, self.url_field, *self.knob.values(), self.scheduler, self.unet):
                 field.update()
         except RuntimeError:
             return

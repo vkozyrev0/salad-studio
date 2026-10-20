@@ -15,7 +15,10 @@ from salad_studio import flet_theme, flet_widgets as w, lora_store
 from salad_studio.flet_pump import refresh
 from salad_studio.flet_shell import Page
 
-COLUMNS = ("Verified", "Id", "Name", "Version", "Model", "Source", "Comfy name")
+COLUMNS = ("Verified", "Id", "Name", "Version", "Model", "Source")
+# The Source cell carries the entry id; the full page URL is its tooltip.
+SOURCE_COLUMN = COLUMNS.index("Source")
+
 # A row's Verified cell is drawn in the verified or unverified colour, as the
 # Tk tree coloured the whole row.
 VERIFIED_COLOR = "valid"
@@ -64,7 +67,6 @@ class LorasPage(Page):
         self.refresh()
 
     def _cells(self, item: dict[str, Any]) -> list[str]:
-        src = item.get("source") or {}
         verified = bool(item.get("verified"))
         return [
             "● yes" if verified else "● no",
@@ -72,9 +74,13 @@ class LorasPage(Page):
             str(item.get("name") or ""),
             lora_store.version_label(item),
             str(item.get("base") or ""),
-            str(src.get("page") or src.get("download") or ""),
-            lora_store.comfy_lora_name(item),
+            str(item.get("id") or ""),
         ]
+
+    @staticmethod
+    def _source_page(item: dict[str, Any]) -> str:
+        src = item.get("source") or {}
+        return str(src.get("page") or src.get("download") or "")
 
     def refresh(self, rows: list[dict[str, Any]] | None = None) -> None:
         items = lora_store.list_loras() if rows is None else rows
@@ -93,6 +99,9 @@ class LorasPage(Page):
             row.cells[0].content = ft.Text(row.cells[0].content.value, size=12,
                                            color=self.colors[VERIFIED_COLOR if item.get("verified")
                                                               else UNVERIFIED_COLOR])
+            page = self._source_page(item)
+            if page:
+                row.cells[SOURCE_COLUMN].content.tooltip = page
         for column_index, column in enumerate(table.columns):
             column.on_sort = lambda _e, i=column_index: self.sort(i)
         self.table_box.content = ft.Column([table] if cells else [], scroll=ft.ScrollMode.ALWAYS,
@@ -124,6 +133,28 @@ class LorasPage(Page):
         self.strength_clip.value = str(strength_clip)
         self.refresh()
         refresh(self.ref, self.name, self.filename, self.family, self.strength_model, self.strength_clip)
+
+    def move_selection(self, action: str) -> None:
+        """Move the grid's selection: ``first``, ``last``, ``next`` or ``prev``."""
+        count = len(self.shown)
+        if not count:
+            return
+        index = next((i for i, item in enumerate(self.shown) if str(item.get("id") or "") == self.selected), None)
+        if action == "first":
+            self.select_row(0)
+        elif action == "last":
+            self.select_row(count - 1)
+        elif index is None:
+            self.select_row(0)
+        else:
+            self.select_row(min(count - 1, index + (1 if action == "next" else -1)))
+        box = self.table_box.content
+        table = next((c for c in (box.controls if box is not None else [])
+                      if isinstance(c, ft.DataTable)), None)
+        if table is not None and self.selected is not None:
+            w.reveal_row(getattr(self, "win", None), table,
+                         next(i for i, item in enumerate(self.shown)
+                              if str(item.get("id") or "") == self.selected))
 
     def _form(self) -> dict[str, Any]:
         def number(raw: str, default: float) -> float:

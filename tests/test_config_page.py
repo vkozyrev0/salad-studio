@@ -168,7 +168,7 @@ class ProfileManagement(ConfigCase):
     def test_the_page_adds_configures_and_removes_a_profile(self) -> None:
         self.assertEqual(self.listed(), ["klein", "klein5090"])
         self.page.name.value = "studio3"
-        self.page.url.value = "https://third.example.salad.cloud"
+        self.page.gateway_field.value = "https://third.example.salad.cloud"
         self.page.add_profile()
         self.assertEqual(self.listed(), ["klein", "klein5090", "studio3"], "the page lists it")
         added = self.stored("studio3")
@@ -177,7 +177,7 @@ class ProfileManagement(ConfigCase):
         self.assertEqual(profiles.get_active(), "studio3")
         self.assertEqual(self.host.last_note(), ("ok", "Added profile studio3"))
 
-        self.page.url.value = "https://configured.example.salad.cloud"
+        self.page.gateway_field.value = "https://configured.example.salad.cloud"
         self.page.save_profile()
         self.assertEqual(self.stored("studio3").gateway, "https://configured.example.salad.cloud")
 
@@ -258,12 +258,12 @@ class ProfileManagement(ConfigCase):
 
 class Target(ConfigCase):
     def test_the_target_switches_the_url_label(self) -> None:
-        self.assertEqual(self.page.url.label, "Gateway URL")
+        self.assertEqual(self.page.gateway_field.label, "Gateway URL")
         self.choose_target("vast")
-        self.assertEqual(self.page.url.label, "Instance URL")
+        self.assertEqual(self.page.gateway_field.label, "Instance URL")
         self.assertEqual(self.host.form.mode, "vast")
         self.choose_target("salad")
-        self.assertEqual(self.page.url.label, "Gateway URL")
+        self.assertEqual(self.page.gateway_field.label, "Gateway URL")
         self.assertEqual(self.host.form.mode, "salad")
 
     def test_the_target_saves_and_reloads_with_the_profile(self) -> None:
@@ -273,27 +273,27 @@ class Target(ConfigCase):
         self.choose_target("salad")
         self.choose_profile("klein")
         self.assertEqual(self.page.target.selected, ["vast"])
-        self.assertEqual(self.page.url.label, "Instance URL")
+        self.assertEqual(self.page.gateway_field.label, "Instance URL")
 
     def test_use_the_selected_instance_fills_the_url_or_says_none(self) -> None:
-        self.page.url.value = ""
+        self.page.gateway_field.value = ""
         self.page.use_selected_instance()
         self.assertEqual(self.host.last_note(), ("warn", "Refused: No vast.ai instance is selected."))
-        self.assertEqual(self.page.url.value, "")
+        self.assertEqual(self.page.gateway_field.value, "")
 
         self.page.vast_endpoint.value = "203.0.113.9:31234"
         self.page.add_vast()
         self.page.use_selected_instance()
-        self.assertEqual(self.page.url.value, "http://203.0.113.9:31234")
+        self.assertEqual(self.page.gateway_field.value, "http://203.0.113.9:31234")
         self.assertEqual(self.host.form.gateway, "http://203.0.113.9:31234")
 
     def test_use_the_selected_instance_refuses_a_row_without_an_endpoint(self) -> None:
         self.fetched({"id": 777, "label": "booting", "actual_status": "loading", "ports": None})
-        self.page.url.value = ""
+        self.page.gateway_field.value = ""
         self.page.use_selected_instance()
         self.assertEqual(self.host.last_note(), ("warn", "Refused: No vast.ai instance is selected."),
                          "a row with no address is nothing Generate can reach")
-        self.assertEqual(self.page.url.value, "")
+        self.assertEqual(self.page.gateway_field.value, "")
 
 
 class Checkpoints(ConfigCase):
@@ -361,11 +361,11 @@ class Images(ConfigCase):
         return dict(str(c.value).split("=", 1) for c in self.page.env_list.controls if "=" in str(c.value))
 
     def pick(self, tag: str) -> None:
-        self.page.image.value = tag
-        self.page.image.on_select(mock.Mock(control=self.page.image))
+        self.page.image_field.value = tag
+        self.page.image_field.on_select(mock.Mock(control=self.page.image_field))
 
     def test_both_documented_images_are_offered(self) -> None:
-        self.assertEqual(sorted(str(o.key) for o in self.page.image.options), [KLEIN_TAG, SNOFS_TAG])
+        self.assertEqual(sorted(str(o.key) for o in self.page.image_field.options), [KLEIN_TAG, SNOFS_TAG])
 
     def test_each_image_shows_its_build_command_and_its_environment(self) -> None:
         documented = {e["tag"]: e for e in image_deploy.entries(self.document(), {})}
@@ -574,7 +574,7 @@ class SaladGroup(ConfigCase):
 
     def test_a_new_profile_shows_the_documents_policy_for_its_family(self) -> None:
         self.page.name.value = "studio3"
-        self.page.url.value = "https://third.example.salad.cloud"
+        self.page.gateway_field.value = "https://third.example.salad.cloud"
         self.page.add_profile()
         stored = self.stored("studio3").policy
         self.assertEqual(stored["image"], studio_meta.image_for_family("klein", self.document()))
@@ -769,13 +769,13 @@ class VastInstances(ConfigCase):
         self.assertEqual(profiles.get_active(), name)
         self.assertIn(name, self.listed(), "the created profile is on the page")
         self.assertEqual(self.page.target.selected, ["vast"])
-        self.assertEqual(self.page.url.label, "Instance URL")
+        self.assertEqual(self.page.gateway_field.label, "Instance URL")
 
     def test_set_image_records_which_image_a_row_runs(self) -> None:
         self.add("203.0.113.9:31234")
         self.add("198.51.100.7:40111")
         for index, tag in ((0, SNOFS_TAG), (1, KLEIN_TAG)):
-            self.page.image.value = tag
+            self.page.image_field.value = tag
             self.page.select_vast(index)
             self.page.set_vast_image()
         self.assertEqual([row["image"] for row in vast.load_doc()["instances"]], [SNOFS_TAG, KLEIN_TAG])
@@ -822,7 +822,7 @@ class VastOffers(ConfigCase):
                    "row": {"endpoint": "http://203.0.113.55:40111", "id": 777,
                            "label": "salad-studio-55818626", "gpu": "RTX 5090", "state": "running"},
                    "message": "created instance 777 at http://203.0.113.55:40111"}
-        self.page.image.value = KLEIN_TAG
+        self.page.image_field.value = KLEIN_TAG
         with mock.patch.object(vast, "rent_offer", return_value=created) as rent:
             self.page.rent_offer()
             question = self.host.asks[0][1]

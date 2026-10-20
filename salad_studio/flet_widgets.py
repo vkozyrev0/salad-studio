@@ -14,6 +14,24 @@ from salad_studio import flet_theme
 
 GAP = flet_theme.GAP
 
+# The window asks ``field_has_focus`` before it gives an arrow to a table: while
+# a field is focused the arrows belong to the caret. A page-level key event
+# names no source control (measured on flet 1.0.4), so the fields say it here.
+TYPING: set[int] = set()
+
+
+def TYPING_CLAIMED(e: Any) -> None:
+    TYPING.add(id(e.control))
+
+
+def TYPING_RELEASED(e: Any) -> None:
+    TYPING.discard(id(e.control))
+
+
+def field_has_focus() -> bool:
+    """True while one of the window's fields holds the keyboard."""
+    return bool(TYPING)
+
 
 def heading(text: str, colors: dict[str, str]) -> ft.Text:
     return ft.Text(text, size=13, weight=ft.FontWeight.W_600, color=colors["muted"])
@@ -56,8 +74,15 @@ def field(
         can_reveal_password=can_reveal,
         on_change=on_change,
         on_submit=on_submit,
+        on_focus=TYPING_CLAIMED,
+        on_blur=TYPING_RELEASED,
         border_radius=flet_theme.CONTROL_RADIUS,
-        content_padding=ft.Padding.symmetric(horizontal=10, vertical=8),
+        # No top padding: flet 1.0.4 seats the floating label's baseline at the
+        # content's top edge, so any top pad cuts the label's caps.
+        content_padding=ft.Padding.only(left=10, top=0, right=10, bottom=8),
+        # The label scales with the field's text size; at 13 its caps are
+        # taller than the notch.
+        label_style=ft.TextStyle(size=12),
     )
 
 
@@ -77,14 +102,28 @@ def combo(
         text_size=13,
         options=[ft.DropdownOption(text=str(o), key=str(o)) for o in options],
         on_select=on_change,
+        on_focus=TYPING_CLAIMED,
+        on_blur=TYPING_RELEASED,
         border_radius=flet_theme.CONTROL_RADIUS,
     )
 
 
 def button(text: str, on_click: Callable[[Any], Any] | None = None, *, primary: bool = False,
            icon: Any = None, tooltip: str = "") -> ft.Control:
-    cls = ft.Button if primary else ft.OutlinedButton
-    return cls(text, on_click=on_click, icon=icon, tooltip=tooltip or None)
+    """A bar or page button. Only the window's Generate wears the rose.
+
+    A primary Button with no ``bgcolor`` of its own paints as an empty pill on
+    flet 1.0.4 (measured); ``accent_button`` sets the fill and its ink.
+    """
+    kind = ft.Button if primary else ft.OutlinedButton
+    return kind(text, on_click=on_click, icon=icon, tooltip=tooltip or None)
+
+
+def accent_button(text: str, on_click: Callable[[Any], Any] | None = None, *,
+                  colors: dict[str, str], icon: Any = None, tooltip: str = "") -> ft.Button:
+    """The rose fill of a primary action, painted from the palette."""
+    return ft.Button(text, on_click=on_click, icon=icon, tooltip=tooltip or None,
+                     bgcolor=colors["accent"], color=colors["on_primary"])
 
 
 def flat(text: str, on_click: Callable[[Any], Any], *, tooltip: str = "") -> ft.TextButton:
@@ -143,9 +182,9 @@ def table(
         rows=data_rows,
         heading_row_height=heading_height,
         data_row_min_height=28,
-        data_row_max_height=34,
-        horizontal_margin=8,
-        column_spacing=12,
+        data_row_max_height=40,
+        horizontal_margin=4,
+        column_spacing=8,
         border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT),
         border_radius=flet_theme.CONTROL_RADIUS,
     )
@@ -172,3 +211,25 @@ def split(pairs: list[tuple[str, ft.Control]], *, label_width: int = 150) -> ft.
         spacing=GAP["xs"],
         tight=True,
     )
+
+
+def reveal_row(window: Any, table: ft.DataTable, index: int) -> None:
+    """Scroll ``table`` so row ``index`` is in view, a heading above it.
+
+    A long table scrolls inside its own height; a selection moved by the keyboard
+    would otherwise run off the bottom unseen. Nothing happens without a frame
+    loop and a page to schedule the coroutine on, as in a test.
+    """
+    if getattr(window, "pump", None) is None or not hasattr(getattr(window, "page", None), "run_task"):
+        return
+    heading = abs(table.heading_row_height or 36)
+    row = max(0, abs(table.data_row_max_height or 34) - 4)
+    offset = max(0, heading + index * row - row)
+
+    async def scroll() -> None:
+        try:
+            await table.scroll_to(offset=offset, duration=100)
+        except (RuntimeError, AttributeError):
+            return
+
+    window.pump.schedule(lambda: window.page.run_task(scroll))

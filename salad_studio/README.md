@@ -3,12 +3,15 @@
 Windows helper for SaladCloud ComfyUI image generation and preview, separate
 from `eldermark`. Run `python -m salad_studio`.
 
-**Top action bar**: Generate, live status every 2 s, and ready (green), starting
-(amber) and not-started (red) container counts; a press during a render queues.
-**Left tabs, in order**: (**Config**, **Prompt Settings**, **Tokens**, **LoRAs**,
-**Prompt Editor**, **Prompt Assist**, **Prompt Catalog**, **Import**,
-**Prompt History**, **Queue**, **Logs**). **Bottom**: history strip, tall button
-each side.
+**Top action bar**: a rose **Generate**, live status every 2 s, and ready
+(green), starting (amber) and not-started (red) container counts in one recessed
+panel; a press during a render queues.
+**Left tabs**, numbered under a `PAGES` label, in order: (**Config**, **Prompt Settings**, **Tokens**, **LoRAs**, **Prompt Editor**, **Prompt Assist**, **Prompt Catalog**, **Import**, **Prompt History**, **Queue**, **Logs**). Each
+page opens on a title capsule carrying that same number. **Bottom**: status
+line, then the history strip with a tall button each side. The strip's thumb is
+ringed after a click there or after the first arrow press; Left and Right walk
+the ring, Home and End take its ends, and Enter opens the ringed plate. While
+the page holds the keys, the arrows move the selected row of its table.
 
 - **Config**. Sub-tabs in order: **Profile**, **Images**, **Salad group**,
   **Vast.ai**; each scrolls alone.
@@ -323,7 +326,7 @@ the root [`README.md`](../README.md) (Configuration, Known limitations).
 Run the commands separately:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1180 tests, ~40 s
+python -m unittest discover -s tests -p "test_*.py"    # 1189 tests, ~40 s
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```

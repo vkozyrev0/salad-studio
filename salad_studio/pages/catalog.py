@@ -11,6 +11,15 @@ from salad_studio.flet_shell import Page
 
 COLUMNS = ("Added", "Short name", "Description", "Prompt", "Graph")
 EMPTY_TEXT = "No kept prompts yet. Give one a short name and copy it from the Prompt Editor."
+# In the scrolling table the stats line wraps, so it shows its head: nodes,
+# LoRAs and size are what tell entries apart.
+STATS_SEPARATOR = "\u00b7"
+
+
+def _graph_stats(stats: str) -> str:
+    """An entry's stats up to its shape: nodes, LoRAs and the size."""
+    parts = [part.strip() for part in str(stats or "").split(STATS_SEPARATOR)]
+    return f" {STATS_SEPARATOR} ".join(parts[:3])
 
 
 class CatalogPage(Page):
@@ -52,7 +61,7 @@ class CatalogPage(Page):
                 str(entry.get("name") or ""),
                 str(entry.get("description") or ""),
                 prompt_history.preview(prompt_history.prompt_text_of(request)),
-                prompt_catalog.entry_stats(entry),
+                _graph_stats(prompt_catalog.entry_stats(entry)),
             ])
         index = next((i for i, e in enumerate(self.entries) if str(e.get("id")) == self.selected), None)
         self.table_holder.controls = (
@@ -79,6 +88,26 @@ class CatalogPage(Page):
             self.description.update()
         except RuntimeError:
             return
+
+    def move_selection(self, action: str) -> None:
+        """Move the grid's selection: ``first``, ``last``, ``next`` or ``prev``."""
+        count = len(self.entries)
+        if not count:
+            return
+        index = next((i for i, entry in enumerate(self.entries) if str(entry.get("id") or "") == self.selected), None)
+        if action == "first":
+            self.select_row(0)
+        elif action == "last":
+            self.select_row(count - 1)
+        elif index is None:
+            self.select_row(0)
+        else:
+            self.select_row(min(count - 1, index + (1 if action == "next" else -1)))
+        table = next((c for c in self.table_holder.controls if isinstance(c, ft.DataTable)), None)
+        if table is not None and self.selected is not None:
+            w.reveal_row(getattr(self, "win", None), table,
+                         next(i for i, e in enumerate(self.entries)
+                              if str(e.get("id") or "") == self.selected))
 
     def _editor_payload(self) -> dict[str, Any] | None:
         editor = self.win.shell.pages.get("Prompt Editor")

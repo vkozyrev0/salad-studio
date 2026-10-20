@@ -189,10 +189,6 @@ class Window:
         self.shell.focus = "page"
         return self.shell.pages.get(name)
 
-    def _claim_strip(self, _e: Any = None) -> None:
-        """A click on the strip hands its thumbs the arrow keys and Enter."""
-        self.shell.focus = "strip"
-
     def add_action(self, control: ft.Control) -> None:
         """Put a control in the action bar. Safe before the window has painted."""
         self.shell.action_bar.controls.append(control)
@@ -403,6 +399,15 @@ class Window:
             allp = {p.name: p}
         active = profiles.get_active() or sorted(allp)[0]
         self.apply_profile(allp.get(active) or profiles.default_profile("klein"))
+
+    def _table_key(self, e: ft.KeyDownEvent) -> None:
+        """The page holds the keyboard: arrows, Home and End move its table, Enter does nothing."""
+        if self.shell.focus != "page":
+            return
+        data = getattr(e, "data", None)
+        if isinstance(data, dict) and (data.get("ctrl") or data.get("alt") or data.get("meta")):
+            return
+        self.shell._table_key(e)
 
     def ensure_page(self, name: str) -> Any:
         """Build a page without showing it. It lands on the client with the

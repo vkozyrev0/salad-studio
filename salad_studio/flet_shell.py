@@ -16,7 +16,6 @@ from typing import Any, Callable, Protocol
 import flet as ft
 
 from salad_studio import flet_theme
-from salad_studio import flet_widgets
 from salad_studio.flet_pump import refresh
 
 TAB_ORDER: tuple[str, ...] = (
@@ -160,6 +159,15 @@ class HistoryStrip(ft.Container):
         # 1.0.4), and an empty one then draws a dark block above the strip. It
         # is given its height, and it stays out of the tree until a plate exists.
         self.list = ft.ListView(horizontal=True, spacing=6, height=STRIP_HEIGHT - 32, visible=False)
+        self.listener: Any = None
+        self.row = ft.Row(
+            [
+                ft.TextButton("◀", on_click=lambda _e: self.scroll(-3), tooltip="Older"),
+                ft.Stack([self.list, self.empty], expand=True),
+                ft.TextButton("▶", on_click=lambda _e: self.scroll(3), tooltip="Newer"),
+            ],
+            spacing=flet_theme.GAP["sm"],
+        )
         # The strip is the window's last band of chrome, like the bar at the top;
         # its contents carry the pad, so the band meets the edges.
         super().__init__(
@@ -169,15 +177,14 @@ class HistoryStrip(ft.Container):
             padding=ft.Padding.only(left=flet_theme.GAP["lg"], right=flet_theme.GAP["lg"],
                                     top=flet_theme.GAP["xs"], bottom=flet_theme.GAP["xs"]),
             on_click=self.claim,
-            content=ft.Row(
-                [
-                    ft.TextButton("◀", on_click=lambda _e: self.scroll(-3), tooltip="Older"),
-                    ft.Stack([self.list, self.empty], expand=True),
-                    ft.TextButton("▶", on_click=lambda _e: self.scroll(3), tooltip="Newer"),
-                ],
-                spacing=flet_theme.GAP["sm"],
-            ),
+            content=self.row,
         )
+        self.listener = ft.KeyboardListener(content=self.row, on_key_down=self._report_strip_key)
+
+    def claim(self, _e: Any = None) -> None:
+        """A click on the strip hands it the keyboard, so the arrows walk its ring."""
+        self.owner.focus = "strip"
+        self.owner._focus(self.listener)
 
     def scroll(self, delta: int) -> None:
         """Move a few thumbnails. The offset is kept here: flet's ListView reports none."""
@@ -206,6 +213,9 @@ class HistoryStrip(ft.Container):
         self.empty.visible = not thumbs
         self.list.visible = bool(thumbs)
 
+    def _report_strip_key(self, e: ft.KeyDownEvent) -> None:
+        self.owner._strip_key(e)
+
     def _click(self, index: int, open_index: Callable[[int], None]) -> None:
         self.mark(index)
         open_index(index)
@@ -227,10 +237,6 @@ class HistoryStrip(ft.Container):
 
     def last(self) -> None:
         self.mark(len(self.list.controls) - 1)
-
-    def claim(self, _e: Any = None) -> None:
-        """A click on the strip hands its thumbs the arrow keys and Enter."""
-        self.owner.focus = "strip"
 
     def open_ringed(self) -> None:
         if self.ring is not None and 0 <= self.ring < len(self.list.controls):
@@ -284,8 +290,13 @@ class Shell(ft.Column):
         # a page swapped into a tight column is laid out at zero height and the
         # pane paints blank (measured on flet 1.0.4).
         self.body_column = ft.Column([], expand=True)
+        # The page sits in its own listener, so its table hears keys only while
+        # the page holds the keyboard.
         self.body = ft.Container(
             content=self.body_column, expand=True, padding=ft.Padding.only(top=flet_theme.GAP["xs"]))
+        self.body_listener = ft.KeyboardListener(
+            content=self.body,
+            on_key_down=lambda e: self.window._table_key(e) if self.window is not None else None)
         self.buttons: dict[str, RailButton] = {}
         self.rail = ft.Column(spacing=2, scroll=ft.ScrollMode.AUTO)
         self.pane = ft.Column([self.body], expand=True, tight=True, spacing=flet_theme.GAP["sm"])
@@ -321,6 +332,7 @@ class Shell(ft.Column):
         # A container, so the page area owns its own ground and pad.
         self.page_area = ft.Container(
             content=self.pane,
+            on_click=self._claim_page,
             expand=True,
             bgcolor=self.colors["page"],
             padding=ft.Padding.only(left=flet_theme.GAP["lg"], right=flet_theme.GAP["lg"],
@@ -359,46 +371,59 @@ class Shell(ft.Column):
         self.focus = "page"
         self.body_column.controls.clear()
         self.body_column.controls.append(self.pages[name])
+        self._focus(self.body_listener)
         for label, button in self.buttons.items():
             button.mark(label == name)
         if refresh_now:
             refresh(self.body)
         return self.pages[name]
 
-    def _on_key(self, e: ft.KeyboardEvent) -> bool:
-        """Route one key press. True when the window used it.
+    def _focus(self, control: Any) -> None:
+        """Hand the keyboard to ``control``, once the client has it on screen."""
+        window = self.window
+        if getattr(window, "pump", None) is None or not hasattr(getattr(window, "page", None), "run_task"):
+            return
+        window.pump.schedule(lambda: window.page.run_task(control.focus))
 
-        Ctrl+Tab, Ctrl+PgUp/PgDn and Ctrl+digit switch pages from anywhere.
-        Without Ctrl the keys belong to the focused place: arrows move the open
-        page's table selection or the strip's ring, Home and End jump, and
-        Enter opens the ringed plate.
+    def _claim_page(self, _e: Any = None) -> None:
+        """A click in the page hands the keyboard back from the strip to the page."""
+        self.focus = "page"
+        self._focus(self.body_listener)
+
+    def _on_key(self, e: ft.KeyboardEvent) -> bool:
+        """The page-level keys: Ctrl+Tab, Ctrl+PgUp/PgDn and Ctrl+digit move between pages.
+
+        Every other key arrives through the listener of the element that holds
+        the keyboard, so a keystroke in a field is never read as a table move.
         """
-        if e.ctrl:
-            return apply_shortcut(self, e)
+        return apply_shortcut(self, e) if e.ctrl else False
+
+    def _table_key(self, e: ft.KeyDownEvent) -> bool:
+        """One key from the page's listener: arrows and Home/End move its table's selection."""
         action = action_for(key_name(e))
-        if action is None:
-            return False
-        if self.focus == "strip":
-            if action == "enter":
-                self.strip.open_ringed()
-            elif action == "home":
-                self.strip.first()
-            elif action == "end":
-                self.strip.last()
-            elif action in ("up", "left", "down", "right"):
-                self.strip.step(-1 if action in ("up", "left") else 1)
-            else:
-                return False
-            return True
         page = self.pages.get(self.current)
-        if (action == "enter" or page is None or flet_widgets.field_has_focus()
-                or not hasattr(page, "move_selection")):
+        if page is None or not hasattr(page, "move_selection"):
             return False
         moves = {"up": "prev", "left": "prev", "down": "next", "right": "next",
                  "home": "first", "end": "last"}
         if action not in moves:
             return False
         page.move_selection(moves[action])
+        return True
+
+    def _strip_key(self, e: ft.KeyDownEvent) -> bool:
+        """One key from the strip's listener: arrows walk its ring, Home and End take its ends, Enter opens."""
+        action = action_for(key_name(e))
+        if action == "enter":
+            self.strip.open_ringed()
+        elif action == "home":
+            self.strip.first()
+        elif action == "end":
+            self.strip.last()
+        elif action in ("up", "left", "down", "right"):
+            self.strip.step(-1 if action in ("up", "left") else 1)
+        else:
+            return False
         return True
 
     def scroll_strip(self, offset: float) -> None:

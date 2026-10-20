@@ -31,7 +31,7 @@ from salad_studio import desktop, flet_theme, flet_widgets as w, image_deploy, l
 from salad_studio.flet_pump import Pump, refresh
 from salad_studio.flet_pages import Form, page as build_page
 from salad_studio.flet_services import STRIP_COLORS, AppServices
-from salad_studio.flet_shell import PageSpec, Shell, TAB_ORDER, apply_shortcut
+from salad_studio.flet_shell import PageSpec, Shell, TAB_ORDER
 
 DEFAULT_WIDTH = 1180
 DEFAULT_HEIGHT = 720
@@ -186,7 +186,12 @@ class Window:
         """Open a page and return it, for a page that hands its result to another."""
         self.ensure_page(name)
         self.shell.open(name)
+        self.shell.focus = "page"
         return self.shell.pages.get(name)
+
+    def _claim_strip(self, _e: Any = None) -> None:
+        """A click on the strip hands its thumbs the arrow keys and Enter."""
+        self.shell.focus = "strip"
 
     def add_action(self, control: ft.Control) -> None:
         """Put a control in the action bar. Safe before the window has painted."""
@@ -198,27 +203,35 @@ class Window:
     def build_action_bar(self) -> None:
         shell = self.shell
         self.gen_button = w.accent_button("Generate", lambda _e: self.generate(), colors=shell.colors)
-        self.gen_state = ft.Text("Idle", size=12, color=shell.colors["on_surface"])
+        self.gen_state = ft.Text("Idle", size=12, color=shell.colors["muted"])
         self.strip_dots: list[ft.Text] = []
         self.strip_counts: list[ft.Text] = []
         segments: list[ft.Control] = []
         for index, color in enumerate(STRIP_COLORS):
             if index:
-                segments.append(ft.Text("|", size=12, color=shell.colors["muted"]))
+                segments.append(ft.Text("|", size=12, color=shell.colors["outline"]))
             dot = ft.Text("\u25cf", size=12, color=color)
-            count = ft.Text("0", size=14, color=shell.colors["on_surface"])
+            count = ft.Text("0", size=13, weight=ft.FontWeight.W_600,
+                            color=shell.colors["on_surface"])
             self.strip_dots.append(dot)
             self.strip_counts.append(count)
             segments.extend([dot, count])
         self.salad_label = ft.Text("…", size=12, color=shell.colors["muted"])
         self.check_button = w.button("Check Salad status", lambda _e: self.services.check_salad())
+        self.replicas = ft.Container(
+            content=ft.Row([self.salad_label, *segments], spacing=flet_theme.GAP["sm"]),
+            bgcolor=shell.colors["surface_container"],
+            border=ft.Border.all(1, shell.colors["outline"]),
+            border_radius=flet_theme.CONTROL_RADIUS,
+            padding=ft.Padding.symmetric(horizontal=flet_theme.GAP["md"],
+                                         vertical=flet_theme.GAP["xs"]),
+        )
         shell.action_bar.controls = [
             self.gen_button,
-            w.button("Clean gallery", self.clean_gallery),
+            ft.TextButton("Clean gallery", on_click=self.clean_gallery),
             self.gen_state,
             ft.Container(expand=True),
-            self.salad_label,
-            *segments,
+            self.replicas,
             self.check_button,
         ]
         self.refresh_strip()
@@ -443,7 +456,7 @@ def build(page: ft.Page, *, dark: bool = True, show: bool = True,
     shell = Shell(specs, dark=dark)
     window = Window(page, pump, shell, show=show)
     shell.window = window
-    page.on_keyboard_event = lambda e: apply_shortcut(shell, e)
+    page.on_keyboard_event = shell._on_key
     window.build_action_bar()
     window.load_profiles()
     window.shell.strip.on_open = window._open_plate

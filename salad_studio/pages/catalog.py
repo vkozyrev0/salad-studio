@@ -89,6 +89,26 @@ class CatalogPage(Page):
         except RuntimeError:
             return
 
+    def move_selection(self, action: str) -> None:
+        """Move the grid's selection: ``first``, ``last``, ``next`` or ``prev``."""
+        count = len(self.entries)
+        if not count:
+            return
+        index = next((i for i, entry in enumerate(self.entries) if str(entry.get("id") or "") == self.selected), None)
+        if action == "first":
+            self.select_row(0)
+        elif action == "last":
+            self.select_row(count - 1)
+        elif index is None:
+            self.select_row(0)
+        else:
+            self.select_row(min(count - 1, index + (1 if action == "next" else -1)))
+        table = next((c for c in self.table_holder.controls if isinstance(c, ft.DataTable)), None)
+        if table is not None and self.selected is not None:
+            w.reveal_row(getattr(self, "win", None), table,
+                         next(i for i, e in enumerate(self.entries)
+                              if str(e.get("id") or "") == self.selected))
+
     def _editor_payload(self) -> dict[str, Any] | None:
         editor = self.win.shell.pages.get("Prompt Editor")
         if editor is None:

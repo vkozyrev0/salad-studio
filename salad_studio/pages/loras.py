@@ -134,6 +134,28 @@ class LorasPage(Page):
         self.refresh()
         refresh(self.ref, self.name, self.filename, self.family, self.strength_model, self.strength_clip)
 
+    def move_selection(self, action: str) -> None:
+        """Move the grid's selection: ``first``, ``last``, ``next`` or ``prev``."""
+        count = len(self.shown)
+        if not count:
+            return
+        index = next((i for i, item in enumerate(self.shown) if str(item.get("id") or "") == self.selected), None)
+        if action == "first":
+            self.select_row(0)
+        elif action == "last":
+            self.select_row(count - 1)
+        elif index is None:
+            self.select_row(0)
+        else:
+            self.select_row(min(count - 1, index + (1 if action == "next" else -1)))
+        box = self.table_box.content
+        table = next((c for c in (box.controls if box is not None else [])
+                      if isinstance(c, ft.DataTable)), None)
+        if table is not None and self.selected is not None:
+            w.reveal_row(getattr(self, "win", None), table,
+                         next(i for i, item in enumerate(self.shown)
+                              if str(item.get("id") or "") == self.selected))
+
     def _form(self) -> dict[str, Any]:
         def number(raw: str, default: float) -> float:
             try:

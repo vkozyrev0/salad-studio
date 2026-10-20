@@ -22,7 +22,7 @@ Status key.
 | W6 | Top action bar. Generate button, live status word every 2 s, and scaled replica counts: ready (green), starting (amber), not started (red). `_stars` draws the scale. | `_build_action_bar`, `_build_replica_cluster`, `_refresh_replica_strip`, `_fill_strip` | open | |
 | W7 | Generate pressed during a render queues the request rather than being dropped. | `_on_generate`, `salad_queue` | open | |
 | W8 | Left navigation, 11 pages in order: Config, Prompt Settings, Tokens, LoRAs, Prompt Editor, Prompt Assist, Prompt Catalog, Import, Prompt History, Queue, Logs. The focused item is marked. | `TAB_ORDER`, `_build_nav_buttons`, `_refresh_nav`, `_on_nav_focus` | ported | |
-| W9 | Bottom history strip with a tall button on each side. Thumbnails open on click, the keyboard ring shows the current thumb, wheel scrolls, empty state reads "No plates yet. A finished render appears here." | `history_strip.py`, `_refresh_history`, `_open_path` | open | |
+| W9 | Bottom history strip with a tall button on each side. Thumbnails open on click, the keyboard ring shows the current thumb, wheel scrolls, empty state reads "No plates yet. A finished render appears here." | `history_strip.py`, `_refresh_history`, `_open_path` | ported | Ring and Enter verified live; click and empty state by `test_history_strip.py`; the wheel is not driven yet |
 | W10 | Per-page note line under each page heading. Levels info, warn, error. | `_build_page_notes`, `_note`, `_page_note_hosts` | ported | |
 | W11 | Global status line. Every refusal writes both the status line and a dialog. | `self.status`, every `_on_*` action | ported | |
 | W12 | Discouraged-clean-gallery action: confirm dialog, deletes plates on disk and clears thumbs. | `_on_clean_gallery` | open | |
@@ -36,7 +36,7 @@ Status key.
 | K3 | Enter on a navigation button opens that page. Focus marks the button. | `_build_nav_buttons` | open | |
 | K4 | Prompt Editor text: Ctrl+V, Ctrl+C, Ctrl+X, Ctrl+A, Shift+Insert. | `_editor_paste`, `_editor_copy`, `_editor_cut`, `_editor_select_all` | open | |
 | K5 | Prompt Editor: a click anywhere outside the graph hands the keyboard back. | `_on_click_outside_graph`, `_release_graph_keyboard`, `_widget_in_graph` | open | Delete with the WebView. The Flet canvas never steals focus. |
-| K6 | History strip: Return opens the thumb under the keyboard ring. | `history_strip.py` | open | |
+| K6 | History strip: Return opens the thumb under the keyboard ring. | `history_strip.py` | ported | `Shell._on_key`; Enter opened ring 2 in `stripprobe2.py` |
 | K7 | Wheel scrolls the page under the pointer only. Vertical and horizontal. A control that takes focus is scrolled into view. | `_scrollable_page`, `_claim_wheel`, `_on_page_wheel`, `_reveal` | open | |
 | K8 | Loras grid trees own the wheel while the pointer is over them. | `_claim_wheel_tree`, `_wheel_tree` | open | |
 

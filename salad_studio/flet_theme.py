@@ -13,6 +13,8 @@ from salad_studio.theme import PALETTE, SPACE, contrast
 
 DARK = {
     "surface": PALETTE["bg"],
+    "surface_dim": PALETTE["bg"],
+    "surface_bright": PALETTE["ground"],
     "surface_container_low": PALETTE["status"],
     "surface_container": PALETTE["surface"],
     "surface_container_high": PALETTE["surface_hi"],
@@ -20,9 +22,12 @@ DARK = {
     "on_surface": PALETTE["fg"],
     "on_surface_variant": PALETTE["fg_muted"],
     "primary": PALETTE["accent"],
+    # A primary fill is the rose with the chrome's own ink on it: black text on
+    # a light rose reads as a button, not as disabled text. accent_hi is too
+    # close to accent to be a container.
     "on_primary": PALETTE["accent_fg"],
-    "primary_container": PALETTE["accent_hi"],
-    "on_primary_container": PALETTE["accent_fg"],
+    "primary_container": PALETTE["select_tint"],
+    "on_primary_container": PALETTE["fg"],
     "secondary": PALETTE["select_bg"],
     "on_secondary": PALETTE["select_fg"],
     "secondary_container": PALETTE["surface_hi"],
@@ -38,6 +43,7 @@ DARK = {
 
 LIGHT = {
     "surface": "#F6F2EA",
+    "surface_bright": "#FBF8F2",
     "surface_container_low": "#FFFFFF",
     "surface_container": "#EFE8DC",
     "surface_container_high": "#E6DDCE",
@@ -103,10 +109,31 @@ def _typography(roles: dict[str, str]) -> dict[str, ft.TextStyle]:
     }
 
 
+# The title capsule. A condensed heavy face at display size does more than a
+# bigger weight of the body face: the title reads as a masthead, and the
+# number beside it as a plate number. Bahnschrift ships with Windows; the
+# fallbacks print the same words if it is ever missing.
+TITLE_STYLE = dict(size=30, weight=ft.FontWeight.W_800, font_family="Bahnschrift",
+                   font_family_fallback=["Segoe UI Semibold", "Segoe UI"])
+PLATE_STYLE = dict(size=26, weight=ft.FontWeight.W_600, font_family="Consolas",
+                   font_family_fallback=["Courier New"])
+
+
+def title_type(roles: dict[str, str]) -> ft.TextStyle:
+    """The page name on its capsule: heavy, condensed, the ink of the page."""
+    return ft.TextStyle(color=roles["on_surface"], height=1.1, **TITLE_STYLE)
+
+
+def plate_type(roles: dict[str, str]) -> ft.TextStyle:
+    """The page's number: the rose, monospaced, so numbers of equal width align."""
+    return ft.TextStyle(color=roles["accent"], height=1.0, **PLATE_STYLE)
+
+
 def _theme(roles: dict[str, str], canvas: dict[str, str], _dark: bool) -> ft.Theme:
     return ft.Theme(
         color_scheme=_scheme(roles),
-        canvas_color=canvas["well"],
+        # The canvas is the page area, not the ink: the rail and bar keep bg.
+        canvas_color=roles["surface_bright"],
         use_material3=True,
         font_family="Segoe UI",
         text_theme=ft.TextTheme(body_medium=_typography(roles)["body"]),
@@ -117,6 +144,12 @@ def _theme(roles: dict[str, str], canvas: dict[str, str], _dark: bool) -> ft.The
             margin=0,
         ),
         divider_theme=ft.DividerTheme(color=roles["outline_variant"], thickness=1),
+        # The bar at the foot of the window is a bar to Flet, and Flet paints a
+        # bar with the primary colour unless told otherwise. It is chrome.
+        bottom_appbar_theme=ft.BottomAppBarTheme(
+            bgcolor=roles["surface"],
+            elevation=0,
+        ),
         scrollbar_theme=ft.ScrollbarTheme(
             thumb_color={ft.ControlState.DEFAULT: roles["outline"]},
             track_color={ft.ControlState.DEFAULT: "transparent"},
@@ -143,8 +176,11 @@ def _control_colors(roles: dict[str, str]) -> dict[str, str]:
     return {
         "on_surface": roles["on_surface"],
         "muted": roles["on_surface_variant"],
+        "chrome": roles["surface"],
+        "page": roles["surface_bright"],
         "primary_container": roles["primary_container"],
         "on_primary_container": roles["on_primary_container"],
+        "on_primary": roles["on_primary"],
         "surface_container": roles["surface_container"],
         "outline": roles["outline"],
         "error": roles["error"],

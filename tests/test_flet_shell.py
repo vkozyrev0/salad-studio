@@ -239,3 +239,25 @@ class Keyboard(unittest.TestCase):
         self.shell.focus = "strip"
         self.shell.open("B")
         self.assertEqual(self.shell.focus, "page", "opening a page hands the keys back to it")
+
+    def test_an_arrow_in_a_field_leaves_the_table_alone(self) -> None:
+        from salad_studio import flet_widgets as w
+
+        class Grid:
+            def __init__(self) -> None:
+                self.moves: list[str] = []
+
+            def move_selection(self, action: str) -> None:
+                self.moves.append(action)
+
+        grid = Grid()
+        self.shell.pages["A"] = grid
+        field = w.field("1024", label_text="Width")
+        w.TYPING_CLAIMED(ft.ControlEvent(control=field, name="focus", data=None))
+        try:
+            self.assertFalse(self.press("Arrow Down"), "the caret owns the arrow")
+            self.assertEqual(grid.moves, [])
+        finally:
+            w.TYPING_RELEASED(ft.ControlEvent(control=field, name="blur", data=None))
+        self.assertTrue(self.press("Arrow Down"))
+        self.assertEqual(grid.moves, ["next"])

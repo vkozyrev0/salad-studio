@@ -14,6 +14,24 @@ from salad_studio import flet_theme
 
 GAP = flet_theme.GAP
 
+# The window asks ``field_has_focus`` before it gives an arrow to a table: while
+# a field is focused the arrows belong to the caret. A page-level key event
+# names no source control (measured on flet 1.0.4), so the fields say it here.
+TYPING: set[int] = set()
+
+
+def TYPING_CLAIMED(e: Any) -> None:
+    TYPING.add(id(e.control))
+
+
+def TYPING_RELEASED(e: Any) -> None:
+    TYPING.discard(id(e.control))
+
+
+def field_has_focus() -> bool:
+    """True while one of the window's fields holds the keyboard."""
+    return bool(TYPING)
+
 
 def heading(text: str, colors: dict[str, str]) -> ft.Text:
     return ft.Text(text, size=13, weight=ft.FontWeight.W_600, color=colors["muted"])
@@ -56,6 +74,8 @@ def field(
         can_reveal_password=can_reveal,
         on_change=on_change,
         on_submit=on_submit,
+        on_focus=TYPING_CLAIMED,
+        on_blur=TYPING_RELEASED,
         border_radius=flet_theme.CONTROL_RADIUS,
         # No top padding: flet 1.0.4 seats the floating label's baseline at the
         # content's top edge, so any top pad cuts the label's caps.
@@ -82,6 +102,8 @@ def combo(
         text_size=13,
         options=[ft.DropdownOption(text=str(o), key=str(o)) for o in options],
         on_select=on_change,
+        on_focus=TYPING_CLAIMED,
+        on_blur=TYPING_RELEASED,
         border_radius=flet_theme.CONTROL_RADIUS,
     )
 

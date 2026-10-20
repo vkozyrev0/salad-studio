@@ -16,6 +16,7 @@ from typing import Any, Callable, Protocol
 import flet as ft
 
 from salad_studio import flet_theme
+from salad_studio import flet_widgets
 from salad_studio.flet_pump import refresh
 
 TAB_ORDER: tuple[str, ...] = (
@@ -390,7 +391,8 @@ class Shell(ft.Column):
                 return False
             return True
         page = self.pages.get(self.current)
-        if action == "enter" or page is None or not hasattr(page, "move_selection"):
+        if (action == "enter" or page is None or flet_widgets.field_has_focus()
+                or not hasattr(page, "move_selection")):
             return False
         moves = {"up": "prev", "left": "prev", "down": "next", "right": "next",
                  "home": "first", "end": "last"}

@@ -57,7 +57,12 @@ def field(
         on_change=on_change,
         on_submit=on_submit,
         border_radius=flet_theme.CONTROL_RADIUS,
-        content_padding=ft.Padding.symmetric(horizontal=10, vertical=8),
+        # No top padding: flet 1.0.4 seats the floating label's baseline at the
+        # content's top edge, so any top pad cuts the label's caps.
+        content_padding=ft.Padding.only(left=10, top=0, right=10, bottom=8),
+        # The label scales with the field's text size; at 13 its caps are
+        # taller than the notch.
+        label_style=ft.TextStyle(size=12),
     )
 
 
@@ -155,9 +160,9 @@ def table(
         rows=data_rows,
         heading_row_height=heading_height,
         data_row_min_height=28,
-        data_row_max_height=34,
-        horizontal_margin=8,
-        column_spacing=12,
+        data_row_max_height=40,
+        horizontal_margin=4,
+        column_spacing=8,
         border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT),
         border_radius=flet_theme.CONTROL_RADIUS,
     )

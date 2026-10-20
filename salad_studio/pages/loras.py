@@ -15,7 +15,10 @@ from salad_studio import flet_theme, flet_widgets as w, lora_store
 from salad_studio.flet_pump import refresh
 from salad_studio.flet_shell import Page
 
-COLUMNS = ("Verified", "Id", "Name", "Version", "Model", "Source", "Comfy name")
+COLUMNS = ("Verified", "Id", "Name", "Version", "Model", "Source")
+# The Source cell carries the entry id; the full page URL is its tooltip.
+SOURCE_COLUMN = COLUMNS.index("Source")
+
 # A row's Verified cell is drawn in the verified or unverified colour, as the
 # Tk tree coloured the whole row.
 VERIFIED_COLOR = "valid"
@@ -64,7 +67,6 @@ class LorasPage(Page):
         self.refresh()
 
     def _cells(self, item: dict[str, Any]) -> list[str]:
-        src = item.get("source") or {}
         verified = bool(item.get("verified"))
         return [
             "● yes" if verified else "● no",
@@ -72,8 +74,7 @@ class LorasPage(Page):
             str(item.get("name") or ""),
             lora_store.version_label(item),
             str(item.get("base") or ""),
-            str(src.get("page") or src.get("download") or ""),
-            lora_store.comfy_lora_name(item),
+            str(item.get("id") or ""),
         ]
 
     @staticmethod
@@ -98,6 +99,9 @@ class LorasPage(Page):
             row.cells[0].content = ft.Text(row.cells[0].content.value, size=12,
                                            color=self.colors[VERIFIED_COLOR if item.get("verified")
                                                               else UNVERIFIED_COLOR])
+            page = self._source_page(item)
+            if page:
+                row.cells[SOURCE_COLUMN].content.tooltip = page
         for column_index, column in enumerate(table.columns):
             column.on_sort = lambda _e, i=column_index: self.sort(i)
         self.table_box.content = ft.Column([table] if cells else [], scroll=ft.ScrollMode.ALWAYS,

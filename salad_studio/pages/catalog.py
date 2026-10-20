@@ -11,6 +11,15 @@ from salad_studio.flet_shell import Page
 
 COLUMNS = ("Added", "Short name", "Description", "Prompt", "Graph")
 EMPTY_TEXT = "No kept prompts yet. Give one a short name and copy it from the Prompt Editor."
+# In the scrolling table the stats line wraps, so it shows its head: nodes,
+# LoRAs and size are what tell entries apart.
+STATS_SEPARATOR = "\u00b7"
+
+
+def _graph_stats(stats: str) -> str:
+    """An entry's stats up to its shape: nodes, LoRAs and the size."""
+    parts = [part.strip() for part in str(stats or "").split(STATS_SEPARATOR)]
+    return f" {STATS_SEPARATOR} ".join(parts[:3])
 
 
 class CatalogPage(Page):
@@ -52,7 +61,7 @@ class CatalogPage(Page):
                 str(entry.get("name") or ""),
                 str(entry.get("description") or ""),
                 prompt_history.preview(prompt_history.prompt_text_of(request)),
-                prompt_catalog.entry_stats(entry),
+                _graph_stats(prompt_catalog.entry_stats(entry)),
             ])
         index = next((i for i, e in enumerate(self.entries) if str(e.get("id")) == self.selected), None)
         self.table_holder.controls = (

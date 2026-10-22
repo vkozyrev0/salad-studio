@@ -1,7 +1,7 @@
 """The manuals must describe the app that shipped.
 
 Every check below reads a real file and compares it with the shipped code: the
-app manual's tab list against ``app.TAB_ORDER``, the manual's layer map against
+app manual's tab list against the page ids, the manual's layer map against
 the modules on disk, the stated test counts — the root suite and the
 container-side one — against the number of test methods the suites actually
 have, the workflow documents' ``§N`` references against the headings of the
@@ -2472,6 +2472,18 @@ class TheDocDriftRulesCatchTheOldText(unittest.TestCase):
                 self.assertTrue(
                     any("on every `LoraLoader`" in p for p in problems), problems
                 )
+
+
+class ShippedArtifactsAreNamed(unittest.TestCase):
+    def test_the_readme_names_the_ci_and_the_queue_check(self) -> None:
+        text = ROOT_README.read_text(encoding="utf-8")
+        self.assertIn(".github/workflows/checks.yml", text)
+        self.assertIn("queue-submission-safety", text)
+
+    def test_the_manual_names_the_history_columns(self) -> None:
+        text = MANUAL.read_text(encoding="utf-8")
+        for name in ("When", "Prompt", "Graph", "Rating", "Plate"):
+            self.assertIn(name, text)
 
 
 if __name__ == "__main__":

@@ -111,7 +111,7 @@ profile's own `checkpoints` list, edited on the Config page; the document's
 
 > **Fixed 2026-09-22.** The guard used to compare the graph's family to the **form's** unet, which
 > loading a JSON into the Prompt Editor rewrites from the graph, so it could never fire: a SNOFS graph
-> rendered on the klein group. Regression tests: `test_app_layout.NewPagesAndPlacement.test_generate_routes_a_snofs_graph_off_the_klein_group` and its two siblings.
+> rendered on the klein group. Regression tests: the `plan_route` cases in `tests/test_profiles.py` (`test_a_snofs_graph_routes_off_the_klein_group` and its siblings).
 
 **Practical consequence.** A graph's unet decides its group; the profile dropdown
 does not. If a SNOFS graph renders on the klein group, routing is broken. Check

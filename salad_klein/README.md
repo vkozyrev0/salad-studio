@@ -7,6 +7,8 @@ Read: [doc 23](../docs/workflow/23-salad-container-group-deployment.md)
 (build and call the container) and
 [doc 21](../docs/workflow/21-klein-image-handoff.md) (the Klein handoff).
 
+Tests need `huggingface_hub`: `python -m pip install -r requirements.txt`.
+
 The verified recipe is `prompt_snofs_distilled_v12.json`: the SNOFS distilled
 v1.2 unet (not a LoRA), Qwen fp8 CLIP, flux2 VAE, euler, 4 steps, CFG 1,
 832x1216, no LoRAs, and a 779-char four-section prompt. Acceptable at 2 of 7

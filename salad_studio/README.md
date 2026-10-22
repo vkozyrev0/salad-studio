@@ -11,7 +11,8 @@ lines and finished background actions arrive on `GET /api/events` as
 server-sent events. The server binds loopback and refuses a request whose
 `Origin` is another site.
 
-**Top action bar**: a rose **Generate**, live status every 2 s, and ready
+**Top action bar**: a rose **Generate**, **Clean gallery**, **Check Salad
+status**, live status every 2 s, and ready
 (green), starting (amber) and not-started (red) container counts in one recessed
 panel; a press during a render queues.
 **Left tabs**, numbered under a `Pages` label, in order: (**Config**, **Prompt Settings**, **Tokens**, **LoRAs**, **Prompt Editor**, **Prompt Assist**, **Prompt Catalog**, **Import**, **Prompt History**, **Queue**, **Logs**). Each
@@ -48,12 +49,12 @@ keys move through its cells, and a click selects the row.
   run`, and `vastai create instance` (ports and environment in `--env`; the
   ENTRYPOINT downloads on first boot, so no `--onstart-cmd`), plus the **Salad
   portal fields**. **Copy commands** copies them (secrets as `${NAME}` unless
-  **show token values**). **Your own image** adds a tag (name, tag, build arg,
-  context, two ports); removal drops its environment. See
+  **show token values**). The image list is read-only here; a custom tag is a
+  store operation, not a page control. See
   [doc 23](../docs/workflow/23-salad-container-group-deployment.md).
 
   **Salad group.** Per config: **Image**, **GPU classes**, **US-only**, the
-  startup and readiness probes, and **Reallocate instance (new node)…**
+  startup and readiness probes, and **Reallocate instance**
   (confirm). **Image** offers
   the two tags and stays editable. **Load from Salad** reads the config's group;
   **Apply to Salad** PATCHes it (not a rebuild); **Save profile** stores the
@@ -65,17 +66,17 @@ keys move through its cells, and a click selects the row.
 
   **Vast.ai.** **Vast.ai instances** lists the instances a profile may render
   on. Type one or several comma-separated addresses, pick **Image**, **Add
-  instance**; Label and Image apply to the first only. **Fetch instances from
-  Vast.ai** reads the account with the stored Bearer key from
+  instance**; Label and Image apply to the first only. **Fetch instances**
+  reads the account with the stored Bearer key from
   `https://console.vast.ai/api/v1/instances/` and reconciles. A record mapping
   no ComfyUI port (loading, stopped) is still a row, `#<id>` in Address plus
   state. An id-bearing row absent from a complete listing becomes **destroyed**
   (id and image kept); a truncated listing destroys nothing. Selecting a row
   with an endpoint points Generate at it when the target is **Vast.ai
   instance**; no endpoint means it cannot be the target and says why. **Set
-  image for selected** records the image; **New profile for this instance**
+  image** records the image; **New profile for instance**
   creates a profile with that target and the image's checkpoint family
-  (documented tags only); **Remove selected**; **Save list** writes
+  (documented tags only); **Remove**; **Save list** writes
   `~/.config/salad/studio-vast.json`.
 
   **Rent a machine** searches those offers. **GPU models** defaults to
@@ -85,7 +86,7 @@ keys move through its cells, and a click selects the row.
   `https://console.vast.ai/api/v0/bundles/`, ordered by `dlperf_per_dphtotal`
   descending; the table re-sorts by images per dollar
   (`dlperf_per_dphtotal`, else `dlperf` / $/hr), then GPU preference, price,
-  download, upload. **Create instance on selected offer** issues one `PUT`; the
+  download, upload. **Create instance** issues one `PUT`; the
   image is the Vast.ai **Image** box or, when empty, the profile's policy image. A mapped endpoint returns a
   live row; a contract with no mapped port appears as **creating**, and Fetch
   promotes it when its port maps, unless another instance is active. A
@@ -101,12 +102,13 @@ keys move through its cells, and a click selects the row.
   on 8188 fails with `value_not_in_list`; see
   [doc 23 §5](../docs/workflow/23-salad-container-group-deployment.md#5-vastai-instances)
   for host choice, CUDA, failures and cost. An accepted POST with no plate is
-  reported by name. **If the selected instance is destroyed** rents the
+  reported by name. **Replace if destroyed** rents the
   best-value offer that clears the criteria (RTX 5090 before RTX 4090 on a tie).
 - **Prompt Settings**. **Width**, **Height**, **Steps**, **CFG**, **Seed**,
   **Graph** (Flux.2 Klein / Flux.1 Dev), **Scheduler** (Flux2 (Klein) / Simple
   (Civitai)), the **Checkpoint** (Base 9B / Distilled 9B / SNOFS 9B) and the
-  **LoRA** checkboxes. The Prompt Editor's JSON is rebuilt from these values.
+  **LoRA** checkboxes. **Save to profile** writes the form. The Prompt Editor's
+  JSON is rebuilt from these values.
 - **Tokens**. Salad, Hugging Face, Civitai, DeepSeek and Vast.ai keys in
   `studio-tokens.json` (gitignored). Empty slots copy from `~/.config`; DeepSeek
   also reads `DEEPSEEK_API_KEY` when no file has one (never copied in). Vast.ai
@@ -115,7 +117,8 @@ keys move through its cells, and a click selects the row.
   the Salad key as `Salad-Api-Key` and appends Civitai `?token=` to LoRA URLs at
   POST time. Dots: **green** only on an accepted provider call, **red** on
   rejection, **grey** when unconfirmed. **Check keys** re-probes every slot; the
-  page probes on open, a fresh key on save.
+  page probes on open, a fresh key on save. **Save keys** writes the fields,
+  then **Check keys** confirms them.
 - **Logs**. Salad container logs for the active gateway; Studio/HTTP events
   redacted.
 - **LoRAs**. Catalog LoRAs plus extras from a Civitai page or
@@ -215,10 +218,10 @@ keys move through its cells, and a click selects the row.
   disk, filename family), then online (Civitai); still-unknown ones are reported
   as **UNRESOLVED** to the model. The DeepSeek id is `ai_helper.MODEL`
   (`deepseek-flash`); **Help (local)** uses the server-reported model.
-- **Prompt History**. The full request JSON, with a prompt column and a Graph
-  column and a Rating column. A successful Generate writes a 48×48 thumbnail in
-  the first column. **Reuse** restores the JSON and prompt, the stars rate the
-  render, and **Delete** asks first. Empty state.
+- **Prompt History**. One row per request with **When**, **Prompt**, **Graph**,
+  **Rating** and **Plate**. A successful Generate writes a 48×48 JPEG and the
+  Plate cell shows it at 36×36. **Reuse** restores the JSON and prompt, the
+  stars rate the render, and **Delete** asks first. Empty state.
 - **Queue**. From `salad_queue`'s records: one row per request with **Profile**,
   **State** (**waiting**, **in progress**, **done**, **failed**, **cancelled**),
   **Attempts**, **Last status**, **Reason**, **Request** (gateway host and POST
@@ -272,7 +275,9 @@ keys move through its cells, and a click selects the row.
   thread.
 
 Klein group, prefetch image, Civitai-vs-Comfy quality, and startup probes:
-[doc 15](../docs/workflow/15-salad-flux2-klein-group.md).
+[doc 21](../docs/workflow/21-klein-image-handoff.md) and
+[doc 23](../docs/workflow/23-salad-container-group-deployment.md); doc 15 is
+the 2026-09-21 record.
 
 Stores (none in git): `salad_studio/studio-tokens.json` (seeded from
 `~/.config` if empty). `~/.config/salad/` holds gateway files,
@@ -280,7 +285,7 @@ Stores (none in git): `salad_studio/studio-tokens.json` (seeded from
 `studio-prompt-thumbs/`, `studio-prompt-catalog.json`, `studio-images.json`,
 `studio-vast.json` (instances and rental criteria; its `mode` is not the engine
 switch),
-`studio-queue.json` (queue ledger and container ownership), `studio-ui.json`,
+`studio-queue.json` (queue ledger and container ownership),
 `studio-metadata.json`.
 
 ## Layers
@@ -338,7 +343,7 @@ the root [`README.md`](../README.md) (Configuration, Known limitations).
 Run the commands separately:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1075 tests, ~35 s
+python -m unittest discover -s tests -p "test_*.py"    # 1090 tests, ~35 s
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```

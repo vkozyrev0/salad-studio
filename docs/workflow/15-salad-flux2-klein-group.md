@@ -1,5 +1,9 @@
 # 15. Custom Salad container group for Flux.2 Klein 9B
 
+> **Superseded for the current groups.** Doc [21](21-klein-image-handoff.md)
+> and doc [23](23-salad-container-group-deployment.md) carry the shipped
+> prefetch6 tags and the current routing. Keep this as the 2026-09-21 record.
+>
 > **Status (2026-09-21).** Both Klein groups were PATCHed to **prefetch5**
 > (HTTP 200, `pending_change: true`). Until **version** bumps, GET still shows
 > `docker.io/vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch4`. Do not

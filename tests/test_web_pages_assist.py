@@ -94,6 +94,7 @@ class AssistTest(unittest.TestCase):
         self.core = Core(workers=2).start()
         self.hub = Hub()
         self.studio = Shell(self.core, self.hub)
+        self.studio.services.out_dir = Path(self.tmp.name) / "art"
         self.studio.controllers = Controllers(self.studio)
         add_all(self.studio.controllers)
         self.studio.services.start(timers=False)

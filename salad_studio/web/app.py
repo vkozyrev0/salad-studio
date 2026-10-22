@@ -18,7 +18,7 @@ from salad_studio.web.shell import Shell
 
 ROOT = Path(__file__).resolve().parents[2]
 DIST = ROOT / "ui" / "dist" / "ui" / "browser"
-START_PAGE = "tokens"
+START_PAGE = "config"
 
 
 class Studio:
@@ -63,6 +63,7 @@ def build(*, dist: Path | None = DIST, timers: bool = True) -> Studio:
     hub = Hub()
     shell = Shell(core, hub)
     shell.controllers = Controllers(shell)
+    core.on_error = lambda exc: shell.services.log("error", f"core: {type(exc).__name__}: {exc}")
     shell.services.start(timers=timers)
 
     from salad_studio.web import controllers, pages

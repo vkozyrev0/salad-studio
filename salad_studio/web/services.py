@@ -50,6 +50,9 @@ class WebServices:
     """The queue, the log, the probe, the timers and the plate cache."""
 
     def __init__(self, shell: Any) -> None:
+        # The output folder is per studio, so a test points it at a temp tree
+        # instead of the art folder this machine's user renders into.
+        self.out_dir = OUT_DIR
         self.shell = shell
         self.core = shell.core
         self.hub = shell.hub
@@ -237,11 +240,11 @@ class WebServices:
         try:
             if profile.mode == "vast":
                 out = generator.generate_from_vast(
-                    endpoint=profile.gateway, payload=payload, out_dir=OUT_DIR,
+                    endpoint=profile.gateway, payload=payload, out_dir=self.out_dir,
                     on_log=self.log, queue=self.gen_queue, line=profile.name, checksum=checksum)
             else:
                 out = generator.generate_from_payload(
-                    gateway=profile.gateway, key=key, payload=payload, out_dir=OUT_DIR,
+                    gateway=profile.gateway, key=key, payload=payload, out_dir=self.out_dir,
                     on_log=self.log, queue=self.gen_queue, line=profile.name, checksum=checksum)
         except generator.ContainerDown as exc:
             return GenOutcome("refused", message=str(exc))
@@ -265,7 +268,7 @@ class WebServices:
 
     def plates(self, limit: int = PLATE_LIMIT) -> list[Path]:
         try:
-            found = [p for p in OUT_DIR.glob("*.jpg") if p.is_file()]
+            found = [p for p in self.out_dir.glob("*.jpg") if p.is_file()]
         except OSError:
             return []
         found.sort(key=lambda p: p.stat().st_mtime, reverse=True)
@@ -275,7 +278,7 @@ class WebServices:
         """The file a plate name refers to, refused when it names anything but one plate."""
         if not name or Path(name).name != name:
             return None
-        path = OUT_DIR / name
+        path = self.out_dir / name
         return path if path.is_file() else None
 
     def picture_path(self, name: str) -> Path | None:

@@ -5,8 +5,9 @@ one method per action. It never touches another page's state directly; when a
 page has to change another, it asks the studio for that page's controller, or
 it navigates and lets the page read what changed.
 
-Only Tokens exists so far. The other ten page modules port next, each one
-replacing its Flet counterpart in place.
+One controller owns each page's state and actions. The page modules live in
+``salad_studio/web/pages``; this module holds the shell's own actions and the
+tokens page.
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from typing import Any
 # with its own path constant; a controller that used it would read a different
 # store from the one the rest of the studio writes.
 import tokens
+from salad_studio.web.shell import GenWord
 
 SLOTS: tuple[tuple[str, str], ...] = (
     ("salad", "Salad"),
@@ -61,7 +63,11 @@ class TokensController:
                 {
                     "id": kind,
                     "label": label,
-                    "value": _slot_value(kind),
+                    # The raw key never leaves the process. The page shows the
+                    # hint and keeps whatever the user types as the new value.
+                    "value": "",
+                    "present": bool(_slot_value(kind)),
+                    "hint": tokens.masked(_slot_value(kind)),
                     "state": self.states.get(kind, "unknown"),
                     "tooltip": {"valid": "accepted", "invalid": "rejected"}.get(
                         self.states.get(kind, "unknown"), "unconfirmed"),
@@ -150,7 +156,7 @@ class ShellController:
     # -- actions
 
     def generate(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:
-        from salad_studio import generator, profiles, salad_queue
+        from salad_studio import generator, profiles, prompt_history, salad_queue
 
         text = self._ask("editor", "text")
         try:
@@ -165,7 +171,13 @@ class ShellController:
         if refusal:
             return self._refused(ctx, refusal)
         self.studio.services.log("info", f"Generate  {profile.mode}  {profile.gateway}  graph={profile.graph}")
-        self.studio.services.remember_request(body, profile)
+        try:
+            prompt_history.add_request(body, profile=profile.name, gateway=profile.gateway)
+        except OSError as exc:
+            # The history entry is secondary; a locked file must not stop the render.
+            self.studio.services.log("warn", f"history entry skipped: {exc}")
+        self.studio.gen = GenWord(word="Generating", busy=True)
+        self.studio.publish()
         self.studio.say("Generating")
         ctx.note(f"Generating on {profile.name}", level="info")
         ctx.background(
@@ -206,11 +218,17 @@ class ShellController:
     # -- helpers
 
     def _ask(self, page: str, action: str, args: dict[str, Any] | None = None) -> Any:
-        """Another page's state or action, run through the table on this thread."""
-        result = self.studio.controllers.table.call(f"{page}.{action}", args or {})
-        if result.error is not None:
-            raise ValueError(result.error.message)
-        return result.data
+        """Another page's own read, called on this thread.
+
+        It is a method on the page's controller, not an action: ``editor.text``
+        returns the JSON the editor holds, and registering it would put a read
+        on the HTTP surface.
+        """
+        controller = self.studio.controllers.get(page)
+        method = getattr(controller, action, None) if controller is not None else None
+        if method is None:
+            raise ValueError(f"no page method named {page}.{action}")
+        return method(args) if args else method()
 
     def _refused(self, ctx: Any, message: str) -> dict[str, Any]:
         self.studio.services.log("error", f"Generate blocked: {message}")
@@ -223,7 +241,20 @@ class ShellController:
         from salad_studio import profiles, vast
 
         if profile.mode == "vast":
-            return "" if profile.gateway.strip() else "No vast.ai instance is selected."
+            gateway = profile.gateway.strip()
+            if not gateway:
+                return "No vast.ai instance is selected."
+            endpoints = {str(row.get("endpoint") or "").strip()
+                         for row in (vast.load_doc().get("instances") or [])}
+            if gateway not in endpoints and (
+                profiles.is_salad_gateway(gateway)
+                or any(profiles.same_gateway(p.gateway, gateway)
+                       for p in profiles.load_all().values())
+            ):
+                return ("the Vast.ai target holds a Salad gateway, so the vast key would be "
+                        "sent to that group. Pick the instance on the Config page, then "
+                        "Generate again.")
+            return ""
         route, refusal = profiles.plan_route(body, profile, profiles.load_all())
         if refusal:
             return refusal
@@ -264,7 +295,9 @@ class ShellController:
                     prompt_history.attach_image(Path(outcome.out))
                 except (OSError, ValueError, TypeError) as exc:
                     self.studio.services.log("warn", f"history thumb skipped: {exc}")
+        self.studio.gen = GenWord()
         self.studio.refresh_plates()
+        self.studio.publish()
 
 
 def install(controllers: Any) -> None:

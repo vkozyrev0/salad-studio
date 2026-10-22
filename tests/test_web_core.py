@@ -130,6 +130,46 @@ class CoreTest(unittest.TestCase):
         time.sleep(0.1)
         self.assertEqual(fired, ["once"])
 
+    def test_a_timer_that_raises_does_not_stop_the_core(self) -> None:
+        errors: list[BaseException] = []
+        self.core.on_error = errors.append
+        self.core.every(10, lambda: (_ for _ in ()).throw(RuntimeError("probe")))
+        deadline = time.monotonic() + 2
+        while not errors and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(errors, "the timer's error reached on_error")
+        self.assertEqual(self.core.call(lambda: 7), 7, "the core still answers")
+
+    def test_a_full_event_stream_drops_events_without_raising(self) -> None:
+        from salad_studio.web.events import Subscription
+
+        sub = Subscription(limit=2)
+        failures: list[BaseException] = []
+
+        def hammer() -> None:
+            try:
+                for number in range(2000):
+                    sub.put("tick", number)
+            except BaseException as exc:  # noqa: BLE001 - the publisher must never see one
+                failures.append(exc)
+
+        threads = [threading.Thread(target=hammer) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(failures, [], "a stalled stream must not raise into the publisher")
+
+    def test_a_full_stream_keeps_the_newest_events(self) -> None:
+        from salad_studio.web.events import Subscription
+
+        sub = Subscription(limit=2)
+        sub.put("a", 1)
+        sub.put("b", 2)
+        sub.put("c", 3)
+        self.assertEqual(sub.take(0), ("b", 2), "the oldest event is the one dropped")
+        self.assertEqual(sub.take(0), ("c", 3), "the newest event survives")
+
     def test_stop_ends_the_thread(self) -> None:
         core = Core(workers=1).start()
         core.stop()

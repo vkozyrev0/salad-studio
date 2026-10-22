@@ -14,9 +14,11 @@ import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 # Top-level, the way this package's leaf modules are imported (studio_log,
 # request_json): one module object per process, shared with the app and tests.
+import atomic  # noqa: E402
 import hostings  # noqa: E402
 import studio_meta  # noqa: E402
 
@@ -321,6 +323,17 @@ def plan_route(
     )
 
 
+def is_salad_gateway(url: str) -> bool:
+    """A host Salad serves container groups on.
+
+    A typed gateway that is not saved to a profile still has to be recognised
+    when the engine is Vast.ai: sending the vast key there would hand it to a
+    Salad group.
+    """
+    host = (urlsplit(str(url or "").strip()).hostname or "").lower()
+    return host in ("salad.com", "salad.cloud") or host.endswith(".salad.com") or host.endswith(".salad.cloud")
+
+
 def same_gateway(a: str, b: str) -> bool:
     """Two gateway URLs naming the same host. Case- and trailing-slash-insensitive.
 
@@ -514,7 +527,7 @@ def _save_doc(
         data = asdict(profile)
         data["name"] = name
         payload["profiles"][name] = data
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    atomic.write_text(path, json.dumps(payload, indent=2) + "\n")
 
 
 def seed_checkpoints(name: str, meta: dict[str, Any] | None = None) -> list[str]:

@@ -144,6 +144,12 @@ class ImportTest(unittest.TestCase):
         self.assertIsNone(result.error, result.error)
         return result.data
 
+    def call_pending(self, action: str, args: dict[str, Any] | None = None) -> Any:
+        """Call a background action and wait for its answer, as the page does."""
+        self.call(action, args)
+        self.wait(action)
+        return self.controller.state()
+
     def wait(self, action: str, timeout: float = 20.0) -> dict[str, Any]:
         """The reply the live stream would deliver for a background action."""
         deadline = time.monotonic() + timeout
@@ -181,7 +187,7 @@ class ImportTest(unittest.TestCase):
     # -- the paste and the knobs
 
     def test_fill_reads_the_paste_and_returns_the_knobs_as_a_list(self) -> None:
-        state = self.call("fill_knobs", {"meta": DISTILLED_META, "workflow": WORKFLOW})
+        state = self.call_pending("fill_knobs", {"meta": DISTILLED_META, "workflow": WORKFLOW})
         values = {k["key"]: k["value"] for k in state["knobs"]}
         self.assertEqual(values, {"cfg": "1", "seed": "824168918863563", "steps": "4",
                                   "width": "1280", "height": "1920"})
@@ -208,18 +214,18 @@ class ImportTest(unittest.TestCase):
         state = self.call("set_paste", {"workflow": big})
         self.assertTrue(state["stashed"])
         self.assertIn(f"{len(big):,} characters", state["workflow"])
-        filled = self.call("fill_knobs", {"workflow": state["workflow"]})
+        filled = self.call_pending("fill_knobs", {"workflow": state["workflow"]})
         self.assertEqual({k["key"]: k["value"] for k in filled["knobs"]}["steps"], "4",
                          "the fill reads the held paste, not the summary")
 
     def test_fill_only_empty_keeps_a_knob_the_user_typed(self) -> None:
         self.call("set_paste", {"workflow": WORKFLOW, "meta": DISTILLED_META})
-        state = self.call("fill_knobs", {"only_empty": True, "steps": "8"})
+        state = self.call_pending("fill_knobs", {"only_empty": True, "steps": "8"})
         self.assertEqual({k["key"]: k["value"] for k in state["knobs"]}["steps"], "8")
 
     def test_clear_import_drops_the_paste_and_the_knobs(self) -> None:
         self.call("set_paste", {"workflow": WORKFLOW, "meta": DISTILLED_META})
-        self.call("fill_knobs", {})
+        self.call_pending("fill_knobs", {})
         state = self.call("clear_import")
         self.assertEqual([k["value"] for k in state["knobs"]], ["", "", "", "", ""])
         self.assertEqual(state["workflow"], "")

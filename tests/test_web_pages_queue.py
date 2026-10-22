@@ -16,6 +16,7 @@ for _p in (ROOT, ROOT / "salad_studio"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
+import prompt_history  # noqa: E402
 import salad_queue  # noqa: E402
 from salad_studio.web.core import Core  # noqa: E402
 from salad_studio.web.engine import WebEngine  # noqa: E402
@@ -35,9 +36,13 @@ class QueuePageTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.saved = salad_queue.LEDGER_PATH
         salad_queue.LEDGER_PATH = Path(self.tmp.name) / "studio-queue.json"
+        self.history_saved = (prompt_history.HISTORY_PATH, prompt_history.THUMBS_DIR)
+        prompt_history.HISTORY_PATH = Path(self.tmp.name) / "studio-prompt-history.json"
+        prompt_history.THUMBS_DIR = Path(self.tmp.name) / "studio-prompt-thumbs"
         self.core = Core(workers=2).start()
         self.hub = Hub()
         self.studio = Shell(self.core, self.hub)
+        self.studio.services.out_dir = Path(self.tmp.name) / "art"
         self.studio.controllers = Controllers(self.studio)
         self.page = QueueController(self.studio)
         self.studio.controllers.add(self.page)
@@ -48,6 +53,7 @@ class QueuePageTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.core.stop()
         salad_queue.LEDGER_PATH = self.saved
+        prompt_history.HISTORY_PATH, prompt_history.THUMBS_DIR = self.history_saved
         self.tmp.cleanup()
 
     def call(self, action: str, args: dict | None = None):
@@ -135,8 +141,30 @@ class QueuePageTest(unittest.TestCase):
         self.assertTrue(done["ok"])
         self.assertEqual(done["shell"]["note"]["level"], "warn")
         self.assertEqual(done["shell"]["note"]["text"], "Request 1 was retried: failed. job not ready")
-        self.assertEqual(job.attempts, 2, "the retry is the job's second try")
+        self.assertEqual(job.attempts, 1, "a retry is a fresh run through the queue's own retry")
         self.assertEqual(done["busy"], {})
+
+    def test_a_successful_retry_writes_the_plate(self) -> None:
+        import base64
+
+        png = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 16).decode()
+        job = self.queue.enqueue({"profile": "klein"}, lambda _job: salad_queue.Attempt(), line="klein")
+        job.state = salad_queue.FAILED
+        job.reason = "boom"
+        job.work = lambda _job: salad_queue.Attempt(status=200, accepted=True, result=png)
+        engine = WebEngine(self.studio)
+        self.studio.engine = engine
+        events: dict[str, list[dict]] = {}
+        self.hub.publish = lambda name, data: events.setdefault(name, []).append(data)
+        self.call("select", {"key": str(job.id)})
+        status, _reply = engine.handle({"page": "queue", "action": "retry", "args": {}})
+        self.assertEqual(status, 200)
+        deadline = time.monotonic() + 15
+        while "action_done" not in events and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertEqual(job.state, salad_queue.ACCEPTED)
+        plates = list(self.studio.services.out_dir.glob("studio_*.png"))
+        self.assertEqual(len(plates), 1, "an accepted retry writes its plate")
 
     def test_retry_of_a_waiting_request_is_refused(self) -> None:
         job = self.queue.enqueue({"profile": "klein"}, None, line="klein")

@@ -24,18 +24,25 @@ class Subscription:
     def __init__(self, limit: int = 200) -> None:
         self.ready = threading.Event()
         self._events: queue.Queue[tuple[str, Any] | None] = queue.Queue(maxsize=limit)
+        # Two publishers can race the drop-oldest pair; the lock keeps the get
+        # and the put one step, so the newest event is the one that survives.
+        self._lock = threading.Lock()
         self.closed = False
 
     def put(self, name: str, data: Any) -> None:
         """Hand one event to this stream, dropping the oldest when it is behind."""
-        try:
-            self._events.put_nowait((name, data))
-        except queue.Full:
+        with self._lock:
             try:
-                self._events.get_nowait()
-            except queue.Empty:
-                pass
-            self._events.put_nowait((name, data))
+                self._events.put_nowait((name, data))
+            except queue.Full:
+                try:
+                    self._events.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    self._events.put_nowait((name, data))
+                except queue.Full:
+                    pass
         self.ready.set()
 
     def close(self) -> None:

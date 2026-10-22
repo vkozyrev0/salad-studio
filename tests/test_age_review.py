@@ -54,11 +54,19 @@ class TheSharedWording(unittest.TestCase):
                 self.assertIsInstance(text, str)
                 self.assertTrue(text.strip())
 
-    def test_the_art_root_is_named(self) -> None:
-        # ART is a Path that must name the art tree, not a bare relative dot.
-        self.assertIsInstance(age_review.ART, Path)
-        self.assertTrue(age_review.ART.is_absolute())
-        self.assertNotEqual(age_review.ART, Path("."))
+    def test_the_art_root_follows_its_environment_override(self) -> None:
+        import importlib
+        import os
+        import tempfile
+        from unittest import mock
+
+        saved = age_review.ART
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(os.environ, {"ELDERMARK_ART": tmp}):
+                reloaded = importlib.reload(age_review)
+                self.assertEqual(reloaded.ART, Path(tmp))
+        importlib.reload(age_review)
+        self.assertEqual(age_review.ART, saved)
 
 
 if __name__ == "__main__":

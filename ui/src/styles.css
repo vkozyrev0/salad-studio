@@ -1,0 +1,537 @@
+/* Salad Studio: the palette, the derived colors and the three type roles.
+   The base palette is `salad_studio/theme.py`'s PALETTE role for role, so the
+   history strip's Pillow thumbs and the page agree. Contrast for every base
+   pair is measured in Python, not guessed: fg 11.05:1 on bg, muted 6.84:1,
+   accent 6.74:1. A new base color is a new key in theme.py, not a literal here.
+
+   The six derived colors come from the visual prototype
+   (`.audit/http-port/visual.html`): --rule and --hairline draw structure,
+   --field is darker than the page well so an input's fill reads, --wash marks
+   hover, --rose-wash marks selection, --print-edge is the paper margin on a
+   generated plate. */
+
+:root {
+  color-scheme: dark;
+
+  --bg: #1b2836;
+  --surface: #243344;
+  --surface-hi: #2e4458;
+  --well: #141e28;
+  --fg: #e8dcc8;
+  --fg-muted: #a6b0c0;
+  --accent: #e39aa9;
+  --accent-hi: #eba9b6;
+  --accent-press: #d98d9d;
+  --accent-fg: #1b2836;
+  --select-bg: #3a5c4a;
+  --select-fg: #e8dcc8;
+  --border: #3a4f63;
+  --ground: #1f2c3b;
+  --select-tint: #4a3544;
+  --button: #2e4458;
+  --button-fg: #e8dcc8;
+  --status: #16202b;
+  --valid: #8fbf9a;
+  --invalid: #d48a9a;
+  --unknown: #94a5b7;
+  --warn: #e0a04a;
+  --info: #7eb8d4;
+
+  --rule: #33475b;
+  --hairline: #2a3948;
+  --field: #0f1720;
+  --wash: #1f2d3b;
+  --rose-wash: #3a2a33;
+  --print-edge: #cdbfa6;
+
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+
+  --radius-control: 3px;
+  --radius-card: 4px;
+
+  --font-ui: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  --font-display: Georgia, 'Times New Roman', serif;
+  --font-mono: 'Cascadia Mono', 'Cascadia Code', Consolas, monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Forms, buttons, tables and logs, from the visual prototype. A component
+   reads its two load-bearing tokens (--w, --rows); everything else is here so
+   ten pages share one field, one button and one row.
+
+   A field's label sits above it in mono. The field itself is a dark well with
+   a 1px rule, so it reads as a place to type rather than a pill. */
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 0 0 auto; width: var(--w, 100%); }
+.field > label, .field-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+.input, .select, .textarea {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-control);
+  background: var(--field);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.4;
+  box-shadow: inset 0 1px 0 rgb(0 0 0 / 0.35);
+  transition: border-color 120ms ease;
+}
+.textarea {
+  height: auto;
+  min-height: calc(var(--rows, 5) * 1.45em + 18px);
+  padding: 8px 10px;
+  resize: vertical;
+}
+.input.mono, .textarea.mono { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0; }
+.input::placeholder, .textarea::placeholder { color: var(--fg-muted); opacity: 1; }
+.input:hover, .select:hover, .textarea:hover { border-color: var(--fg-muted); }
+.input:focus, .select:focus, .textarea:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: 0;
+  border-color: var(--accent);
+}
+.input:read-only { color: var(--fg-muted); }
+.select-wrap { position: relative; }
+.select { appearance: none; padding-right: 30px; cursor: pointer; }
+.select-wrap::after {
+  content: '';
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--fg-muted);
+  border-bottom: 1.5px solid var(--fg-muted);
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
+}
+.check { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--fg); cursor: pointer; }
+.check input, .radio input { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.radio { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--fg); cursor: pointer; }
+.radio:has(input:checked) { color: var(--accent); }
+.hint { margin: 0; font-size: 11px; color: var(--fg-muted); }
+.hint.mono { font-family: var(--font-mono); font-size: 10px; }
+
+/* A button is borderless at rest. Ghost draws its edge, primary is the one
+   rose fill on a page, danger is the rose read as a warning, quiet is text. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 13px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, opacity 120ms ease;
+}
+.btn.ghost { border-color: var(--rule); background: var(--surface); }
+.btn.ghost:hover:not(:disabled) { background: var(--wash); }
+.btn.quiet { color: var(--fg-muted); }
+.btn.quiet:hover:not(:disabled) { color: var(--fg); background: var(--wash); }
+.btn.key { border-color: rgb(227 154 169 / 0.5); background: rgb(227 154 169 / 0.06); color: var(--accent); }
+.btn.key:hover:not(:disabled) { background: rgb(227 154 169 / 0.11); border-color: var(--accent); }
+.btn.primary { padding: 0 15px 0 13px; background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.btn.primary:hover:not(:disabled) { background: var(--accent-hi); border-color: var(--accent-hi); }
+.btn.primary:active:not(:disabled) { background: var(--accent-press); }
+.btn.danger { color: var(--invalid); }
+.btn.danger:hover:not(:disabled) { background: rgb(212 138 154 / 0.09); }
+.btn.sm { height: 28px; padding: 0 10px; font-size: 11.5px; }
+.btn:disabled { opacity: 0.4; cursor: default; }
+.btn-row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.btn .spinner {
+  width: 11px;
+  height: 11px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* The segmented switch: a bordered strip whose chosen part carries the rose
+   underline. Used for Config's four sections and its two targets. */
+.seg {
+  display: inline-flex;
+  flex-wrap: wrap;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-control);
+  background: var(--field);
+  overflow: hidden;
+}
+.seg button {
+  height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-right: 1px solid var(--hairline);
+  background: none;
+  color: var(--fg-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.seg button:last-child { border-right: 0; }
+.seg button:hover { color: var(--fg); background: var(--wash); }
+.seg button[aria-pressed='true'] { background: var(--wash); color: var(--fg); box-shadow: inset 0 -2px 0 var(--accent); }
+
+/* A section: a mono eyebrow and an optional right-hand meta, above its controls. */
+.section { padding-top: 16px; border-top: 1px solid var(--hairline); }
+.section:first-child { padding-top: 0; border-top: 0; }
+.section + .section { margin-top: 22px; }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.section-meta { font-family: var(--font-mono); font-size: 9.5px; color: var(--fg-muted); white-space: nowrap; }
+.rows { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+
+/* A read-only record list: checkpoints, environment rows, a dry run. Selection
+   is the rose wash with a 2px left edge, the same mark a table row takes. */
+.pick-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--hairline); }
+.pick-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--hairline);
+  border-left: 2px solid transparent;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+}
+.pick-row:hover { background: var(--wash); }
+.pick-row[aria-selected='true'], .pick-row[aria-current='true'] {
+  background: var(--rose-wash);
+  border-left-color: var(--accent);
+}
+.pick-row .what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pick-row .mono, .mono-line {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.empty-line { margin: 0; padding: 8px; font-size: 12px; color: var(--fg-muted); }
+.readout {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-control);
+  background: var(--field);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow: auto;
+}
+.readout.prose { font-family: var(--font-ui); font-size: 12.5px; }
+.finding { display: block; }
+.finding.block { color: var(--invalid); }
+.finding.note { color: var(--warn); }
+
+/* An eyebrow: the small mono label above a group of controls or table. */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+/* A generated image, printed: a narrow paper margin, a vignette, and grain,
+   so a plate reads as a physical print rather than a bare img. */
+.print {
+  position: relative;
+  display: block;
+  padding: 3px;
+  border-radius: 1px;
+  background: var(--print-edge);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.5);
+}
+.print > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  filter: saturate(0.9) contrast(1.05);
+}
+.print::before {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  box-shadow: inset 0 0 10px rgb(0 0 0 / 0.38);
+  pointer-events: none;
+}
+.print.small {
+  padding: 2px;
+}
+.print.small::before {
+  inset: 2px;
+}
+
+/* Forms, buttons, tables and logs, from the visual prototype. A component
+   reads its two load-bearing tokens (--w, --rows); everything else is here so
+   ten pages share one field, one button and one row.
+
+   A field's label sits above it in mono. The field itself is a dark well with
+   a 1px rule, so it reads as a place to type rather than a pill. */
+.input, .select, .textarea {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-control);
+  background: var(--field);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.4;
+  box-shadow: inset 0 1px 0 rgb(0 0 0 / 0.35);
+  transition: border-color 120ms ease;
+}
+.textarea {
+  height: auto;
+  min-height: calc(var(--rows, 5) * 1.45em + 18px);
+  padding: 8px 10px;
+  resize: vertical;
+}
+.input.mono, .textarea.mono { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0; }
+.input::placeholder, .textarea::placeholder { color: var(--fg-muted); opacity: 1; }
+.input:hover, .select:hover, .textarea:hover { border-color: var(--fg-muted); }
+.input:focus, .select:focus, .textarea:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: 0;
+  border-color: var(--accent);
+}
+.input:read-only { color: var(--fg-muted); }
+.select-wrap { position: relative; }
+.select { appearance: none; padding-right: 30px; cursor: pointer; }
+.select-wrap::after {
+  content: '';
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--fg-muted);
+  border-bottom: 1.5px solid var(--fg-muted);
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
+}
+.check { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--fg); cursor: pointer; }
+.check input, .radio input { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.radio { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--fg); cursor: pointer; }
+.radio:has(input:checked) { color: var(--accent); }
+.hint { margin: 0; font-size: 11px; color: var(--fg-muted); }
+.hint.mono { font-family: var(--font-mono); font-size: 10px; }
+
+/* A button is borderless at rest. Ghost draws its edge, primary is the one
+   rose fill on a page, danger is the rose read as a warning, quiet is text. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 13px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, opacity 120ms ease;
+}
+.btn.ghost { border-color: var(--rule); background: var(--surface); }
+.btn.ghost:hover:not(:disabled) { background: var(--wash); }
+.btn.quiet { color: var(--fg-muted); }
+.btn.quiet:hover:not(:disabled) { color: var(--fg); background: var(--wash); }
+.btn.key { border-color: rgb(227 154 169 / 0.5); background: rgb(227 154 169 / 0.06); color: var(--accent); }
+.btn.key:hover:not(:disabled) { background: rgb(227 154 169 / 0.11); border-color: var(--accent); }
+.btn.primary { padding: 0 15px 0 13px; background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.btn.primary:hover:not(:disabled) { background: var(--accent-hi); border-color: var(--accent-hi); }
+.btn.primary:active:not(:disabled) { background: var(--accent-press); }
+.btn.danger { color: var(--invalid); }
+.btn.danger:hover:not(:disabled) { background: rgb(212 138 154 / 0.09); }
+.btn.sm { height: 28px; padding: 0 10px; font-size: 11.5px; }
+.btn:disabled { opacity: 0.4; cursor: default; }
+.btn-row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.btn .spinner {
+  width: 11px;
+  height: 11px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* The segmented switch: a bordered strip whose chosen part carries the rose
+   underline. Used for Config's four sections and its two targets. */
+.seg {
+  display: inline-flex;
+  flex-wrap: wrap;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-control);
+  background: var(--field);
+  overflow: hidden;
+}
+.seg button {
+  height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-right: 1px solid var(--hairline);
+  background: none;
+  color: var(--fg-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.seg button:last-child { border-right: 0; }
+.seg button:hover { color: var(--fg); background: var(--wash); }
+.seg button[aria-pressed='true'] { background: var(--wash); color: var(--fg); box-shadow: inset 0 -2px 0 var(--accent); }
+
+/* A section: a mono eyebrow and an optional right-hand meta, above its controls. */
+.section { padding-top: 16px; border-top: 1px solid var(--hairline); }
+.section:first-child { padding-top: 0; border-top: 0; }
+.section + .section { margin-top: 22px; }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.section-meta { font-family: var(--font-mono); font-size: 9.5px; color: var(--fg-muted); white-space: nowrap; }
+.rows { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+
+/* A read-only record list: checkpoints, environment rows, a dry run. Selection
+   is the rose wash with a 2px left edge, the same mark a table row takes. */
+.pick-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--hairline); }
+.pick-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--hairline);
+  border-left: 2px solid transparent;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+}
+.pick-row:hover { background: var(--wash); }
+.pick-row[aria-selected='true'], .pick-row[aria-current='true'] {
+  background: var(--rose-wash);
+  border-left-color: var(--accent);
+}
+.pick-row .what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pick-row .mono, .mono-line {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.empty-line { margin: 0; padding: 8px; font-size: 12px; color: var(--fg-muted); }
+.readout {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-control);
+  background: var(--field);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow: auto;
+}
+.readout.prose { font-family: var(--font-ui); font-size: 12.5px; }
+.finding { display: block; }
+.finding.block { color: var(--invalid); }
+.finding.note { color: var(--warn); }
+
+/* A log: one mono line per entry, a level word in mono so colour is never the
+   only signal, and the newest line at the foot. */
+.log-view {
+  min-height: 0;
+  margin: 0;
+  padding: 6px;
+  overflow: auto;
+  background: var(--field);
+  border-radius: var(--radius-control);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.log-line { display: block; }
+.log-line .lvl { display: inline-block; min-width: 5ch; color: var(--fg-muted); }
+.log-line.warn .lvl { color: var(--warn); }
+.log-line.error .lvl { color: var(--invalid); }
+.log-line.ok .lvl { color: var(--valid); }
+.log-line.warn { color: var(--warn); }
+.log-line.error { color: var(--invalid); }
+.log-line.ok { color: var(--valid); }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

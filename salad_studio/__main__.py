@@ -1,4 +1,4 @@
-"""``python -m salad_studio`` opens the window."""
+"""``python -m salad_studio`` starts the studio's server and opens the page."""
 from __future__ import annotations
 
 import sys
@@ -8,13 +8,13 @@ for _p in (Path(__file__).resolve().parent, Path(__file__).resolve().parent.pare
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-import flet as ft  # noqa: E402
-
-from salad_studio.flet_app import app_main  # noqa: E402
+from salad_studio.web import app  # noqa: E402
 
 
-def main() -> None:
-    ft.run(app_main)
+def main(argv: list[str] | None = None) -> None:
+    args = list(sys.argv[1:] if argv is None else argv)
+    port = next((int(arg) for arg in args if arg.isdigit()), 0)
+    app.run(port=port, open_browser="--no-open" not in args)
 
 
 if __name__ == "__main__":

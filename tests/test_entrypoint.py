@@ -1,7 +1,7 @@
-"""Entry point: `python -m salad_studio` must open the Flet window.
+"""Entry point: ``python -m salad_studio`` must start the studio's server.
 
-Importing the package's `__main__` only binds the name; `main()` runs under the
-`__name__ == "__main__"` guard, so no window is created here.
+Importing the package's ``__main__`` only binds the name; ``main()`` runs under
+the ``__name__ == "__main__"`` guard, so nothing is served here.
 """
 from __future__ import annotations
 
@@ -19,21 +19,23 @@ for _p in (PKG, TOOLS):
 
 
 class ModuleEntryPoint(unittest.TestCase):
-    def test_main_module_runs_the_window(self) -> None:
+    def test_main_module_runs_the_server(self) -> None:
         import salad_studio.__main__ as m
-        from salad_studio import flet_app
+        from salad_studio.web import app
 
         self.assertTrue(callable(m.main))
-        self.assertIs(m.app_main, flet_app.app_main)
-        self.assertIs(flet_app.main.__globals__["app_main"], flet_app.app_main)
+        self.assertIs(m.app, app)
+        self.assertTrue(callable(app.run))
 
-    def test_the_windows_annotations_resolve(self) -> None:
-        """Every annotation names a real object, not a missing import."""
-        from salad_studio import flet_app
+    def test_the_entry_point_annotations_resolve(self) -> None:
+        from salad_studio.web import app
 
-        for name in ("Form", "Window", "build", "app_main", "default_page"):
+        for name in ("build", "run", "Studio"):
             with self.subTest(name=name):
-                self.assertIsInstance(typing.get_type_hints(getattr(flet_app, name)), dict)
+                target = getattr(app, name)
+                if isinstance(target, type):
+                    target = target.__init__
+                self.assertIsInstance(typing.get_type_hints(target), dict)
 
 
 if __name__ == "__main__":

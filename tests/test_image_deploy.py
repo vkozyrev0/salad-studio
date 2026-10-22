@@ -19,8 +19,9 @@ for _p in (PKG, HERE.parent):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-from salad_studio import image_deploy as deploy, studio_meta  # noqa: E402
-from tests.test_launch import _TempPaths  # noqa: E402
+import image_deploy as deploy  # noqa: E402  the module the page reads through
+from salad_studio import studio_meta  # noqa: E402
+from tests._paths import _TempPaths  # noqa: E402
 
 KLEIN_TAG = "docker.io/vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-klein"
 SNOFS_TAG = "docker.io/vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-snofs"
@@ -36,6 +37,9 @@ class UserImagesAreStored(unittest.TestCase):
         self._ctx = _TempPaths(self.tmp)
         self._ctx.__enter__()
         self.addCleanup(lambda: self._ctx.__exit__(None, None, None))
+        self._saved = (deploy.SETTINGS_PATH, deploy.load_settings())
+        self.addCleanup(lambda: (setattr(deploy, "SETTINGS_PATH", self._saved[0]),
+                                 deploy.save_settings(self._saved[1])))
 
     @staticmethod
     def _entry(entry_name: str) -> dict:
@@ -133,22 +137,6 @@ class UserImagesAreStored(unittest.TestCase):
         entry = deploy.entry_by_ref(deploy.entries(studio_meta.load(), settings), "plain")
         assert entry is not None
         self.assertNotIn("-p ", deploy.deploy_script(entry, []).split("# vast.ai")[0])
-
-    def test_the_config_page_offers_the_tags_and_still_takes_a_typed_one(self) -> None:
-        from salad_studio.pages.config import ConfigPage
-        from tests._flet_host import Host
-
-        host = Host()
-        page = ConfigPage(host)
-        offered = [entry["tag"] for entry in deploy.entries(studio_meta.load(), deploy.load_settings())]
-        self.assertEqual(offered[:2], [KLEIN_TAG, SNOFS_TAG])
-        for image, want in ((SNOFS_TAG, SNOFS_TAG), ("hand/typed:tag", "hand/typed:tag")):
-            with self.subTest(image=image):
-                page.policy_image.value = image
-                self.assertEqual(
-                    page.policy_from_fields()["image"], want,
-                    "a tag the app was never told about must still be usable",
-                )
 
     def test_an_image_added_then_removed_leaves_the_documents_two(self) -> None:
         settings, _ = deploy.add_image(deploy.load_settings(), "my-fork", "user/eldermark-klein:test")

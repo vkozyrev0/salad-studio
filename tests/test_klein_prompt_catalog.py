@@ -38,7 +38,16 @@ for p in (str(TOOLS), str(PKG)):
         sys.path.insert(0, p)
 
 from salad_studio import comfy_import as ci  # noqa: E402
-from salad_studio import json_highlight  # noqa: E402
+from salad_studio.generator import parse_request_json  # noqa: E402
+
+
+def _valid(text: str) -> tuple[bool, str]:
+    """The same parse Generate uses, as (ok, a readable reason)."""
+    try:
+        parse_request_json(text)
+    except (ValueError, TypeError) as exc:
+        return False, str(exc)
+    return True, "JSON valid"
 
 REPO = TOOLS  # the tool's own root; salad_klein/ sits beside the package
 KLEIN = TOOLS / "salad_klein"
@@ -193,7 +202,7 @@ class RecipesAreWellFormed(unittest.TestCase):
     def test_each_recipe_passes_the_editor_gate(self) -> None:
         for path in self._recipes():
             with self.subTest(recipe=path.name):
-                ok, msg = json_highlight.verify_request_json(path.read_text(encoding="utf-8"))
+                ok, msg = _valid(path.read_text(encoding="utf-8"))
                 self.assertTrue(ok, f"{path.name}: {msg}")
 
     def test_every_node_edge_resolves(self) -> None:

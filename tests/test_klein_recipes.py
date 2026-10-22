@@ -13,7 +13,7 @@ test. Editing the recipe without re-judging it fails these tests, which is the
 point: a prompt is only "good" because a human said so.
 
 The tests still drive both files through the same gates Generate uses,
-``json_highlight.verify_request_json`` (editor) and
+``generator.parse_request_json`` (editor) and
 ``comfy_import.prompt_for_salad_replica`` (the POST copy).
 """
 from __future__ import annotations
@@ -32,7 +32,16 @@ for p in (str(TOOLS), str(PKG)):
         sys.path.insert(0, p)
 
 from salad_studio import comfy_import as ci  # noqa: E402
-from salad_studio import json_highlight  # noqa: E402
+from salad_studio.generator import parse_request_json  # noqa: E402
+
+
+def _valid(text: str) -> tuple[bool, str]:
+    """The same parse Generate uses, as (ok, a readable reason)."""
+    try:
+        parse_request_json(text)
+    except (ValueError, TypeError) as exc:
+        return False, str(exc)
+    return True, "JSON valid"
 
 KLEIN_DIR = TOOLS / "salad_klein"
 LEDGER_PATH = KLEIN_DIR / "prompt_ledger.json"
@@ -221,7 +230,7 @@ class PayloadGates(unittest.TestCase):
     """Both gates Generate uses, on the verified recipe."""
 
     def test_the_editor_gate_accepts_it(self) -> None:
-        ok, msg = json_highlight.verify_request_json(RECIPE().read_text(encoding="utf-8"))
+        ok, msg = _valid(RECIPE().read_text(encoding="utf-8"))
         self.assertTrue(ok, msg)
 
     def test_convert_output_is_jpeg(self) -> None:

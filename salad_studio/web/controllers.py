@@ -1,0 +1,273 @@
+"""The page controllers, and the shell's own actions.
+
+A controller is one class per page: ``state()`` for what the page shows, and
+one method per action. It never touches another page's state directly; when a
+page has to change another, it asks the studio for that page's controller, or
+it navigates and lets the page read what changed.
+
+Only Tokens exists so far. The other ten page modules port next, each one
+replacing its Flet counterpart in place.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+# The top-level module, which is the one the page's token code and the dev
+# server's isolation both configure. ``salad_studio.tokens`` is a second copy
+# with its own path constant; a controller that used it would read a different
+# store from the one the rest of the studio writes.
+import tokens
+
+SLOTS: tuple[tuple[str, str], ...] = (
+    ("salad", "Salad"),
+    ("huggingface", "Hugging Face"),
+    ("civitai", "Civitai"),
+    ("deepseek", "DeepSeek"),
+    ("vast", "Vast.ai"),
+)
+
+
+def _slot_value(kind: str) -> str:
+    try:
+        return tokens.read_token(kind) or ""
+    except (AttributeError, OSError):
+        return ""
+
+
+def _slot_state(kind: str) -> str:
+    """The dot's state until a check answers: a stored key is unconfirmed, not valid."""
+    return "unknown"
+
+
+class TokensController:
+    page = "tokens"
+
+    def __init__(self, studio: Any) -> None:
+        self.studio = studio
+        self.states: dict[str, str] = {kind: "unknown" for kind, _label in SLOTS}
+
+    def register(self, table: Any) -> None:
+        table.action("tokens.view")(self.view)
+        table.action("tokens.save_key", need={"values": dict})(self.save_key)
+        table.action("tokens.check_keys")(self.check_keys)
+
+    def view(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:
+        return self.state()
+
+    def state(self) -> dict[str, Any]:
+        return {
+            "slots": [
+                {
+                    "id": kind,
+                    "label": label,
+                    "value": _slot_value(kind),
+                    "state": self.states.get(kind, "unknown"),
+                    "tooltip": {"valid": "accepted", "invalid": "rejected"}.get(
+                        self.states.get(kind, "unknown"), "unconfirmed"),
+                }
+                for kind, label in SLOTS
+            ]
+        }
+
+    # -- actions
+
+    def save_key(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:
+        values = payload["values"]
+        saved: list[str] = []
+        for kind, label in SLOTS:
+            if kind not in values:
+                continue
+            value = str(values[kind] or "").strip()
+            if not value:
+                continue
+            try:
+                tokens.write_token(kind, value)
+            except OSError as exc:
+                ctx.note(f"Could not save the {label} key: {exc}", level="error")
+                ctx.dialog("Could not save the key", str(exc), level="error")
+                return self.state()
+            saved.append(label)
+            self.states[kind] = "unknown"
+        ctx.note(
+            f"Saved {', '.join(saved)}. Check keys confirms each one." if saved
+            else "Nothing to save: every field was empty.",
+            level="ok" if saved else "warn")
+        return self.state()
+
+    def check_keys(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:
+        values = {kind: _slot_value(kind) for kind, _label in SLOTS}
+
+        def work() -> Any:
+            out: dict[str, str] = {}
+            for kind, value in values.items():
+                try:
+                    out[kind] = str(tokens.probe_token(kind, key=value or None).get("state") or "unknown")
+                except Exception:  # noqa: BLE001 - a probe never fails the page
+                    out[kind] = "unknown"
+            return out
+
+        def done(result: Any) -> None:
+            if isinstance(result, Exception):
+                ctx.note(f"Could not check the keys: {result}", level="error")
+                return
+            self.states.update(result)
+            bad = [label for kind, label in SLOTS if result.get(kind) == "invalid"]
+            ctx.note("Checked the typed keys" if not bad else f"Rejected: {', '.join(bad)}",
+                     level="ok" if not bad else "warn")
+
+        ctx.background(work, done)
+        ctx.note("Checking the keys…")
+        return self.state()
+
+
+class ShellController:
+    """Generate, the gallery clean, and the check every page's bar offers.
+
+    Generate reads two pages it does not own: the editor's JSON and the form
+    the Settings page writes. It reaches them through the table, so the rule
+    that one page never touches another's fields holds here too.
+    """
+
+    page = "shell"
+
+    def __init__(self, studio: Any) -> None:
+        self.studio = studio
+
+    def register(self, table: Any) -> None:
+        table.action("shell.view")(self.view)
+        table.action("shell.generate")(self.generate)
+        table.action("shell.check_salad")(self.check_salad)
+        table.action("shell.clean_gallery")(self.clean_gallery)
+        table.action("shell.open_plate", need={"name": str})(self.open_plate)
+
+    def view(self, payload: dict[str, Any], *, ctx: Any = None) -> dict[str, Any]:
+        return self.state()
+
+    def state(self) -> dict[str, Any]:
+        return {}
+
+    # -- actions
+
+    def generate(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:
+        from salad_studio import generator, profiles, salad_queue
+
+        text = self._ask("editor", "text")
+        try:
+            body = generator.parse_request_json(text)
+        except (ValueError, TypeError) as exc:
+            return self._refused(ctx, f"Prompt Editor JSON is invalid: {exc}")
+        try:
+            profile = self.studio.form.profile(self.studio.stored_profile())
+        except ValueError as exc:
+            return self._refused(ctx, str(exc))
+        refusal = self._dispatch_refusal(body, profile)
+        if refusal:
+            return self._refused(ctx, refusal)
+        self.studio.services.log("info", f"Generate  {profile.mode}  {profile.gateway}  graph={profile.graph}")
+        self.studio.services.remember_request(body, profile)
+        self.studio.say("Generating")
+        ctx.note(f"Generating on {profile.name}", level="info")
+        ctx.background(
+            lambda: self.studio.services.generate_sync(
+                body, profile, self.studio.services.salad_key(),
+                salad_queue.request_checksum(body)),
+            lambda outcome: self._generated(ctx, outcome))
+        return {}
+
+    def check_salad(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:
+        self.studio.services.check_salad()
+        ctx.note("Checking the Salad gateways")
+        return {}
+
+    def clean_gallery(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:
+        if not ctx.confirmed:
+            ctx.effects.append({
+                "kind": "confirm",
+                "token": self.studio.issue_confirm("shell", "clean_gallery", {}),
+                "title": "Clean the gallery",
+                "body": "This deletes every plate in the output folder. It cannot be undone.",
+            })
+            return {}
+        removed = self.studio.services.clean_gallery()
+        self.studio.refresh_plates()
+        ctx.note(f"Removed {removed} plate(s).", level="ok")
+        return {}
+
+    def open_plate(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:
+        path = self.studio.services.plate_path(payload["name"])
+        if path is None:
+            ctx.note(f"No plate named {payload['name']}.", level="warn")
+            return {}
+        self.studio.services.open_path(path)
+        ctx.note(f"Opened {path.name}", level="info")
+        return {}
+
+    # -- helpers
+
+    def _ask(self, page: str, action: str, args: dict[str, Any] | None = None) -> Any:
+        """Another page's state or action, run through the table on this thread."""
+        result = self.studio.controllers.table.call(f"{page}.{action}", args or {})
+        if result.error is not None:
+            raise ValueError(result.error.message)
+        return result.data
+
+    def _refused(self, ctx: Any, message: str) -> dict[str, Any]:
+        self.studio.services.log("error", f"Generate blocked: {message}")
+        ctx.note(f"Refused: {message}", level="error")
+        ctx.dialog("Salad Studio", message, level="error")
+        return {}
+
+    def _dispatch_refusal(self, body: dict[str, Any], profile: Any) -> str:
+        """Why this press cannot be queued at all, in the Flet app's words; "" when it can."""
+        from salad_studio import profiles, vast
+
+        if profile.mode == "vast":
+            return "" if profile.gateway.strip() else "No vast.ai instance is selected."
+        route, refusal = profiles.plan_route(body, profile, profiles.load_all())
+        if refusal:
+            return refusal
+        endpoints = {str(row.get("endpoint") or "").strip()
+                     for row in (vast.load_doc().get("instances") or [])
+                     if str(row.get("endpoint") or "").strip()}
+        if route is not None:
+            self.studio.services.log(
+                "info", f"Routed to profile {route.name!r} (gateway {route.profile.gateway})")
+            profile.gateway, profile.name, profile.mode = (
+                route.profile.gateway, route.profile.name, route.profile.mode)
+        if (profile.gateway or "").strip() in endpoints:
+            return ("the Salad target holds a vast.ai instance URL, so the Salad key would be "
+                    "sent to that machine. Pick the Salad gateway on the Config page, then "
+                    "Generate again.")
+        if not profile.gateway:
+            return "the gateway URL is empty"
+        if not self.studio.services.salad_key():
+            return "no Salad API key is saved"
+        return ""
+
+    def _generated(self, ctx: Any, outcome: Any) -> None:
+        from salad_studio import prompt_history
+        from salad_studio.web.services import GenOutcome
+
+        if not isinstance(outcome, GenOutcome):
+            outcome = GenOutcome("failed", message=str(outcome))
+        if outcome.kind == "refused":
+            ctx.note(f"Refused: {outcome.message}", level="error")
+        elif outcome.kind == "failed":
+            self.studio.services.log("error", outcome.message)
+            ctx.note("Failed. See Logs", level="error")
+            ctx.dialog("Salad Studio", outcome.message, level="error")
+        else:
+            ctx.note(f"Wrote {outcome.out}", level="ok")
+            if outcome.out is not None:
+                try:
+                    prompt_history.attach_image(Path(outcome.out))
+                except (OSError, ValueError, TypeError) as exc:
+                    self.studio.services.log("warn", f"history thumb skipped: {exc}")
+        self.studio.refresh_plates()
+
+
+def install(controllers: Any) -> None:
+    """Build every controller. Called once, on the core thread, before serving."""
+    controllers.add(ShellController(controllers.studio))
+    controllers.add(TokensController(controllers.studio))

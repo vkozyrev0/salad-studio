@@ -16,7 +16,7 @@ for p in (str(TOOLS), str(PKG)):
 
 from salad_studio import prompt_history as ph  # noqa: E402
 from tests import _stores  # noqa: E402
-from tests.test_launch import _TempPaths  # noqa: E402
+from tests._paths import _TempPaths  # noqa: E402
 
 
 def setUpModule() -> None:
@@ -256,75 +256,6 @@ def _page_rows(page) -> list[list[str]]:
                     for cell in row.cells])
     return out
 
-
-class LivePromptHistory(unittest.TestCase):
-    """Reuse, on the real Prompt History and Prompt Editor pages, every store in a temp dir."""
-
-    def setUp(self) -> None:
-        self._td = tempfile.TemporaryDirectory()
-        self.addCleanup(self._td.cleanup)
-        self.tmp = Path(self._td.name)
-        self._ctx = _TempPaths(self.tmp)
-        self._ctx.__enter__()
-        self.addCleanup(lambda: self._ctx.__exit__(None, None, None))
-        from tests._flet_host import Host
-
-        self.host = Host()
-
-    def _history(self) -> Any:
-        from salad_studio.pages.history import HistoryPage
-
-        page = HistoryPage(self.host)
-        self.host.store_page("Prompt History", page)
-        return page
-
-    def test_a_bare_prompt_reuse_fills_the_prompt_box(self) -> None:
-        """A row with no request is reused as text, and lands on Prompt Editor."""
-        from salad_studio import request_json
-
-        ph.add_prompt("Aged art. Oil painting style.")
-        editor = self.host.open_page("Prompt Editor")
-        editor.set_payload(request_json.build_request(prompt_text="first", negative_text="",
-                                                      graph="klein", width=1024, height=1024,
-                                                      steps=20, seed=1))
-        page = self._history()
-        self.assertEqual(len(_page_rows(page)), 1, "the page lists the stored prompt")
-        page.select_row(0)
-        page.reuse()
-        self.assertEqual(self.host.screen.current, "Prompt Editor")
-        self.assertIn("Aged art. Oil painting style.", editor.positive.value)
-
-    def test_reuse_restores_request_json(self) -> None:
-        body = {
-            "prompt": {
-                "74": {
-                    "class_type": "CLIPTextEncode",
-                    "inputs": {"text": "history oil stallion", "clip": ["71", 0]},
-                },
-                "70": {
-                    "class_type": "UNETLoader",
-                    "inputs": {
-                        "unet_name": "flux-2-klein-base-9b-fp8.safetensors",
-                        "weight_dtype": "default",
-                    },
-                },
-            },
-            "convert_output": {"format": "jpeg"},
-        }
-        ph.add_request(body)
-        page = self._history()
-        rows = _page_rows(page)
-        self.assertEqual(len(rows), 1)
-        # COLUMNS: When, Prompt, Graph, Rating, Image.
-        self.assertEqual(rows[0][3], "", "an unrated row shows no stars")
-        self.assertIn("history oil stallion", rows[0][1])
-        self.assertEqual(rows[0][2], "2 nodes · no LoRA", "the graph column describes the request")
-        page.select_row(0)
-        page.reuse()
-        self.assertEqual(self.host.screen.current, "Prompt Editor")
-        editor = self.host.pages["Prompt Editor"]
-        self.assertIn("history oil stallion", editor.text())
-        self.assertIn("CLIPTextEncode", editor.text())
 
 
 if __name__ == "__main__":

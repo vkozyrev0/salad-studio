@@ -39,33 +39,3 @@ export class Selection {
     this.moved.update((n) => n + 1);
   }
 }
-
-/**
- * The keys an arrow key, Home or End drives, wired onto any focusable
- * element of a page. A field keeps its own arrows, so a key pressed inside one
- * is left alone.
- */
-export function gridKey(
-  selection: Selection,
-  from: () => readonly object[],
-  field: string,
-): (event: KeyboardEvent) => void {
-  return (event) => {
-    const target = event.target as HTMLElement | null;
-    if (target && isField(target)) return;
-    const where =
-      event.key === 'ArrowDown' ? 'next'
-      : event.key === 'ArrowUp' ? 'prev'
-      : event.key === 'Home' ? 'first'
-      : event.key === 'End' ? 'last'
-      : null;
-    if (!where) return;
-    event.preventDefault();
-    selection.shown(from().map((row) => String((row as Record<string, unknown>)[field] ?? '')));
-    selection.move(where);
-  };
-}
-
-function isField(element: HTMLElement): boolean {
-  return element.closest('input, textarea, select, [contenteditable="true"]') !== null;
-}

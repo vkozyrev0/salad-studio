@@ -17,28 +17,30 @@ import { StudioStore } from '../core/studio-store';
   template: `
     @if (message(); as box) {
       <div class="scrim" role="presentation" (click)="store.dismissDialog()"></div>
-      <div class="box" role="alertdialog" aria-modal="true" [attr.aria-labelledby]="'dialog-title'">
+      <div class="box" role="alertdialog" aria-modal="true" [attr.aria-labelledby]="'dialog-title'"
+           aria-describedby="dialog-body" (keydown)="trap($event)">
         <div class="head">
           <span class="mark" [class.bad]="box.level === 'error'" aria-hidden="true"></span>
           <h2 id="dialog-title">{{ box.title }}</h2>
         </div>
-        <p class="body">{{ box.body }}</p>
+        <p class="body" id="dialog-body">{{ box.body }}</p>
         <div class="foot">
-          <button class="quiet" type="button" (click)="store.dismissDialog()" autofocus>OK</button>
+          <button class="btn quiet" type="button" (click)="store.dismissDialog()" autofocus>OK</button>
         </div>
       </div>
     }
     @if (ask(); as box) {
       <div class="scrim" role="presentation" (click)="store.dismissConfirm()"></div>
-      <div class="box" role="alertdialog" aria-modal="true" [attr.aria-labelledby]="'confirm-title'">
+      <div class="box" role="alertdialog" aria-modal="true" [attr.aria-labelledby]="'confirm-title'"
+           aria-describedby="confirm-body" (keydown)="trap($event)">
         <div class="head">
           <span class="mark" aria-hidden="true"></span>
           <h2 id="confirm-title">{{ box.title }}</h2>
         </div>
-        <p class="body">{{ box.body }}</p>
+        <p class="body" id="confirm-body">{{ box.body }}</p>
         <div class="foot">
-          <button class="quiet" type="button" (click)="store.dismissConfirm()" autofocus>No</button>
-          <button class="danger" type="button" (click)="store.confirmYes()">Yes</button>
+          <button class="btn quiet" type="button" (click)="store.dismissConfirm()" autofocus>No</button>
+          <button class="btn danger" type="button" (click)="store.confirmYes()">Yes</button>
         </div>
       </div>
     }
@@ -69,17 +71,6 @@ import { StudioStore } from '../core/studio-store';
     h2 { margin: 0; font-family: var(--font-display); font-size: 15px; font-weight: 600; }
     .body { margin: 0; color: var(--fg); font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
     .foot { display: flex; justify-content: flex-end; gap: var(--space-sm); }
-    button {
-      font-family: var(--font-display);
-      font-size: 13px;
-      padding: 6px 14px;
-      border-radius: var(--radius-control);
-      cursor: pointer;
-    }
-    .quiet { background: transparent; border: 1px solid var(--border); color: var(--fg); }
-    .quiet:hover { border-color: var(--fg-muted); }
-    .danger { background: var(--invalid); border: 1px solid var(--invalid); color: var(--bg); font-weight: 600; }
-    .danger:hover { filter: brightness(1.08); }
   `,
 })
 export class DialogHost {
@@ -90,5 +81,23 @@ export class DialogHost {
   protected escape(): void {
     this.store.dismissDialog();
     this.store.dismissConfirm();
+  }
+
+  /** Keep Tab inside the dialog: a delete confirm must not hand focus to the page behind it. */
+  protected trap(event: KeyboardEvent): void {
+    if (event.key !== 'Tab') return;
+    const root = event.currentTarget as HTMLElement;
+    const items = [...root.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')];
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 }

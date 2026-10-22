@@ -130,27 +130,6 @@ import { DialogHost } from './dialog-host';
     .meter.idle { color: var(--invalid); }
     .meter b { color: var(--fg); }
 
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 7px;
-      height: 32px;
-      padding: 0 13px;
-      border: 1px solid transparent;
-      border-radius: var(--radius-control);
-      font-family: var(--font-ui);
-      font-size: 12.5px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: background 110ms ease, border-color 110ms ease, color 110ms ease;
-    }
-    .btn:disabled { opacity: 0.4; cursor: default; }
-    .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 600; }
-    .btn.primary:hover:not(:disabled) { background: var(--accent-hi); border-color: var(--accent-hi); }
-    .btn.primary:active:not(:disabled) { background: var(--accent-press); }
-    .btn.ghost { background: var(--surface); border-color: var(--rule); color: var(--fg); }
-    .btn.ghost:hover:not(:disabled) { background: var(--wash); border-color: var(--fg-muted); }
-
     .rail {
       grid-area: rail;
       display: flex;
@@ -273,7 +252,8 @@ export class Shell {
     const index = Math.max(0, this.pages.findIndex((p) => p.id === this.store.pageId()));
     if (event.key === 'Tab' || event.key === 'PageDown') {
       event.preventDefault();
-      void this.router.navigateByUrl('/' + this.pages[(index + 1) % this.pages.length].id);
+      const delta = event.shiftKey ? -1 : 1;
+      void this.router.navigateByUrl('/' + this.pages[(index + delta + this.pages.length) % this.pages.length].id);
     } else if (event.key === 'PageUp') {
       event.preventDefault();
       void this.router.navigateByUrl('/' + this.pages[(index - 1 + this.pages.length) % this.pages.length].id);

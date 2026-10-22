@@ -5,6 +5,16 @@ import { ActionReply, Effect, Level, PAGES, PageReply, ShellState, StudioEvent, 
 
 const LOG_CAP = 2000;
 
+/** The server's or the browser's own words for a failed request. */
+function messageOf(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'object' && err !== null) {
+    const value = Reflect.get(err, 'message');
+    if (typeof value === 'string' && value) return value;
+  }
+  return String(err);
+}
+
 /**
  * Everything the page knows, in signals.
  *
@@ -29,6 +39,10 @@ export class StudioStore {
   readonly dialog = signal<Extract<Effect, { kind: 'dialog' }> | null>(null);
   readonly confirm = signal<Extract<Effect, { kind: 'confirm' }> | null>(null);
   readonly inFlight = signal<ReadonlySet<string>>(new Set());
+  /** A page GET is running; a grid shows its spinner, not its empty copy. */
+  readonly loading = signal(false);
+  /** The last page GET failed; the frame says so instead of showing an empty page. */
+  readonly loadError = signal('');
 
   readonly pageInfo = computed(() => PAGES.find((p) => p.id === this.pageId()) ?? PAGES[0]);
   readonly isBusy = computed(() => this.inFlight().size > 0);
@@ -75,16 +89,18 @@ export class StudioStore {
   }
 
   async load(id: string): Promise<void> {
-    console.log('[load]', id);
     this.pageId.set(id);
+    this.loading.set(true);
+    this.loadError.set('');
     try {
       const reply = await this.api.page(id);
-      console.log('[load] got', id, reply.ok, Object.keys(reply.state || {}).length);
       this.page.set(reply.state);
       this.shell.set(reply.shell);
       this.busy.set(reply.busy);
     } catch (err) {
-      console.log('[load] failed', id, String(err));
+      this.loadError.set(messageOf(err));
+    } finally {
+      this.loading.set(false);
     }
   }
 

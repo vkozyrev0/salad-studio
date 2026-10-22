@@ -63,6 +63,7 @@ class ConfigTest(unittest.TestCase):
         self.core = Core(workers=2).start()
         self.hub = Hub()
         self.studio = Shell(self.core, self.hub)
+        self.studio.services.out_dir = Path(self.tmp.name) / "art"
         self.studio.controllers = Controllers(self.studio)
         self.studio.controllers.add(config_page.ConfigController(self.studio))
         self.studio.services.start(timers=False)
@@ -324,6 +325,21 @@ class ConfigTest(unittest.TestCase):
             salad_status.list_gpu_classes, salad_status.load_policy = saved
         self.assertTrue(done["ok"])
         self.assertIn("No container group", [e["body"] for e in done["effects"] if e["kind"] == "dialog"][0])
+
+    def test_switching_to_vast_drops_a_salad_gateway(self) -> None:
+        self.call("set_mode", mode="vast")
+        self.assertEqual(self.studio.form.mode, "vast")
+        self.assertEqual(self.studio.form.gateway, "",
+                         "a Salad target must not follow the engine switch")
+
+    def test_switching_to_salad_drops_a_vast_endpoint(self) -> None:
+        doc, refusal = vast.add_instance(vast.empty_doc(), "203.0.113.9:31234")
+        self.assertEqual(refusal, "")
+        vast.save_doc(doc)
+        self.studio.form.gateway = "http://203.0.113.9:31234"
+        self.call("set_mode", mode="salad")
+        self.assertEqual(self.studio.form.mode, "salad")
+        self.assertEqual(self.studio.form.gateway, "")
 
 
 if __name__ == "__main__":

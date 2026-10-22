@@ -76,9 +76,10 @@ class WebEngine:
                 self.studio.busy.pop(key, None)
         if result.error is not None:
             self.studio.say(result.error.message, level="error" if result.error.kind == "failed" else "warn")
-            return 200, self._reply(page, ok=False, error=result.error.as_dict(), effects=ctx.effects, pending=ctx.is_pending)
+            return 200, self._reply(page, ok=False, error=result.error.as_dict(), effects=ctx.effects,
+                                    pending=ctx.is_pending, action=action)
         self._note(ctx)
-        reply = self._reply(page, ok=True, effects=ctx.effects, pending=ctx.is_pending)
+        reply = self._reply(page, ok=True, effects=ctx.effects, pending=ctx.is_pending, action=action)
         if ctx.is_pending:
             reply["id"] = ctx.pending_id
         return 200, reply
@@ -103,7 +104,7 @@ class WebEngine:
                 self.studio.services.log("error", f"{key} finished badly: {exc}")
         self._note(ctx)
         reply = self._reply(ctx.page, ok=ctx.error is None, error=ctx.error,
-                            effects=ctx.effects, pending=False)
+                            effects=ctx.effects, pending=False, action=ctx.action)
         # The page's state dict is rebuilt per reply, but a dict copied into
         # the reply shares nothing with the controller: this is the state as
         # the event was sent, which is what a test and a replay both read.
@@ -118,11 +119,13 @@ class WebEngine:
         return self._act(page, action, args, True)
 
     def _reply(self, page: str, *, ok: bool, effects: list[dict[str, Any]] | None = None,
-               error: dict[str, Any] | None = None, pending: bool = False) -> dict[str, Any]:
+               error: dict[str, Any] | None = None, pending: bool = False,
+               action: str = "") -> dict[str, Any]:
         reply: dict[str, Any] = {
             "ok": ok,
             "id": "",
             "page": page,
+            "action": action,
             "pending": pending,
             "error": "",
             "state": self._state(page),

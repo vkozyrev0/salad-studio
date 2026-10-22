@@ -44,6 +44,11 @@ class AssembledStudioTest(unittest.TestCase):
          tokens.read_env_token, tokens.seed_from_defaults) = self.saved
         self.tmp.cleanup()
 
+    def test_the_app_opens_on_config_and_wires_the_core_error_sink(self) -> None:
+        self.assertEqual(app.START_PAGE, "config")
+        self.assertTrue(self.studio.url.endswith("#/config"), self.studio.url)
+        self.assertIsNotNone(self.studio.core.on_error, "a timer error must be logged, not raised")
+
     def test_every_page_the_rail_names_answers_with_a_state(self) -> None:
         for page in PAGE_IDS:
             with self.subTest(page=page):

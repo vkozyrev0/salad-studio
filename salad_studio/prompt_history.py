@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+import atomic  # noqa: E402  the leaf modules are imported top-level
+
 HISTORY_PATH = Path.home() / ".config" / "salad" / "studio-prompt-history.json"
 THUMBS_DIR = Path.home() / ".config" / "salad" / "studio-prompt-thumbs"
 MAX_ENTRIES = 100
@@ -55,8 +57,7 @@ def _load() -> list[dict[str, Any]]:
 
 
 def _save(rows: list[dict[str, Any]]) -> None:
-    HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    HISTORY_PATH.write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")
+    atomic.write_text(HISTORY_PATH, json.dumps(rows, indent=2) + "\n")
 
 
 def list_prompts() -> list[dict[str, Any]]:

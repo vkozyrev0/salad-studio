@@ -308,7 +308,9 @@ class TokensOnTheServer(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertEqual(made.studio.services.salad_key(), "sk-from-the-page")
             slots = {slot["id"]: slot for slot in made.state("tokens")["slots"]}
-            self.assertEqual(slots["salad"]["value"], "sk-from-the-page")
+            self.assertEqual(slots["salad"]["value"], "", "the raw key never leaves the server")
+            self.assertTrue(slots["salad"]["present"])
+            self.assertIn("page", slots["salad"]["hint"])
 
     def test_the_rail_lists_the_pages_in_order(self) -> None:
         from salad_studio.web.registry import PAGE_IDS

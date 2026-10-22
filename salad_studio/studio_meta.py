@@ -266,6 +266,7 @@ def normalise(data: dict[str, Any], *, source: str = "") -> dict[str, Any]:
             "task": _text(prompt.get("task")),
             "rules": _text_list(prompt.get("rules")),
             "reply_contract": _text(prompt.get("reply_contract")),
+            "provenance": _text(prompt.get("provenance")),
         },
         "source": source,
         "error": "",

@@ -80,7 +80,7 @@ import { PAGES, pageIdFromUrl } from '../core/models';
       color: var(--fg-muted);
       min-height: 34px;
     }
-    .stamp { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.04em; color: var(--rule); white-space: nowrap; }
+    .stamp { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.04em; color: var(--fg-muted); white-space: nowrap; }
     .note::before { content: ''; width: 4px; height: 4px; border-radius: 50%; background: var(--fg-muted); align-self: center; flex: none; }
     .note.ok { color: var(--valid); } .note.ok::before { background: var(--valid); }
     .note.warn { color: var(--warn); } .note.warn::before { background: var(--warn); }
@@ -100,8 +100,14 @@ export class PageFrame {
     const found = PAGES.find((p) => p.id === id) ?? PAGES[0];
     return found;
   });
-  protected readonly note = computed(() => this.store.shell().note);
-  protected readonly busy = computed(() => this.store.isBusy());
+  /** A failed page GET is the page's note, so an empty grid never reads as "no data". */
+  protected readonly note = computed(() => {
+    const error = this.store.loadError();
+    return error
+      ? { text: `Could not load this page: ${error}`, level: 'error' as const }
+      : this.store.shell().note;
+  });
+  protected readonly busy = computed(() => this.store.isBusy() || this.store.loading());
   /** The note's time, read once per note so the line reads like a ledger entry. */
   protected readonly stamp = computed(() => {
     const line = this.note().text;

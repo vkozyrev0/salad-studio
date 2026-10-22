@@ -67,7 +67,8 @@ naming an image, a unet or the build arg the document ships.
 Build and push both (`RGTHREE_COMMIT.txt` pins the node copy; weights are never baked):
 
 ```bash
-git clone --depth 1 https://github.com/rgthree/rgthree-comfy.git salad_klein/custom_nodes/rgthree-comfy
+git clone https://github.com/rgthree/rgthree-comfy.git salad_klein/custom_nodes/rgthree-comfy
+git -C salad_klein/custom_nodes/rgthree-comfy checkout 2c5342a8cb0eaecaabf61435a5f37dd594c510ba
 docker build --build-arg KLEIN_UNET_SET=base,distilled \
   -t vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-klein salad_klein
 docker push vkozyrev0/eldermark-klein:comfy0.35-api1.19.2-prefetch6-klein

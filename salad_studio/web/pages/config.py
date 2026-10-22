@@ -348,6 +348,18 @@ class ConfigController:
     def set_mode(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:
         mode = str(payload.get("mode") or "salad")
         self.studio.form.mode = mode if mode in ("salad", "vast") else "salad"
+        # The target follows the engine. A Salad gateway left in place would be
+        # POSTed with the vast key, and a vast endpoint with the Salad key.
+        gateway = self.studio.form.gateway.strip()
+        endpoints = {str(row.get("endpoint") or "").strip()
+                     for row in (vast.load_doc().get("instances") or [])}
+        salad_gateways = {p.gateway.strip() for p in profiles.load_all().values() if p.gateway.strip()}
+        if self.studio.form.mode == "vast" and (
+            gateway in salad_gateways or profiles.is_salad_gateway(gateway)
+        ):
+            self.studio.form.gateway = ""
+        elif self.studio.form.mode == "salad" and gateway in endpoints:
+            self.studio.form.gateway = ""
         self.studio.publish()
         return self.state()
 

@@ -20,16 +20,28 @@ EMPTY_TEXT = "No prompts yet. Every Generate stores its request here."
 THUMB = 48
 
 
+def _ts_index(entries: list[dict[str, Any]]) -> dict[Any, list[int]]:
+    """The positions of each timestamp, so one page load parses the store once."""
+    out: dict[Any, list[int]] = {}
+    for index, entry in enumerate(entries):
+        ts = entry.get("ts")
+        if ts not in (None, ""):
+            out.setdefault(ts, []).append(index)
+    return out
+
+
 def _index_of(row_id: str) -> int | None:
     """The store position a row's id names. One place, because a write must hit
     the same row the page drew."""
-    for index, entry in enumerate(prompt_history.list_prompts()):
-        if _row_id(index, entry) == row_id:
+    entries = prompt_history.list_prompts()
+    ts_index = _ts_index(entries)
+    for index, entry in enumerate(entries):
+        if _row_id(index, entry, ts_index) == row_id:
             return index
     return None
 
 
-def _row_id(index: int, entry: dict[str, Any]) -> str:
+def _row_id(index: int, entry: dict[str, Any], ts_index: dict[Any, list[int]] | None = None) -> str:
     """A row's stable id: its timestamp, and the store position only when it has none.
 
     Two entries saved in one second share a timestamp, and the older one is
@@ -38,15 +50,16 @@ def _row_id(index: int, entry: dict[str, Any]) -> str:
     ts = entry.get("ts")
     if ts in (None, ""):
         return f"#{index}"
-    same = [i for i, other in enumerate(prompt_history.list_prompts()) if other.get("ts") == ts]
+    same = (ts_index or {}).get(ts, [index])
     return str(ts) if len(same) <= 1 or index == min(same) else f"{ts}#{index}"
 
 
-def _row(index: int, entry: dict[str, Any], studio: Any) -> dict[str, Any]:
+def _row(index: int, entry: dict[str, Any], studio: Any,
+         ts_index: dict[Any, list[int]] | None = None) -> dict[str, Any]:
     req = entry.get("request") if isinstance(entry.get("request"), dict) else None
     image = str(entry.get("image") or "")
     return {
-        "id": _row_id(index, entry),
+        "id": _row_id(index, entry, ts_index),
         "ts": int(entry.get("ts") or 0),
         "prompt": prompt_history.preview(prompt_history.prompt_text_of(req) or str(entry.get("text") or "")),
         "graph": prompt_history.request_stats(req),
@@ -75,7 +88,9 @@ class HistoryController:
         return self.state()
 
     def state(self) -> dict[str, Any]:
-        rows = [_row(index, entry, self.studio) for index, entry in enumerate(prompt_history.list_prompts())]
+        entries = prompt_history.list_prompts()
+        ts_index = _ts_index(entries)
+        rows = [_row(index, entry, self.studio, ts_index) for index, entry in enumerate(entries)]
         selected = self.selected if any(row["id"] == self.selected for row in rows) else None
         return {
             "columns": list(COLUMNS),

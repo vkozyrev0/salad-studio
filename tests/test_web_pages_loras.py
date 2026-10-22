@@ -46,6 +46,7 @@ class LorasPageTest(unittest.TestCase):
         self.core = Core(workers=2).start()
         self.hub = Hub()
         self.studio = Shell(self.core, self.hub)
+        self.studio.services.out_dir = Path(self.tmp.name) / "art"
         self.studio.controllers = Controllers(self.studio)
         self.page = LorasController(self.studio)
         self.studio.controllers.add(self.page)

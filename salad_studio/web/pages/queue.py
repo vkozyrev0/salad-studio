@@ -10,9 +10,11 @@ decides how to lay out the counts.
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Any
 
 import salad_queue
+from salad_studio import generator, prompt_history
 
 COLUMNS = ("#", "Profile", "State", "Attempts", "Last status", "Reason", "Request", "Finished")
 EMPTY_TEXT = "The queue is empty. Press Generate to submit a render."
@@ -20,37 +22,23 @@ CANCEL_NOTE = ("Cancel drops a request that has not been submitted yet. A reques
                "container has already accepted keeps rendering.")
 
 
-def _retried(queue: Any, job: Any) -> dict[str, Any]:
-    """Run one failed job's own work again and report what the attempt did.
+def _retried(queue: Any, job: Any, out_dir: Path) -> dict[str, Any]:
+    """Retry one failed job through the queue, then save a plate it accepted.
 
-    ``SaladQueue.retry`` appends the job to its own line and then waits for its
-    turn. The slot it appended is its own, and only the ``finally`` that has not
-    run yet takes it away, so a retried ``Job`` waits on itself forever. A
-    failed job is on no line, so it runs here and not through ``retry``, and
-    the queue keeps the outcome under the job's id: the next state reads it, so
-    the row shows what the retry did.
+    ``SaladQueue.retry`` re-appends the job to its line, waits for its turn, and
+    records the outcome, so a retry cannot POST beside a Generate on the same
+    line. The plate is written here because the job's work only POSTs; the
+    caller that owns the output folder is this page.
     """
-    attempt = job.work
-    if attempt is None:
-        return {"state": job.state, "status": job.status, "reason": job.reason, "attempts": job.attempts}
-    before = job.attempts
-    queue._log("info", f"queue: request {job.id} retrying")
-    result = salad_queue.as_attempt(attempt(job))
-    outcome = salad_queue.classify(result)
-    state = salad_queue.ACCEPTED if outcome == salad_queue.OK else salad_queue.FAILED
-    reason = "" if state == salad_queue.ACCEPTED else salad_queue.reason_of(result)
-    with queue._cond:
-        job.state = state
-        job.attempts = before + 1
-        job.outcome = outcome
-        job.status = int(result.status)
-        job.accepted = bool(result.accepted)
-        job.reason = reason
-        job.result = result
-    queue._log("ok" if state == salad_queue.ACCEPTED else "error",
-               f"queue: request {job.id} {'accepted' if state == salad_queue.ACCEPTED else 'failed'}"
-               f" when retried" + (f" ({reason})" if reason else ""))
-    return {"state": state, "status": job.status, "reason": reason, "attempts": job.attempts}
+    job = queue.retry(job)
+    attempt = job.result if isinstance(job.result, salad_queue.Attempt) else None
+    if job.state == salad_queue.ACCEPTED and attempt is not None and isinstance(attempt.result, str):
+        out = generator.write_plate(attempt.result, Path(out_dir))
+        try:
+            prompt_history.attach_image(out)
+        except (OSError, ValueError, TypeError):
+            pass
+    return {"state": job.state, "status": job.status, "reason": job.reason, "attempts": job.attempts}
 
 
 def _finished_label(stamp: Any) -> str:
@@ -183,7 +171,7 @@ class QueueController:
         jid = int(job.id)
 
         def work() -> Any:
-            return _retried(queue, job)
+            return _retried(queue, job, self.studio.services.out_dir)
 
         def done(result: Any) -> None:
             if isinstance(result, Exception):
@@ -195,6 +183,9 @@ class QueueController:
             word = salad_queue.status_word(state)
             reason = str((result or {}).get("reason") or "")
             self.note = f"Request {jid} was retried: {word}." + (f" {reason}" if reason else "")
+            if state == salad_queue.ACCEPTED:
+                self.studio.refresh_plates()
+                self.studio.publish()
             ctx.note(self.note, level="ok" if state == salad_queue.ACCEPTED else "warn")
 
         self.note = f"Retrying request {jid}…"

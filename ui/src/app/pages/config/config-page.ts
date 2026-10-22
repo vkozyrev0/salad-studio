@@ -115,7 +115,7 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
             class="tab"
             type="button"
             role="tab"
-            tabindex="-1"
+            [attr.tabindex]="section() === tab.id ? 0 : -1"
             [id]="'tab-' + tab.id"
             [attr.aria-selected]="section() === tab.id"
             [attr.aria-controls]="'panel-' + tab.id"

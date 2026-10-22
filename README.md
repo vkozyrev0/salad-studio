@@ -7,6 +7,14 @@ a Python server on 127.0.0.1.
 
 ## Quick start
 
+Install the one dependency once:
+
+```
+python -m pip install -r requirements.txt
+```
+
+Then start the studio:
+
 ```
 python -m salad_studio
 ```
@@ -18,14 +26,14 @@ browser closed.
 Tests are `unittest`. Run the commands separately:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1063 tests, ~35 s
+python -m unittest discover -s tests -p "test_*.py"    # 1075 tests, ~35 s
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```
 
 ## Requirements
 
-Tested on Python 3.14.7 with `pillow`, and the standard library's `http.server`.
+Tested on Python 3.14.7 with `pillow==12.3.0` (see `requirements.txt`), and the standard library's `http.server`.
 The page is built with Angular 22 and AG Grid Community; `ui/dist/` is committed,
 so running the studio needs no Node. Windows still opens a plate with
 `os.startfile`.

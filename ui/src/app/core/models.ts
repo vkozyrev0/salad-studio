@@ -22,6 +22,8 @@ export interface ActionReply {
   ok: boolean;
   id: string;
   page: string;
+  /** The action name without the page prefix, so a done event can clear its lock. */
+  action: string;
   pending: boolean;
   error: string;
   state: unknown;

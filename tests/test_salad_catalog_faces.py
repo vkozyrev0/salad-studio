@@ -16,6 +16,7 @@ import ast
 import json
 import re
 import sys
+import tempfile
 import threading
 import traceback
 import types
@@ -165,10 +166,14 @@ def _drive_catalog(*, pre_fix: bool, code: int) -> tuple[int, int, str]:
         "--queue-depth",
         "1",
     ]
-    with mock.patch.object(salad_gen, "_req", transport), mock.patch.object(
-        sys, "argv", argv
-    ):
-        rc = namespace["main"]()
+    with tempfile.TemporaryDirectory() as tmp:
+        config = Path(tmp)
+        (config / "key").write_text("test-key", encoding="utf-8")
+        (config / "gateway").write_text("https://example.invalid", encoding="utf-8")
+        with mock.patch.object(salad_gen, "CONFIG", config), mock.patch.object(
+            salad_gen, "_req", transport
+        ), mock.patch.object(sys, "argv", argv):
+            rc = namespace["main"]()
     cell = (prog.get("cells") or {}).get("cell.jpg") or {}
     return rc, len(transport.posts), str(cell.get("status"))
 

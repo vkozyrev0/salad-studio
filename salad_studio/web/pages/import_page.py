@@ -158,12 +158,23 @@ class ImportController:
             ctx.dialog("Salad Studio", EMPTY_REFUSAL, level="error")
             ctx.note(f"Refused: {EMPTY_REFUSAL}", level="warn")
             return self.state()
-        filled = self._fill(workflow, meta, only_empty=bool(payload.get("only_empty")))
-        self._take_fill(filled)
-        if "error" in filled:
-            ctx.dialog("Salad Studio", f"Could not parse paste: {filled['error']}", level="error")
-            return self.state()
-        ctx.note("Import knobs filled from paste", level="info")
+        only_empty = bool(payload.get("only_empty"))
+
+        def work() -> dict[str, Any]:
+            return self._fill(workflow, meta, only_empty=only_empty)
+
+        def done(filled: Any) -> None:
+            if isinstance(filled, Exception):
+                self.issues, self.notes, self.inspected = [str(filled)], [], True
+                ctx.dialog("Salad Studio", f"Could not fill knobs: {filled}", level="error")
+                return
+            self._take_fill(filled)
+            if "error" in filled:
+                ctx.dialog("Salad Studio", f"Could not parse paste: {filled['error']}", level="error")
+                return
+            ctx.note("Import knobs filled from paste", level="info")
+
+        ctx.background(work, done)
         return self.state()
 
     def _fill(self, workflow: str, meta: str, *, only_empty: bool) -> dict[str, Any]:

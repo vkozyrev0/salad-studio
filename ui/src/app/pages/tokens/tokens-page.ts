@@ -8,6 +8,8 @@ interface Slot {
   id: string;
   label: string;
   value: string;
+  present: boolean;
+  hint: string;
   state: DotState;
   tooltip: string;
 }
@@ -37,7 +39,8 @@ interface TokensState {
               <input
                 [id]="'key-' + slot.id"
                 [type]="revealed().has(slot.id) ? 'text' : 'password'"
-                [value]="draft()[slot.id] ?? slot.value"
+                [value]="draft()[slot.id] ?? ''"
+                [placeholder]="slot.present ? slot.hint : 'not set'"
                 (input)="edit(slot.id, $event)"
                 autocomplete="off"
                 spellcheck="false"
@@ -49,10 +52,10 @@ interface TokensState {
           </div>
         }
         <div class="foot">
-          <button type="submit" class="primary" [disabled]="busy('save_key')">
+          <button type="submit" class="btn primary" [disabled]="busy('save_key')">
             {{ busy('save_key') ? 'Saving' : 'Save keys' }}
           </button>
-          <button type="button" class="quiet" [disabled]="busy('check_keys')" (click)="check()">
+          <button type="button" class="btn quiet" [disabled]="busy('check_keys')" (click)="check()">
             {{ busy('check_keys') ? 'Checking' : 'Check keys' }}
           </button>
           <span class="hint">Check keys asks each provider whether the key is accepted.</span>
@@ -102,29 +105,6 @@ interface TokensState {
     }
     .ghost:hover { color: var(--fg); border-color: var(--fg-muted); }
     .foot { display: flex; align-items: baseline; gap: var(--space-sm); margin-top: var(--space-md); }
-    .primary {
-      padding: 7px 16px;
-      background: var(--accent);
-      border: 1px solid var(--accent);
-      border-radius: var(--radius-control);
-      color: var(--accent-fg);
-      font-family: var(--font-display);
-      font-weight: 600;
-      font-size: 13px;
-      cursor: pointer;
-    }
-    .primary:disabled { opacity: 0.6; cursor: progress; }
-    .quiet {
-      padding: 7px 14px;
-      background: transparent;
-      border: 1px solid var(--border);
-      border-radius: var(--radius-control);
-      color: var(--fg);
-      font-size: 13px;
-      cursor: pointer;
-    }
-    .quiet:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-    .quiet:disabled { opacity: 0.6; cursor: progress; }
     .hint { margin-left: auto; font-size: 12px; color: var(--fg-muted); }
   `,
 })
@@ -159,7 +139,7 @@ export class TokensPage {
   }
 
   protected save(): void {
-    const values = Object.fromEntries(this.slots().map((s) => [s.id, this.draft()[s.id] ?? s.value]));
+    const values = Object.fromEntries(this.slots().map((s) => [s.id, this.draft()[s.id] ?? '']));
     void this.store.act('tokens', 'save_key', { values });
   }
 

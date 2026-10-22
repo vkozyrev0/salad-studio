@@ -7,8 +7,10 @@ it was issued for.
 """
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -19,8 +21,9 @@ for _p in (ROOT, ROOT / "salad_studio"):
         sys.path.insert(0, str(_p))
 
 import profiles  # noqa: E402
+import prompt_history  # noqa: E402
 import tokens  # noqa: E402
-from salad_studio.web import controllers  # noqa: E402
+from salad_studio.web import controllers, pages  # noqa: E402
 from salad_studio.web.core import Core  # noqa: E402
 from salad_studio.web.engine import WebEngine  # noqa: E402
 from salad_studio.web.events import Hub  # noqa: E402
@@ -36,8 +39,13 @@ class EngineTest(unittest.TestCase):
         # controller writes through.
         import salad_studio.tokens as pkg_tokens
 
+        self.pkg_tokens = pkg_tokens
+        self.history_saved = (prompt_history.HISTORY_PATH, prompt_history.THUMBS_DIR)
+        prompt_history.HISTORY_PATH = Path(self.tmp.name) / "studio-prompt-history.json"
+        prompt_history.THUMBS_DIR = Path(self.tmp.name) / "studio-prompt-thumbs"
         self.saved = [
-            (profiles.PROFILES_PATH, tokens.LOCAL_PATH),
+            (profiles.PROFILES_PATH,),
+            (tokens.LOCAL_PATH, tokens.default_path, tokens.read_env_token, tokens.seed_from_defaults),
             (pkg_tokens.LOCAL_PATH, pkg_tokens.default_path,
              pkg_tokens.read_env_token, pkg_tokens.seed_from_defaults),
         ]
@@ -53,10 +61,15 @@ class EngineTest(unittest.TestCase):
         self.core = Core(workers=2).start()
         self.hub = Hub()
         self.studio = Shell(self.core, self.hub)
+        self.studio.services.out_dir = Path(self.tmp.name) / "art"
         self.studio.controllers = Controllers(self.studio)
         controllers.install(self.studio.controllers)
+        pages.install(self.studio.controllers)
         self.studio.services.start(timers=False)
         self.engine = WebEngine(self.studio)
+        # A background action reports through the studio's engine, as app.build
+        # wires it; without this the done callback is dropped and a page waits.
+        self.studio.engine = self.engine
 
     def tearDown(self) -> None:
         self.studio.services.stop()
@@ -64,6 +77,9 @@ class EngineTest(unittest.TestCase):
         profiles.PROFILES_PATH = self.saved[0][0]
         (tokens.LOCAL_PATH, tokens.default_path, tokens.read_env_token,
          tokens.seed_from_defaults) = self.saved[1]
+        (self.pkg_tokens.LOCAL_PATH, self.pkg_tokens.default_path,
+         self.pkg_tokens.read_env_token, self.pkg_tokens.seed_from_defaults) = self.saved[2]
+        prompt_history.HISTORY_PATH, prompt_history.THUMBS_DIR = self.history_saved
         self.tmp.cleanup()
 
     def test_a_page_answers_with_its_state_the_shell_and_the_busy_map(self) -> None:
@@ -128,14 +144,66 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(status, 409)
         self.assertFalse(again["ok"])
 
+    def test_generate_reaches_the_services_and_clears_the_header(self) -> None:
+        """The press must reach the queue, and the header must show it running."""
+        from salad_studio.web.services import GenOutcome
+
+        self.studio.form.mode = "vast"
+        self.studio.form.gateway = "http://203.0.113.9:8188"
+        self.engine.handle({"page": "editor", "action": "set_json", "args": {
+            "text": '{"prompt": {"1": {"class_type": "UNETLoader", '
+                    '"inputs": {"unet_name": "x.safetensors"}}}}',
+            "base": 0,
+        }})
+        seen: list[tuple] = []
+        gate = threading.Event()
+
+        def fake_generate(payload, profile, key, checksum):
+            seen.append((payload, profile.name, key, checksum))
+            gate.wait(2)
+            return GenOutcome("done", out=None)
+
+        self.studio.services.generate_sync = fake_generate
+        status, reply = self.engine.handle({"page": "shell", "action": "generate", "args": {}})
+        self.assertEqual(status, 200)
+        self.assertEqual(reply["action"], "generate")
+        deadline = time.monotonic() + 5
+        while not seen and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertEqual(len(seen), 1, "Generate must reach generate_sync")
+        self.assertTrue(self.studio.gen.busy, "the header is busy while the render runs")
+        gate.set()
+        while self.studio.gen.busy and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertFalse(self.studio.gen.busy, "the header clears when the render ends")
+
+    def test_a_vast_press_refuses_a_typed_salad_gateway(self) -> None:
+        self.studio.form.mode = "vast"
+        self.studio.form.gateway = "https://typed.salad.cloud/"
+        self.engine.handle({"page": "editor", "action": "set_json", "args": {
+            "text": '{"prompt": {"1": {"class_type": "UNETLoader", '
+                    '"inputs": {"unet_name": "x.safetensors"}}}}',
+            "base": 0,
+        }})
+        _status, reply = self.engine.handle({"page": "shell", "action": "generate", "args": {}})
+        bodies = [e["body"] for e in reply["effects"] if e["kind"] == "dialog"]
+        self.assertTrue(any("Salad gateway" in body for body in bodies), bodies)
+        self.assertFalse(self.studio.gen.busy, "a refused press does not start a render")
+
+    def test_a_page_never_returns_a_raw_key(self) -> None:
+        tokens.write_token("salad", "sk-secret-1234")
+        reply = self.engine.page("tokens")
+        slot = next(s for s in reply["state"]["slots"] if s["id"] == "salad")
+        self.assertEqual(slot["value"], "", "the key stays on the server")
+        self.assertTrue(slot["present"])
+        self.assertNotIn("sk-secret", json.dumps(reply))
+
     def test_a_second_call_while_one_is_in_flight_is_refused_with_409(self) -> None:
-        started = time.monotonic()
         self.studio.controllers.get("tokens")
         self.studio.busy["tokens.check_keys"] = True
         status, reply = self.engine.handle({"page": "tokens", "action": "check_keys", "args": {}})
         self.assertEqual(status, 409)
         self.assertEqual(reply["error"]["kind"], "busy")
-        self.assertGreaterEqual(time.monotonic() - started, 0)
         self.studio.busy.pop("tokens.check_keys", None)
 
 

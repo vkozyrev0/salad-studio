@@ -11,6 +11,7 @@ import copy
 import json
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -85,6 +86,9 @@ class AssistTest(unittest.TestCase):
         self.sent: list[tuple[str, str, dict]] = []  # (url, body, headers) per request the module would send
         self.reply = ANSWER
         self.sender_error: Exception | None = None
+        # A test that reads the "asking" state sets this so the worker cannot
+        # answer before the assertion.
+        self.gate: threading.Event | None = None
         self.holds: list[tuple[str, str]] = []  # (action, fields) captured before the event fires
         self.effects: list[dict] = []  # the effect half of the last done event
         for module in (ai_helper, pkg_ai_helper):
@@ -94,6 +98,7 @@ class AssistTest(unittest.TestCase):
         self.core = Core(workers=2).start()
         self.hub = Hub()
         self.studio = Shell(self.core, self.hub)
+        self.studio.services.out_dir = Path(self.tmp.name) / "art"
         self.studio.controllers = Controllers(self.studio)
         add_all(self.studio.controllers)
         self.studio.services.start(timers=False)
@@ -115,6 +120,8 @@ class AssistTest(unittest.TestCase):
         if str(request.full_url).endswith("/models"):
             # The local backend lists the server's models before it picks one.
             return 200, json.dumps({"data": [{"id": "qwen2.5-vl-7b"}]}).encode("utf-8")
+        if self.gate is not None:
+            self.gate.wait(5)
         body = request.data.decode("utf-8") if request.data is not None else ""
         self.sent.append((request.full_url, body, dict(request.headers)))
         if self.sender_error is not None:
@@ -199,8 +206,13 @@ class AssistTest(unittest.TestCase):
         self.assertIn("sharper watercolour portrait", state["reply"])
 
     def test_help_shows_that_it_is_asking_before_the_model_answers(self) -> None:
-        self.act("help", {"backend": "local"})
-        self.assertEqual(self.engine.page("assist")["state"]["status"]["text"], "Asking the local model…")
+        self.gate = threading.Event()
+        try:
+            self.act("help", {"backend": "local"})
+            self.assertEqual(self.engine.page("assist")["state"]["status"]["text"],
+                             "Asking the local model…")
+        finally:
+            self.gate.set()
 
     def test_help_with_deepseek_sends_the_saved_key(self) -> None:
         tokens.write_token("deepseek", "sk-test-key")

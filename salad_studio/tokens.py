@@ -26,6 +26,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import atomic  # noqa: E402  the leaf modules are imported top-level
+
 CONFIG_HOME = Path.home() / ".config"
 LOCAL_PATH = Path(__file__).resolve().parent / "studio-tokens.json"
 USER_AGENT = "SaladStudio/1.0"
@@ -116,9 +118,8 @@ def _load_local() -> dict[str, str]:
 
 
 def _save_local(doc: dict[str, str]) -> Path:
-    LOCAL_PATH.parent.mkdir(parents=True, exist_ok=True)
     payload = {kind: str(doc.get(kind) or "") for kind, _l, _r in TOKEN_SPECS}
-    LOCAL_PATH.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    atomic.write_text(LOCAL_PATH, json.dumps(payload, indent=2) + "\n")
     return LOCAL_PATH
 
 

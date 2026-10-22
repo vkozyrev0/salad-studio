@@ -104,6 +104,9 @@ class Studio:
         from salad_studio.web import app
 
         self.app = app.build(dist=None, timers=False)
+        # The gallery delete and a render's plate both write here, never to the
+        # art folder the user renders into.
+        self.app.shell.services.out_dir = root / "art"
 
     @property
     def shell(self) -> object:

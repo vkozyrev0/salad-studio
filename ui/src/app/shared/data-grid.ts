@@ -3,12 +3,14 @@ import {
   Component,
   computed,
   effect,
+  inject,
   input,
   output,
   signal,
   untracked,
   viewChild,
 } from '@angular/core';
+import { StudioStore } from '../core/studio-store';
 import { AgGridAngular } from 'ag-grid-angular';
 import {
   ColDef,
@@ -50,7 +52,7 @@ declare module 'ag-grid-community' {
       [getRowId]="rowId"
       [rowSelection]="selection"
       [gridOptions]="options"
-      [loading]="loading()"
+      [loading]="loading() || store.loading()"
       [overlayNoRowsTemplate]="empty()"
       (gridReady)="ready($event)"
       (selectionChanged)="pick($event)"
@@ -88,9 +90,10 @@ export class DataGrid {
     wrapperBorder: false,
   });
 
+  private readonly store = inject(StudioStore);
+
   protected readonly options = {
     animateRows: false,
-    suppressCellFocus: true,
     tooltipShowDelay: 300,
   };
   protected readonly selection: RowSelectionOptions = {

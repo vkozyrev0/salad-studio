@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import threading
 import time
+import traceback
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
@@ -32,6 +33,9 @@ class Core:
         self._closing = threading.Event()
         self._work = threading.Condition()
         self._thread: threading.Thread | None = None
+        # A timer or background task has no caller, so its error goes here.
+        # Without this the thread that owns studio state would stop.
+        self.on_error: Callable[[BaseException], None] | None = None
         self.pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="studio-worker")
 
     # -- lifetime
@@ -132,7 +136,15 @@ class Core:
             if done is not None:
                 done.set_exception(exc)
             else:
-                raise
+                # A timer or a background task has no caller to carry the error.
+                # Raising here would end the only thread that owns studio state.
+                try:
+                    if self.on_error is not None:
+                        self.on_error(exc)
+                    else:
+                        traceback.print_exc()
+                except Exception:  # noqa: BLE001 - the reporter must not stop the core either
+                    traceback.print_exc()
         else:
             if done is not None:
                 done.set_result(result)

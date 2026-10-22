@@ -1,8 +1,10 @@
 """Temp store paths, so a module that reads the user's files can be pointed elsewhere.
 
 ``_TempPaths`` moves every store constant a module-level import reaches, and
-puts them back on exit. A test that builds a studio uses ``tests/_studio.py``
-instead; this one is for modules that only need the paths.
+puts them back on exit. Both spellings of each store are moved: the app imports
+some modules top-level and some through the package, and those are two module
+objects with two path constants. A test that builds a studio uses
+``tests/_studio.py`` instead; this one is for modules that only need the paths.
 """
 from __future__ import annotations
 
@@ -31,27 +33,38 @@ class _TempPaths:
         import studio_meta
         import tokens
         import vast
+        from salad_studio import image_deploy as pkg_image_deploy
+        from salad_studio import profiles as pkg_profiles
+        from salad_studio import prompt_catalog as pkg_prompt_catalog
+        from salad_studio import prompt_history as pkg_prompt_history
+        from salad_studio import salad_queue as pkg_salad_queue
+        from salad_studio import studio_meta as pkg_studio_meta
+        from salad_studio import tokens as pkg_tokens
+        from salad_studio import vast as pkg_vast
 
         self.root.mkdir(parents=True, exist_ok=True)
-        pairs = ((profiles, "PROFILES_PATH", "studio-profiles.json"),
-                 (image_deploy, "SETTINGS_PATH", "studio-images.json"),
-                 (prompt_catalog, "CATALOG_PATH", "studio-prompt-catalog.json"),
-                 (prompt_history, "HISTORY_PATH", "studio-prompt-history.json"),
-                 (prompt_history, "THUMBS_DIR", "studio-prompt-thumbs"),
-                 (vast, "INSTANCES_PATH", "studio-vast.json"),
-                 (salad_queue, "LEDGER_PATH", "studio-queue.json"),
-                 (studio_meta, "USER_PATH", "studio-metadata.json"),
-                 (tokens, "LOCAL_PATH", "studio-tokens.json"))
-        for module, name, leaf in pairs:
-            if hasattr(module, name):
+        pairs = (
+            (profiles, pkg_profiles, "PROFILES_PATH", "studio-profiles.json"),
+            (image_deploy, pkg_image_deploy, "SETTINGS_PATH", "studio-images.json"),
+            (prompt_catalog, pkg_prompt_catalog, "CATALOG_PATH", "studio-prompt-catalog.json"),
+            (prompt_history, pkg_prompt_history, "HISTORY_PATH", "studio-prompt-history.json"),
+            (prompt_history, pkg_prompt_history, "THUMBS_DIR", "studio-prompt-thumbs"),
+            (vast, pkg_vast, "INSTANCES_PATH", "studio-vast.json"),
+            (salad_queue, pkg_salad_queue, "LEDGER_PATH", "studio-queue.json"),
+            (studio_meta, pkg_studio_meta, "USER_PATH", "studio-metadata.json"),
+            (tokens, pkg_tokens, "LOCAL_PATH", "studio-tokens.json"),
+        )
+        for top, package, name, leaf in pairs:
+            for module in (top, package):
+                if hasattr(module, name):
+                    self._saved.append((module, name, getattr(module, name)))
+                    setattr(module, name, self.root / leaf)
+        for module in (tokens, pkg_tokens):
+            for name in ("default_path", "read_env_token", "seed_from_defaults"):
                 self._saved.append((module, name, getattr(module, name)))
-                setattr(module, name, self.root / leaf)
-        self._saved.append((tokens, "default_path", tokens.default_path))
-        self._saved.append((tokens, "read_env_token", tokens.read_env_token))
-        self._saved.append((tokens, "seed_from_defaults", tokens.seed_from_defaults))
-        tokens.default_path = lambda _kind: self.root / "no-default"
-        tokens.read_env_token = lambda _kind: ""
-        tokens.seed_from_defaults = lambda: []
+            module.default_path = lambda _kind: self.root / "no-default"
+            module.read_env_token = lambda _kind: ""
+            module.seed_from_defaults = lambda: []
         return self
 
     def __exit__(self, *_exc: object) -> None:

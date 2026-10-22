@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, input, signal } from '@angular/core';
+import { StudioStore } from '../core/studio-store';
 
 /**
  * The newest plates, as a contact sheet. Each plate is printed: a paper
@@ -36,6 +37,8 @@ import { ChangeDetectionStrategy, Component, input, signal } from '@angular/core
             [class.current]="i === ring()"
             (click)="ring.set(i)"
             (dblclick)="open(plate.name)"
+            (keydown.enter)="open(plate.name)"
+            (keydown.space)="open(plate.name)"
             [attr.aria-label]="caption(plate.name) + ', ' + plate.name"
           >
             <span class="print small">
@@ -101,6 +104,7 @@ import { ChangeDetectionStrategy, Component, input, signal } from '@angular/core
   `,
 })
 export class HistoryStrip {
+  private readonly store = inject(StudioStore);
   readonly plates = input<readonly { name: string; url: string }[]>([]);
   protected readonly ring = signal(0);
 
@@ -115,8 +119,7 @@ export class HistoryStrip {
   }
 
   protected open(name: string): void {
-    // Handled by the shell's action table once the plate route lands.
-    void name;
+    void this.store.act('shell', 'open_plate', { name });
   }
 
   protected onKey(event: KeyboardEvent): void {
@@ -124,5 +127,9 @@ export class HistoryStrip {
     else if (event.key === 'ArrowRight') { event.preventDefault(); this.step(1); }
     else if (event.key === 'Home') { event.preventDefault(); this.ring.set(0); }
     else if (event.key === 'End') { event.preventDefault(); this.ring.set(Math.max(0, this.plates().length - 1)); }
+    else if (event.key === 'Enter') {
+      const plate = this.plates()[this.ring()];
+      if (plate) { event.preventDefault(); this.open(plate.name); }
+    }
   }
 }

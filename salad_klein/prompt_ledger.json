@@ -122,7 +122,7 @@
       "source": "the user's own research, 2026-09-22 (model cards, working gallery metas, MyAIForce, MatchingPose/RefControl, Ashen3's notes, depth-training notes, cinematography framing)",
       "central_claim": "Run Klein 9B BASE for sex T2I, not the distilled 4-step cut: distilled is for edits, and the author and testers say Base has far fewer anatomy horrors. This CONTRADICTS the verified entry, which is the SNOFS-merged distilled v1.2 unet at CFG 1 / 4 steps.",
       "routing_note": "Base is unet family 'klein', so these plates belong on the klein group — not the SNOFS group.",
-      "human_readable": "docs/workflow/19-two-body-prompt-playbook.md section 6",
+      "human_readable": "docs/workflow/21-klein-image-handoff.md section 9",
       "framework": "Full sentences, not tags. Camera -> who is who -> named position -> one limb action each with left/right ownership -> clinical genitals (penis/vagina) -> light/setting.",
       "settings": {
         "model": "Base 9B",

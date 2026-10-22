@@ -18,9 +18,8 @@ import { PageFrame } from '../shell/page-frame';
       <div class="empty">
         <p class="lead">This page has not moved to the web build yet.</p>
         <p class="detail">
-          Its controls still live in the Flet window until this page's
-          controller lands. Tokens is the first page through, so use it to check
-          the shell, the strip and the action round trip.
+          The server has no controller for it yet. The pages in the rail are the
+          ones this build serves.
         </p>
       </div>
     </app-page-frame>

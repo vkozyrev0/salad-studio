@@ -14,12 +14,13 @@ server-sent events. The server binds loopback and refuses a request whose
 **Top action bar**: a rose **Generate**, live status every 2 s, and ready
 (green), starting (amber) and not-started (red) container counts in one recessed
 panel; a press during a render queues.
-**Left tabs**, numbered under a `PAGES` label, in order: (**Config**, **Prompt Settings**, **Tokens**, **LoRAs**, **Prompt Editor**, **Prompt Assist**, **Prompt Catalog**, **Import**, **Prompt History**, **Queue**, **Logs**). Each
+**Left tabs**, numbered under a `Pages` label, in order: (**Config**, **Prompt Settings**, **Tokens**, **LoRAs**, **Prompt Editor**, **Prompt Assist**, **Prompt Catalog**, **Import**, **Prompt History**, **Queue**, **Logs**). Each
 page opens on a title capsule carrying that same number. **Bottom**: status
 line, then the history strip with a tall button each side. The strip's thumb is
 ringed after a click there or after the first arrow press; Left and Right walk
-the ring, Home and End take its ends, and Enter opens the ringed plate. While
-the page holds the keys, the arrows move the selected row of its table.
+the ring, Home and End take its ends, and Enter or a double-click opens the plate.
+While the strip holds the keys, the arrows walk the ring. A table's own arrow
+keys move through its cells, and a click selects the row.
 
 - **Config**. Sub-tabs in order: **Profile**, **Images**, **Salad group**,
   **Vast.ai**; each scrolls alone. A save writes only the section it sits on.
@@ -89,7 +90,7 @@ the page holds the keys, the arrows move the selected row of its table.
   live row; a contract with no mapped port appears as **creating**, and Fetch
   promotes it when its port maps, unless another instance is active. A
   vast-mode profile holding a destroyed address is repointed or cleared. The
-  create and endpoint wait run off the UI thread, bounded at about five minutes,
+  create and endpoint wait run on a worker, bounded at about five minutes,
   polling for an endpoint, not `/ready`; press Generate again once reachable.
 
   The key authenticates the control API only. A render queues on the profile's
@@ -178,7 +179,7 @@ the page holds the keys, the arrows move the selected row of its table.
   **Description**. **Copy from Prompt Editor** stores the editor request under
   the form name (required; duplicates refused); **Update JSON** replaces the
   selected entry's request; **Save name / description** edits labels; **Load
-  into Prompt Editor** (or double-click) restores it; **Delete** asks first.
+  into Prompt Editor** restores it; **Delete** asks first.
   Entries live in `~/.config/salad/studio-prompt-catalog.json` (not git), with
   Civitai tokens stripped from LoRA URLs. The table shows Added, Short name,
   Description, Prompt, Graph, and an empty state.
@@ -215,8 +216,9 @@ the page holds the keys, the arrows move the selected row of its table.
   as **UNRESOLVED** to the model. The DeepSeek id is `ai_helper.MODEL`
   (`deepseek-flash`); **Help (local)** uses the server-reported model.
 - **Prompt History**. The full request JSON, with a prompt column and a Graph
-  column. A successful Generate writes a 48×48 thumbnail in the first column.
-  Double-click restores JSON and prompt. Empty state.
+  column and a Rating column. A successful Generate writes a 48×48 thumbnail in
+  the first column. **Reuse** restores the JSON and prompt, the stars rate the
+  render, and **Delete** asks first. Empty state.
 - **Queue**. From `salad_queue`'s records: one row per request with **Profile**,
   **State** (**waiting**, **in progress**, **done**, **failed**, **cancelled**),
   **Attempts**, **Last status**, **Reason**, **Request** (gateway host and POST
@@ -295,7 +297,7 @@ controller per page. No module in this package imports a UI toolkit, and
 | Server | `server.py`, `engine.py`, `core.py`, `actions.py`, `events.py`, `shell.py`, `services.py`, `form.py`, `registry.py`, `app.py`, `controllers.py`, `__main__.py`; one controller per page in `web/pages/` |
 | Page | `ui/src/app/` (Angular), `theme.py` (the palette and the role maps) |
 | Import | `comfy_import.py`, `civitai_verify.py`, `request_json.py`, `graph_model.py` |
-| Persistence | `tokens.py`, `prompt_history.py`, `prompt_catalog.py`, `lora_store.py`, `profiles.py`, `hostings.py`, `studio_meta.py` |
+| Persistence | `atomic.py`, `tokens.py`, `prompt_history.py`, `prompt_catalog.py`, `lora_store.py`, `profiles.py`, `hostings.py`, `studio_meta.py` |
 | Logging | `studio_log.py` |
 | Salad communication | `generator.py`, `salad_status.py`, `salad_queue.py`, `salad_gen.py` (repo root) |
 | Vast.ai communication | `vast.py` |
@@ -336,7 +338,7 @@ the root [`README.md`](../README.md) (Configuration, Known limitations).
 Run the commands separately:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1063 tests, ~35 s
+python -m unittest discover -s tests -p "test_*.py"    # 1075 tests, ~35 s
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```

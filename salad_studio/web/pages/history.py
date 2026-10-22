@@ -15,7 +15,7 @@ from typing import Any
 
 import prompt_history
 
-COLUMNS = ("When", "Prompt", "Graph", "Rating", "Image")
+COLUMNS = ("When", "Prompt", "Graph", "Rating", "Plate")
 EMPTY_TEXT = "No prompts yet. Every Generate stores its request here."
 THUMB = 48
 

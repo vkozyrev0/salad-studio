@@ -335,15 +335,23 @@ def is_salad_gateway(url: str) -> bool:
 
 
 def same_gateway(a: str, b: str) -> bool:
-    """Two gateway URLs naming the same host. Case- and trailing-slash-insensitive.
+    """Two gateway URLs naming the same host and port.
 
-    Two empty strings are NOT the same: an unset gateway must still be routed.
+    The scheme and path are ignored, so a typed ``/prompt`` or an ``https``
+    spelling still matches the stored endpoint. Two empty strings are NOT the
+    same: an unset gateway must still be routed.
     """
-    def norm(url: str) -> str:
-        return (url or "").strip().rstrip("/").lower()
+    def norm(url: str) -> tuple[str, int] | None:
+        raw = str(url or "").strip()
+        if not raw:
+            return None
+        parts = urlsplit(raw if "//" in raw else "http://" + raw)
+        host = (parts.hostname or "").lower()
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+        return (host, port) if host else None
 
     left = norm(a)
-    return bool(left) and left == norm(b)
+    return left is not None and left == norm(b)
 
 
 def profile_for_gateway(

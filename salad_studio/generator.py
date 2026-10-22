@@ -531,6 +531,8 @@ def generate_from_payload(
     queue: salad_queue.SaladQueue | None = None,
     line: str = "",
     checksum: str = "",
+    ts: int | None = None,
+    history_key: str = "",
 ) -> Path:
     """POST the Prompt Editor JSON to Salad ``/prompt`` and write a JPEG.
 
@@ -649,7 +651,8 @@ def generate_from_payload(
         return render_once()
 
     job = line_queue.deliver(
-        {"gateway": gateway, "url": url, "bytes": len(blob), "profile": line},
+        {"gateway": gateway, "url": url, "bytes": len(blob), "profile": line, "ts": ts,
+         "history_key": history_key},
         dispatch_once,
         line=line,
         ensure=False,
@@ -680,6 +683,8 @@ def generate_from_vast(
     queue: salad_queue.SaladQueue | None = None,
     line: str = "",
     checksum: str = "",
+    ts: int | None = None,
+    history_key: str = "",
 ) -> Path:
     """POST the Prompt Editor JSON to a vast.ai instance's ComfyUI and write a JPEG.
 
@@ -792,7 +797,7 @@ def generate_from_vast(
         return render_once()
 
     job = line_queue.deliver(
-        {"endpoint": base, "profile": line},
+        {"endpoint": base, "profile": line, "ts": ts, "history_key": history_key},
         dispatch_once,
         line=line,
         ensure=False,

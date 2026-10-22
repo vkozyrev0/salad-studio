@@ -22,11 +22,16 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import urllib.error
 import urllib.request
 from pathlib import Path
 
 import atomic  # noqa: E402  the leaf modules are imported top-level
+
+# Seeding and saving are read-modify-write pairs on one file; the lock keeps a
+# worker's seed from saving a snapshot that predates a key the page just wrote.
+_LOCK = threading.RLock()
 
 CONFIG_HOME = Path.home() / ".config"
 LOCAL_PATH = Path(__file__).resolve().parent / "studio-tokens.json"
@@ -125,18 +130,19 @@ def _save_local(doc: dict[str, str]) -> Path:
 
 def seed_from_defaults() -> list[str]:
     """Copy empty local slots from ~/.config. Returns kinds that were filled."""
-    doc = _load_local()
-    copied: list[str] = []
-    for kind, _label, _rel in TOKEN_SPECS:
-        if str(doc.get(kind) or "").strip():
-            continue
-        val = _read_file(default_path(kind))
-        if val:
-            doc[kind] = val
-            copied.append(kind)
-    if copied:
-        _save_local(doc)
-    return copied
+    with _LOCK:
+        doc = _load_local()
+        copied: list[str] = []
+        for kind, _label, _rel in TOKEN_SPECS:
+            if str(doc.get(kind) or "").strip():
+                continue
+            val = _read_file(default_path(kind))
+            if val:
+                doc[kind] = val
+                copied.append(kind)
+        if copied:
+            _save_local(doc)
+        return copied
 
 
 def read_token(kind: str) -> str:
@@ -162,9 +168,10 @@ def read_env_token(kind: str) -> str:
 def write_token(kind: str, value: str) -> Path:
     if kind not in {k for k, _l, _r in TOKEN_SPECS}:
         raise KeyError(f"unknown token {kind}")
-    doc = _load_local()
-    doc[kind] = value.strip()
-    return _save_local(doc)
+    with _LOCK:
+        doc = _load_local()
+        doc[kind] = value.strip()
+        return _save_local(doc)
 
 
 def masked(value: str) -> str:

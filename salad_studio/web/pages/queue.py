@@ -32,13 +32,11 @@ def _retried(queue: Any, job: Any, out_dir: Path) -> dict[str, Any]:
     """
     job = queue.retry(job)
     attempt = job.result if isinstance(job.result, salad_queue.Attempt) else None
+    out = ""
     if job.state == salad_queue.ACCEPTED and attempt is not None and isinstance(attempt.result, str):
-        out = generator.write_plate(attempt.result, Path(out_dir))
-        try:
-            prompt_history.attach_image(out)
-        except (OSError, ValueError, TypeError):
-            pass
-    return {"state": job.state, "status": job.status, "reason": job.reason, "attempts": job.attempts}
+        out = str(generator.write_plate(attempt.result, Path(out_dir)))
+    return {"state": job.state, "status": job.status, "reason": job.reason,
+            "attempts": job.attempts, "out": out}
 
 
 def _finished_label(stamp: Any) -> str:
@@ -184,6 +182,16 @@ class QueueController:
             reason = str((result or {}).get("reason") or "")
             self.note = f"Request {jid} was retried: {word}." + (f" {reason}" if reason else "")
             if state == salad_queue.ACCEPTED:
+                out = str((result or {}).get("out") or "")
+                if out:
+                    request = job.request if isinstance(job.request, dict) else {}
+                    ts = request.get("ts")
+                    key = request.get("history_key")
+                    try:
+                        prompt_history.attach_image(Path(out), ts=int(ts) if ts else None,
+                                                    key=str(key or ""))
+                    except (OSError, ValueError, TypeError) as exc:
+                        ctx.log("warn", f"history thumb skipped: {exc}")
                 self.studio.refresh_plates()
                 self.studio.publish()
             ctx.note(self.note, level="ok" if state == salad_queue.ACCEPTED else "warn")

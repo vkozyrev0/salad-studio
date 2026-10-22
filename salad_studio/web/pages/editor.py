@@ -194,14 +194,17 @@ class EditorController:
         return self.state()
 
     def swap_selected(self, payload: dict[str, Any], *, ctx: Any = None) -> dict[str, Any]:
-        if len(self.model.selected) != 2:
+        # The page keeps its own selection; the model's is only the fallback.
+        ids = payload.get("ids")
+        selected = [str(i) for i in ids] if isinstance(ids, list) and len(ids) == 2 else list(self.model.selected)
+        if len(selected) != 2:
             self._say("Select two nodes first.", "warn")
             return self.state()
         parsed = parse(self.json)
         if not parsed.ok:
             return self.state()
         try:
-            swapped = gm.swap_payloads(parsed.prompt, *self.model.selected)
+            swapped = gm.swap_payloads(parsed.prompt, *selected)
         except ValueError as exc:
             self._say(str(exc), "warn")
             return self.state()

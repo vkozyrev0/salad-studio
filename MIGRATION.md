@@ -1,4 +1,10 @@
-# Salad Studio: Tk to Flet UI migration
+# Salad Studio: Tk to Flet UI migration (historical)
+
+> **Historical record.** This file is the Tk to Flet migration trail. The
+> product has since moved to a Python server and an Angular page, so the Flet
+> modules named below no longer exist. For the current app, run
+> `python -m salad_studio` and read [`README.md`](README.md) and
+> [`salad_studio/README.md`](salad_studio/README.md).
 
 This file is the success predicate for the migration. Every line below is one behaviour the Flet app must reproduce. The work is done when each line has been exercised on the running Flet app with no console error, and the evidence is recorded beside it.
 

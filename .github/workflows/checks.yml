@@ -2,25 +2,42 @@ name: checks
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   python:
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements.txt
       - name: Install
         run: python -m pip install -r requirements.txt
       - name: Suite
         run: python -m unittest discover -s tests -p "test_*.py"
-      - name: Live-findings structure
-        run: python test_salad_comfy_live_findings.py
+      - name: Queue submission check
+        run: python .claude/skills/queue-submission-safety/check.py
+      - name: Klein dependency
+        run: python -m pip install -r salad_klein/requirements.txt
+      - name: Klein suite
+        working-directory: salad_klein
+        run: python -m unittest discover -p "test_*.py"
 
   ui:
     runs-on: windows-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: ui
@@ -36,7 +53,9 @@ jobs:
       - name: Build
         run: npx ng build
       - name: The committed page matches its source
-        run: git diff --exit-code -- dist
+        run: |
+          git add -A dist
+          git diff --cached --exit-code
       - name: Unit tests
         run: npx ng test --watch=false
       - name: Template bindings

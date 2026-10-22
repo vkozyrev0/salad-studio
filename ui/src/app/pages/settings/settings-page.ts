@@ -144,19 +144,19 @@ export class SettingsPage {
 
   protected setKnob(key: Knob, value: string): void {
     this.draft.update((d) => ({ ...d, [key]: value }));
-    void this.store.act('settings', 'set_form', { [key]: value });
+    void this.store.act('settings', 'set_knobs', { [key]: value });
   }
 
   protected set(
     args: Record<string, unknown>,
-    action: 'set_form' | 'select_checkpoint' | 'save' = 'set_form',
+    action: 'set_knobs' | 'select_checkpoint' | 'save' = 'set_knobs',
   ): void {
     void this.store.act('settings', action, args);
   }
 
   protected toggle(lora: LoraChoice, event: Event): void {
     const on = (event.target as HTMLInputElement).checked;
-    void this.store.act('settings', 'set_form', { loras: { [lora.id]: on } });
+    void this.store.act('settings', 'toggle_lora', { id: lora.id, on });
   }
 
   protected busy(action: string): boolean {

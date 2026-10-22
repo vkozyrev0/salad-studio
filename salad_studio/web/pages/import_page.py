@@ -60,7 +60,9 @@ class ImportController:
         self.studio = studio
         self.url = ""
         self.meta = ""
+        self.workflow = ""
         self.stash = ""
+        self.edit_rev = 0
         self.knobs: dict[str, str] = {name: "" for name, _label in KNOBS}
         self.scheduler = DEFAULT_SCHEDULER
         self.unet = ""
@@ -80,7 +82,8 @@ class ImportController:
         return self.state()
 
     def state(self) -> dict[str, Any]:
-        shown = STASH_SUMMARY.format(n=len(self.stash), scheduler=STASH_NOTE) if self.stash else ""
+        shown = (STASH_SUMMARY.format(n=len(self.stash), scheduler=STASH_NOTE)
+                 if self.stash else self.workflow)
         return {
             "url": self.url,
             "meta": self.meta,
@@ -104,6 +107,8 @@ class ImportController:
     def _workflow(self, payload: dict[str, Any]) -> str:
         if self.stash:
             return self.stash
+        if self.workflow:
+            return self.workflow
         return _text(payload.get("workflow"))
 
     def _adopt(self, payload: dict[str, Any]) -> None:
@@ -124,12 +129,21 @@ class ImportController:
                 self.stash = ""
             if len(workflow) > STASH_CHARS:
                 self.stash = workflow
+                self.workflow = ""
+            elif not (self.stash and typed.startswith("[Comfy workflow JSON in memory")):
+                # A normal paste stays in the box; the page re-seeds from state.
+                self.workflow = workflow
         for name, _label in KNOBS:
             if name in payload:
                 self.knobs[name] = str(payload[name])
+        if "scheduler" in payload:
+            self.scheduler = str(payload["scheduler"] or DEFAULT_SCHEDULER)
+        if "unet" in payload:
+            self.unet = str(payload["unet"] or "")
 
     def set_paste(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:
         """The page's one write of a box: large pastes move into the stash."""
+        self.edit_rev += 1
         self._adopt(payload)
         return self.state()
 
@@ -231,7 +245,10 @@ class ImportController:
             ctx.note(f"Refused: {NOTHING_TO_CONVERT}", level="warn")
             return self.state()
         only_empty = bool(payload.get("fill_empty"))
-        knobs = self._knobs_from_form() if only_empty else None
+        form = self._knobs_from_form()
+        # The two selects are always the page's; the numeric knobs only when the
+        # press asked to fill the form.
+        knobs = form if only_empty else {"scheduler": form["scheduler"], "unet": form["unet"]}
         extras = self._extras_path()
 
         def work() -> dict[str, Any]:
@@ -292,20 +309,29 @@ class ImportController:
             return self.state()
 
         def work() -> dict[str, Any]:
-            return comfy_import.fetch_civitai_image_pastes(image_id)
+            result = comfy_import.fetch_civitai_image_pastes(image_id)
+            workflow = str(result.get("workflow") or "").strip()
+            meta = str(result.get("metadata") or "")
+            return {**result, "filled": self._fill(workflow, meta, only_empty=False)}
+
+        start_rev = self.edit_rev
 
         def done(result: Any) -> None:
             if isinstance(result, Exception):
                 if isinstance(result, (ValueError, OSError)):
                     ctx.dialog("Salad Studio", str(result), level="error")
                 return
+            if self.edit_rev != start_rev:
+                ctx.note("Fetch finished, but the paste changed; the fetched workflow was not applied.",
+                         level="warn")
+                return
             workflow = str(result.get("workflow") or "").strip()
             self.issues, self.notes, self.inspected = [], [], False
             self.url = f"https://civitai.com/images/{image_id}"
             self.meta = str(result.get("metadata") or "")
             self.stash = workflow if len(workflow) > STASH_CHARS else ""
-            # The fetch already made the user wait; a second background hop is not worth it.
-            self._take_fill(self._fill(workflow, self.meta, only_empty=False))
+            self.workflow = "" if self.stash else workflow
+            self._take_fill(result.get("filled") or {})
             tool = str(result.get("tool") or "")
             word = " (Draw Things)" if "draw things" in tool.lower() else (" (Comfy)" if workflow else "")
             ctx.note(f"Fetched {image_id}{word}", level="ok")
@@ -318,6 +344,7 @@ class ImportController:
         self._adopt(payload)
         self.url = ""
         self.meta = ""
+        self.workflow = ""
         self.stash = ""
         self.knobs = {name: "" for name, _label in KNOBS}
         self.scheduler = DEFAULT_SCHEDULER

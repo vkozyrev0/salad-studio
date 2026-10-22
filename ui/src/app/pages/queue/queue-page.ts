@@ -82,7 +82,7 @@ const STANDING_NOTE =
         </div>
 
         <div class="table">
-          @if (rows().length) {
+          @if (rows().length || store.loading() || store.loadError()) {
             <app-data-grid
               [rows]="rows()"
               [columns]="columns"
@@ -105,17 +105,17 @@ const STANDING_NOTE =
   styles: `
     :host { display: block; height: 100%; }
     .wrap { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; min-height: 0; padding-top: 12px; }
-    .head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 10px; }
+    .head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 10px; }
     .summary { margin: 0; font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-muted); text-align: right; }
     .table { min-height: 0; overflow: hidden; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
     .empty { margin: 0; padding: 16px 2px; font-size: 12.5px; color: var(--fg-muted); }
-    .foot { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding-top: 10px; }
+    .foot { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 16px; padding-top: 10px; }
     .note { margin: 0; font-size: 12px; color: var(--fg-muted); max-width: 80ch; }
     .hint { font-family: var(--font-mono); font-size: 9.5px; color: var(--fg-muted); white-space: nowrap; }
   `,
 })
 export class QueuePage {
-  private readonly store = inject(StudioStore);
+  protected readonly store = inject(StudioStore);
 
   protected readonly state = computed(() => this.store.page() as QueueState | null);
   protected readonly rows = computed(() => this.state()?.rows ?? []);
@@ -165,6 +165,8 @@ export class QueuePage {
 
   protected pick(key: string): void {
     this.local.set(key);
+    // Cancel and Retry act on the server's selection, not on the row key.
+    void this.store.act('queue', 'select', { key });
   }
 
   protected act(action: 'cancel' | 'retry' | 'clear_finished'): void {

@@ -41,7 +41,7 @@ interface HistoryState {
         </div>
 
         <div class="table">
-          @if (rows().length) {
+          @if (rows().length || store.loading() || store.loadError()) {
             <app-data-grid [rows]="rows()" [columns]="columns" field="id" [selected]="selected()" (picked)="pick($event)" />
           } @else {
             <p class="empty">{{ state()?.empty_text || 'No prompts yet. Every Generate stores its request here.' }}</p>
@@ -135,7 +135,7 @@ interface HistoryState {
   `,
 })
 export class HistoryPage {
-  private readonly store = inject(StudioStore);
+  protected readonly store = inject(StudioStore);
 
   protected readonly state = computed(() => this.store.page() as HistoryState | null);
   protected readonly rows = computed(() => this.state()?.rows ?? []);
@@ -188,6 +188,8 @@ export class HistoryPage {
 
   protected pick(id: string): void {
     this.local.set(id);
+    // The server's Rate, Reuse and Delete act on its own selection.
+    void this.store.act('history', 'select', { id });
   }
 
   protected rate(stars: number): void {

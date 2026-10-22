@@ -31,6 +31,15 @@ interface TokensState {
   template: `
     <app-page-frame>
       <form class="slots" (submit)="$event.preventDefault(); save()">
+        @if (!slots().length) {
+          @for (label of slotLabels; track label) {
+            <div class="slot" aria-hidden="true">
+              <span class="dot unknown"></span>
+              <span class="name">{{ label }}</span>
+              <div class="control"><input disabled placeholder="Loading…" /></div>
+            </div>
+          }
+        }
         @for (slot of slots(); track slot.id) {
           <div class="slot">
             <span class="dot" [class]="slot.state" [attr.title]="slot.tooltip" role="img" [attr.aria-label]="slot.tooltip"></span>
@@ -82,30 +91,40 @@ interface TokensState {
     .control { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
     input {
       min-width: 0;
-      padding: 8px 10px;
-      background: var(--well);
-      border: 1px solid var(--border);
+      height: 36px;
+      padding: 0 10px;
+      background: var(--field);
+      border: 1px solid var(--rule);
       border-right: 0;
       border-radius: var(--radius-control) 0 0 var(--radius-control);
       color: var(--fg);
       font-family: var(--font-mono);
       font-size: 12.5px;
+      box-shadow: inset 0 1px 0 rgb(0 0 0 / 0.35);
       transition: border-color 120ms ease, background 120ms ease;
     }
     input:hover { border-color: var(--fg-muted); }
     input:focus { outline: none; background: var(--bg); border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
     .ghost {
+      height: 36px;
       padding: 0 12px;
       background: var(--surface);
-      border: 1px solid var(--border);
+      border: 1px solid var(--rule);
       border-radius: 0 var(--radius-control) var(--radius-control) 0;
       color: var(--fg-muted);
-      font-size: 12px;
+      font-family: var(--font-ui);
+      font-size: 12.5px;
+      font-weight: 600;
       cursor: pointer;
     }
     .ghost:hover { color: var(--fg); border-color: var(--fg-muted); }
-    .foot { display: flex; align-items: baseline; gap: var(--space-sm); margin-top: var(--space-md); }
+    .foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-sm); margin-top: var(--space-md); }
     .hint { margin-left: auto; font-size: 12px; color: var(--fg-muted); }
+    @media (max-width: 640px) {
+      .slot { grid-template-columns: 14px minmax(0, 1fr); }
+      .control { grid-column: 1 / -1; }
+      .hint { margin-left: 0; }
+    }
   `,
 })
 export class TokensPage {
@@ -113,14 +132,12 @@ export class TokensPage {
 
   protected readonly state = computed(() => this.store.page() as TokensState | null);
   protected readonly slots = computed(() => this.state()?.slots ?? []);
+  /** The five labels to draw while the first reply is in flight. */
+  protected readonly slotLabels = ['Salad', 'Hugging Face', 'Civitai', 'DeepSeek', 'Vast.ai'];
 
   /** Revealed slots and typed values live here only: the server never learns a reveal. */
   protected readonly revealed = signal(new Set<string>());
   protected readonly draft = signal<Record<string, string>>({});
-
-  constructor() {
-    void this.store.load('tokens');
-  }
 
   protected edit(id: string, event: Event): void {
     const value = (event.target as HTMLInputElement).value;

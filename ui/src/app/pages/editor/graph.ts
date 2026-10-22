@@ -57,12 +57,12 @@ const PORT_R = 4.5;
         @for (node of laid(); track node.id) {
           <g
             class="node"
-            [class.selected]="node.selected"
+            [class.selected]="selected().includes(node.id)"
             [attr.transform]="'translate(' + node.rect?.x + ' ' + node.rect?.y + ')'"
             tabindex="0"
             role="button"
             [attr.aria-label]="node.title"
-            [attr.aria-pressed]="!!node.selected"
+            [attr.aria-pressed]="selected().includes(node.id)"
             (click)="pick.emit(node.id)"
             (keydown.enter)="pick.emit(node.id); $event.preventDefault()"
             (keydown.space)="pick.emit(node.id); $event.preventDefault()"
@@ -106,6 +106,8 @@ const PORT_R = 4.5;
 })
 export class Graph {
   readonly graph = input<GraphView | undefined>(undefined);
+  /** The page's own pick pair, so a click paints before the server replies. */
+  readonly selected = input<readonly string[]>([]);
   readonly pick = output<string>();
 
   protected readonly portR = PORT_R;

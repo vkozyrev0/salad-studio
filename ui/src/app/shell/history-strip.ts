@@ -37,8 +37,6 @@ import { StudioStore } from '../core/studio-store';
             [class.current]="i === ring()"
             (click)="ring.set(i)"
             (dblclick)="open(plate.name)"
-            (keydown.enter)="open(plate.name)"
-            (keydown.space)="open(plate.name)"
             [attr.aria-label]="caption(plate.name) + ', ' + plate.name"
           >
             <span class="print small">
@@ -123,13 +121,24 @@ export class HistoryStrip {
   }
 
   protected onKey(event: KeyboardEvent): void {
-    if (event.key === 'ArrowLeft') { event.preventDefault(); this.step(-1); }
-    else if (event.key === 'ArrowRight') { event.preventDefault(); this.step(1); }
-    else if (event.key === 'Home') { event.preventDefault(); this.ring.set(0); }
-    else if (event.key === 'End') { event.preventDefault(); this.ring.set(Math.max(0, this.plates().length - 1)); }
-    else if (event.key === 'Enter') {
+    const root = event.currentTarget as HTMLElement;
+    if (event.key === 'ArrowLeft') { event.preventDefault(); this.step(-1); this.focusRing(root); }
+    else if (event.key === 'ArrowRight') { event.preventDefault(); this.step(1); this.focusRing(root); }
+    else if (event.key === 'Home') { event.preventDefault(); this.ring.set(0); this.focusRing(root); }
+    else if (event.key === 'End') {
+      event.preventDefault();
+      this.ring.set(Math.max(0, this.plates().length - 1));
+      this.focusRing(root);
+    } else if (event.key === 'Enter') {
       const plate = this.plates()[this.ring()];
       if (plate) { event.preventDefault(); this.open(plate.name); }
     }
+  }
+
+  /** The ring and the keyboard focus move together, so Enter opens one plate. */
+  private focusRing(root: HTMLElement): void {
+    const plate = root.querySelectorAll<HTMLElement>('.plate')[this.ring()];
+    plate?.focus();
+    plate?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
 }

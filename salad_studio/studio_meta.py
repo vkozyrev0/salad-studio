@@ -97,7 +97,7 @@ def _empty(source: str, error: str) -> dict[str, Any]:
         "version": 0,
         "routing": {"families": {}},
         "queue": {IDLE_STOP: DEFAULT_IDLE_STOP_S},
-        "prompt": {"role": "", "task": "", "rules": [], "reply_contract": ""},
+        "prompt": {"role": "", "task": "", "rules": [], "reply_contract": "", "provenance": ""},
         "source": source,
         "error": error,
     }

@@ -88,19 +88,26 @@ export class StudioStore {
     this.stream = stream;
   }
 
+  private loadSeq = 0;
+
   async load(id: string): Promise<void> {
+    const seq = ++this.loadSeq;
+    // A hop starts clean; a refresh of the same page keeps its rows on screen.
+    if (this.pageId() !== id) this.page.set(null);
     this.pageId.set(id);
     this.loading.set(true);
     this.loadError.set('');
     try {
       const reply = await this.api.page(id);
+      if (seq !== this.loadSeq) return;
       this.page.set(reply.state);
       this.shell.set(reply.shell);
       this.busy.set(reply.busy);
     } catch (err) {
+      if (seq !== this.loadSeq) return;
       this.loadError.set(messageOf(err));
     } finally {
-      this.loading.set(false);
+      if (seq === this.loadSeq) this.loading.set(false);
     }
   }
 

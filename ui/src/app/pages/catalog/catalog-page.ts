@@ -38,7 +38,7 @@ interface CatalogState {
         </div>
 
         <div class="table">
-          @if (rows().length) {
+          @if (rows().length || store.loading() || store.loadError()) {
             <app-data-grid [rows]="rows()" [columns]="columns" field="id" [selected]="selected()" (picked)="pick($event)" />
           } @else {
             <p class="empty">{{ state()?.empty || 'No kept prompts yet. Give one a short name and copy it from the Prompt Editor.' }}</p>
@@ -76,7 +76,7 @@ interface CatalogState {
   `,
 })
 export class CatalogPage {
-  private readonly store = inject(StudioStore);
+  protected readonly store = inject(StudioStore);
 
   protected readonly state = computed(() => this.store.page() as CatalogState | null);
   protected readonly rows = computed(() => this.state()?.rows ?? []);

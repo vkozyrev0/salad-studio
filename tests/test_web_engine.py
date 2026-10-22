@@ -158,8 +158,8 @@ class EngineTest(unittest.TestCase):
         seen: list[tuple] = []
         gate = threading.Event()
 
-        def fake_generate(payload, profile, key, checksum):
-            seen.append((payload, profile.name, key, checksum))
+        def fake_generate(payload, profile, key, checksum, *, ts=None, history_key=None):
+            seen.append((payload, profile.name, key, checksum, ts, history_key))
             gate.wait(2)
             return GenOutcome("done", out=None)
 

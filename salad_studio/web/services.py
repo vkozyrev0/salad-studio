@@ -235,17 +235,19 @@ class WebServices:
     # -- Generate
 
     def generate_sync(self, payload: dict[str, Any], profile: profiles.SaladProfile, key: str,
-                      checksum: str) -> GenOutcome:
+                      checksum: str, *, ts: int | None = None, history_key: str | None = None) -> GenOutcome:
         """Run one render and return its outcome. Runs on a worker thread; touches no studio state."""
         try:
             if profile.mode == "vast":
                 out = generator.generate_from_vast(
                     endpoint=profile.gateway, payload=payload, out_dir=self.out_dir,
-                    on_log=self.log, queue=self.gen_queue, line=profile.name, checksum=checksum)
+                    on_log=self.log, queue=self.gen_queue, line=profile.name, checksum=checksum,
+                    ts=ts, history_key=history_key)
             else:
                 out = generator.generate_from_payload(
                     gateway=profile.gateway, key=key, payload=payload, out_dir=self.out_dir,
-                    on_log=self.log, queue=self.gen_queue, line=profile.name, checksum=checksum)
+                    on_log=self.log, queue=self.gen_queue, line=profile.name, checksum=checksum,
+                    ts=ts, history_key=history_key)
         except generator.ContainerDown as exc:
             return GenOutcome("refused", message=str(exc))
         except Exception as exc:  # noqa: BLE001 - the render's own failure is shown
@@ -268,7 +270,8 @@ class WebServices:
 
     def plates(self, limit: int = PLATE_LIMIT) -> list[Path]:
         try:
-            found = [p for p in self.out_dir.glob("*.jpg") if p.is_file()]
+            found = [p for pattern in generator.PLATE_GLOBS
+                     for p in self.out_dir.glob(pattern) if p.is_file()]
         except OSError:
             return []
         found.sort(key=lambda p: p.stat().st_mtime, reverse=True)

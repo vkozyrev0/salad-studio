@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import json
+import secrets
 import time
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,8 @@ def _load() -> list[dict[str, Any]]:
         if not text and req is None:
             continue
         entry: dict[str, Any] = {"text": text, "ts": int(row.get("ts") or 0)}
+        if row.get("key"):
+            entry["key"] = str(row.get("key"))
         if req is not None:
             entry["request"] = req
         if row.get("profile"):
@@ -231,7 +234,8 @@ def add_request(
     rows = _load()
     if rows and _canon(rows[0].get("request") if isinstance(rows[0].get("request"), dict) else None) == _canon(req):
         return rows[0]
-    entry: dict[str, Any] = {"text": text, "request": req, "ts": int(time.time())}
+    entry: dict[str, Any] = {"text": text, "request": req, "ts": int(time.time()),
+                             "key": secrets.token_hex(6)}
     if profile:
         entry["profile"] = profile
     if gateway:
@@ -311,7 +315,7 @@ def _unlink_thumb(path: Any) -> None:
         return
 
 
-def write_thumb(src: Path, *, ts: int) -> Path | None:
+def write_thumb(src: Path, *, ts: int | None = None, key: str = "") -> Path | None:
     """Save a 48×48 JPEG under THUMBS_DIR. None if the source cannot be read."""
     path = Path(src)
     if not path.is_file():
@@ -329,34 +333,39 @@ def write_thumb(src: Path, *, ts: int) -> Path | None:
         y = (THUMB_SIZE[1] - im.size[1]) // 2
         canvas.paste(im, (x, y))
         THUMBS_DIR.mkdir(parents=True, exist_ok=True)
-        dest = THUMBS_DIR / f"{int(ts)}.jpg"
+        dest = THUMBS_DIR / f"{key or int(ts or time.time())}.jpg"
         canvas.save(dest, "JPEG", quality=80)
         return dest
     except OSError:
         return None
 
 
-def attach_image(src: Path, *, ts: int | None = None) -> Path | None:
-    """Attach a generated plate to the history row ``ts`` names.
+def attach_image(src: Path, *, ts: int | None = None, key: str = "") -> Path | None:
+    """Attach a generated plate to the row ``key`` or ``ts`` names.
 
-    Without ``ts`` the newest row is the one, which is what a fresh render
-    wants. With a ``ts`` that matches no row there is nothing to attach to, so
-    this returns None: falling back to the newest row would hand this plate to a
-    different render and delete that row's thumbnail.
+    ``key`` is the row's own id, so two renders in one second still name
+    different rows. Without either the newest row is the one, which is what a
+    fresh render wants. A value that matches no row returns None: falling back
+    to the newest row would hand this plate to a different render.
     """
     rows = _load()
     if not rows:
         return None
     idx = 0
-    if ts is not None:
+    if key:
+        match = [i for i, row in enumerate(rows) if str(row.get("key") or "") == str(key)]
+        if not match:
+            return None
+        idx = match[0]
+    elif ts is not None:
         match = [
             i for i, row in enumerate(rows) if int(row.get("ts") or 0) == int(ts)
         ]
         if not match:
             return None
         idx = match[0]
-    stamp = int(rows[idx].get("ts") or time.time())
-    thumb = write_thumb(Path(src), ts=stamp)
+    stamp = rows[idx].get("key") or int(rows[idx].get("ts") or time.time())
+    thumb = write_thumb(Path(src), key=str(stamp))
     if thumb is None:
         return None
     old = rows[idx].get("image")

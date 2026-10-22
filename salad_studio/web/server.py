@@ -174,7 +174,7 @@ class StudioHandler(BaseHTTPRequestHandler):
             return self._json(404, {"error": {"kind": "not_found", "message": "no such plate"}})
         data = path.read_bytes()
         self.send_response(200)
-        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Type", "image/png" if path.suffix.lower() == ".png" else "image/jpeg")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "private, max-age=3600")
         self.end_headers()

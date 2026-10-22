@@ -58,23 +58,24 @@ class TokensController:
         return self.state()
 
     def state(self) -> dict[str, Any]:
-        return {
-            "slots": [
-                {
-                    "id": kind,
-                    "label": label,
-                    # The raw key never leaves the process. The page shows the
-                    # hint and keeps whatever the user types as the new value.
-                    "value": "",
-                    "present": bool(_slot_value(kind)),
-                    "hint": tokens.masked(_slot_value(kind)),
-                    "state": self.states.get(kind, "unknown"),
-                    "tooltip": {"valid": "accepted", "invalid": "rejected"}.get(
-                        self.states.get(kind, "unknown"), "unconfirmed"),
-                }
-                for kind, label in SLOTS
-            ]
-        }
+        slots = []
+        for kind, label in SLOTS:
+            # One read per slot: read_token seeds the store, and seeding can
+            # write the file.
+            raw = _slot_value(kind)
+            slots.append({
+                "id": kind,
+                "label": label,
+                # The raw key never leaves the process. The page shows the
+                # hint and keeps whatever the user types as the new value.
+                "value": "",
+                "present": bool(raw),
+                "hint": tokens.masked(raw),
+                "state": self.states.get(kind, "unknown"),
+                "tooltip": {"valid": "accepted", "invalid": "rejected"}.get(
+                    self.states.get(kind, "unknown"), "unconfirmed"),
+            })
+        return {"slots": slots}
 
     # -- actions
 
@@ -139,6 +140,10 @@ class ShellController:
 
     def __init__(self, studio: Any) -> None:
         self.studio = studio
+        # The history row this press created, so its plate attaches to that row
+        # even when another render finishes first.
+        self._render_ts: int | None = None
+        self._render_key: str | None = None
 
     def register(self, table: Any) -> None:
         table.action("shell.view")(self.view)
@@ -171,11 +176,14 @@ class ShellController:
         if refusal:
             return self._refused(ctx, refusal)
         self.studio.services.log("info", f"Generate  {profile.mode}  {profile.gateway}  graph={profile.graph}")
+        entry = None
         try:
-            prompt_history.add_request(body, profile=profile.name, gateway=profile.gateway)
+            entry = prompt_history.add_request(body, profile=profile.name, gateway=profile.gateway)
         except OSError as exc:
             # The history entry is secondary; a locked file must not stop the render.
             self.studio.services.log("warn", f"history entry skipped: {exc}")
+        self._render_ts = int(entry["ts"]) if entry and entry.get("ts") else None
+        self._render_key = str(entry.get("key") or "") if entry else None
         self.studio.gen = GenWord(word="Generating", busy=True)
         self.studio.publish()
         self.studio.say("Generating")
@@ -183,7 +191,8 @@ class ShellController:
         ctx.background(
             lambda: self.studio.services.generate_sync(
                 body, profile, self.studio.services.salad_key(),
-                salad_queue.request_checksum(body)),
+                salad_queue.request_checksum(body), ts=self._render_ts,
+                history_key=self._render_key),
             lambda outcome: self._generated(ctx, outcome))
         return {}
 
@@ -266,7 +275,7 @@ class ShellController:
                 "info", f"Routed to profile {route.name!r} (gateway {route.profile.gateway})")
             profile.gateway, profile.name, profile.mode = (
                 route.profile.gateway, route.profile.name, route.profile.mode)
-        if (profile.gateway or "").strip() in endpoints:
+        if any(profiles.same_gateway(endpoint, profile.gateway) for endpoint in endpoints):
             return ("the Salad target holds a vast.ai instance URL, so the Salad key would be "
                     "sent to that machine. Pick the Salad gateway on the Config page, then "
                     "Generate again.")
@@ -292,9 +301,12 @@ class ShellController:
             ctx.note(f"Wrote {outcome.out}", level="ok")
             if outcome.out is not None:
                 try:
-                    prompt_history.attach_image(Path(outcome.out))
+                    prompt_history.attach_image(Path(outcome.out), ts=self._render_ts,
+                                                key=self._render_key or "")
                 except (OSError, ValueError, TypeError) as exc:
                     self.studio.services.log("warn", f"history thumb skipped: {exc}")
+        self._render_ts = None
+        self._render_key = None
         self.studio.gen = GenWord()
         self.studio.refresh_plates()
         self.studio.publish()

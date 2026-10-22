@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, effect, inject } from '@angular/core';
 import { StudioStore } from '../core/studio-store';
 
 /**
@@ -13,7 +13,7 @@ import { StudioStore } from '../core/studio-store';
 @Component({
   selector: 'app-dialog-host',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  host: { '(keydown.escape)': 'escape()' },
+  host: { '(document:keydown.escape)': 'escape()' },
   template: `
     @if (message(); as box) {
       <div class="scrim" role="presentation" (click)="store.dismissDialog()"></div>
@@ -77,6 +77,28 @@ export class DialogHost {
   protected readonly store = inject(StudioStore);
   protected readonly message = this.store.dialog;
   protected readonly ask = this.store.confirm;
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+
+  private opener: HTMLElement | null = null;
+  private wasOpen = false;
+
+  constructor() {
+    effect(() => {
+      const open = !!(this.message() || this.ask());
+      if (open && !this.wasOpen) {
+        this.wasOpen = true;
+        this.opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        // The box is inserted after this signal change, so focus on the next turn.
+        setTimeout(() => {
+          this.host.nativeElement.querySelector<HTMLElement>('.box button')?.focus();
+        });
+      } else if (!open && this.wasOpen) {
+        this.wasOpen = false;
+        this.opener?.focus();
+        this.opener = null;
+      }
+    });
+  }
 
   protected escape(): void {
     this.store.dismissDialog();

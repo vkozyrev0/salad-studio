@@ -197,7 +197,7 @@ class AssistController:
     def _latest_image(self) -> Path | None:
         # The plate cache the shell already fills, rather than a second scan of the folder.
         plates = self.studio.plates
-        return Path(plates[0][0]) if plates else None
+        return self.studio.services.plate_path(plates[0][0]) if plates else None
 
 
 def _boxes_from(controller: Any, payload: dict[str, Any], ctx: Any) -> dict[str, Any]:

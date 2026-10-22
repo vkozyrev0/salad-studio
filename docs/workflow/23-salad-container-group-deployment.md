@@ -15,7 +15,9 @@ Plan D and this repo's `docs/workflow/15` now lands here.
 > / TensorDock / Massed / Hyperstack / AutoDL); it now carries one-line
 > characterisations and points here.
 >
-> **Live-ops facts and the prompt recipe:** [`15`](15-salad-flux2-klein-group.md).
+> **Live-ops facts and the prompt recipe:** [`21`](21-klein-image-handoff.md)
+> and this document. Doc [`15`](15-salad-flux2-klein-group.md) is the
+> 2026-09-21 record.
 > **Where to start for image work:** [`21`](21-klein-image-handoff.md).
 
 ---
@@ -327,7 +329,7 @@ never falls through to another; the automatic path keeps a short fallback queue.
 
 When Generate runs in vast mode with the option on, the app lists the account. A listed instance is used as-is; a missing one is replaced, and the press reports the new instance instead of POSTing because the first boot still has to pull and prefetch, so Generate again when `/ready` is green. **Replace if destroyed now** runs the same check without waiting for a press; it acts on the row selected in the Instances table, so a destroyed row can be replaced too.
 
-A row is an instance, not an endpoint. **Fetch instances from Vast.ai** reads
+A row is an instance, not an endpoint. **Fetch instances** reads
 the unfiltered `/api/v1/instances/` records and reconciles the stored list:
 
 - a record that maps no ComfyUI port is still a row, showing its real state
@@ -372,7 +374,7 @@ The wrapper answers `GET /health` and `GET /ready` on the mapped host port for c
 
 ### 5.7 Wire it into the app
 
-On **Config**, **Vast.ai**, add the address or press **Fetch instances from Vast.ai**, then select the row (the dot in **Use** marks it). On **Config**, **Profile**, set the target to **Vast.ai instance**, set the URL, and press **Save profile**; **Use the selected instance** fills it from the active row. Press **Generate** and the request queues on the profile's line.
+On **Config**, **Vast.ai**, add the address or press **Fetch instances**, then select the row (the dot in **Use** marks it). On **Config**, **Profile**, set the target to **Vast.ai instance**, set the URL, and press **Save profile**; **Use the selected instance** fills it from the active row. Press **Generate** and the request queues on the profile's line.
 
 The app derives the endpoint from the mapped ports. It prefers the wrapper on 3000, which resolves Civitai LoRA URLs, and falls back to Comfy on 8188 or 18188, or to the instance's only other non-ssh port. §5.8 explains why.
 

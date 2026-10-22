@@ -16,7 +16,8 @@ import { DialogHost } from './dialog-host';
   imports: [RouterOutlet, RouterLink, RouterLinkActive, HistoryStrip, DialogHost],
   host: { '(document:keydown)': 'onKey($event)' },
   template: `
-    <div class="window">
+    <a class="skip" href="#page">Skip to page</a>
+    <div class="window" [attr.inert]="store.dialog() || store.confirm() ? '' : null">
       <header class="bar">
         <button class="btn primary" type="button" (click)="generate()" [disabled]="shell().gen.busy">
           @if (shell().gen.busy) { <span class="spinner" aria-hidden="true"></span> }
@@ -47,7 +48,8 @@ import { DialogHost } from './dialog-host';
         <ul class="rail-list">
           @for (page of pages; track page.id) {
             <li>
-              <a class="rail-link" [routerLink]="['/' + page.id]" routerLinkActive="active">
+              <a class="rail-link" [routerLink]="['/' + page.id]" routerLinkActive="active"
+                 ariaCurrentWhenActive="page">
                 <span class="rail-num">{{ page.number }}</span>
                 <span class="rail-name">{{ page.title }}</span>
               </a>
@@ -60,22 +62,34 @@ import { DialogHost } from './dialog-host';
         </div>
       </nav>
 
-      <main class="pane">
+      <main class="pane" id="page">
         <router-outlet />
       </main>
 
       <footer class="status" [class.warn]="shell().status.level === 'warn'" [class.error]="shell().status.level === 'error'">
         <span class="dot" aria-hidden="true"></span>
-        <span class="status-text">{{ shell().status.text }}</span>
-        <span class="keys eyebrow">← → walks the strip</span>
+        <span class="status-text" [attr.title]="shell().status.text">{{ shell().status.text }}</span>
+        <span class="keys eyebrow">← → walk the strip when focused</span>
       </footer>
 
       <app-history-strip [plates]="shell().plates" />
-      <app-dialog-host />
     </div>
+    <app-dialog-host />
   `,
   styles: `
     :host { display: block; height: 100vh; }
+    .skip {
+      position: absolute;
+      left: -9999px;
+      top: 0;
+      z-index: 20;
+      padding: 8px 12px;
+      background: var(--surface);
+      color: var(--fg);
+      border: 1px solid var(--accent);
+      border-radius: var(--radius-control);
+    }
+    .skip:focus { left: 12px; top: 12px; }
     .window {
       display: grid;
       height: 100%;
@@ -245,19 +259,23 @@ export class Shell {
 
   protected onKey(event: KeyboardEvent): void {
     if (!event.ctrlKey) return;
-    // A field owns Ctrl+Tab while it has the caret, and Ctrl+1..0 stay with
-    // the page body; the rail is how a page with a form is left.
-    const target = event.target as HTMLElement | null;
-    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
     const index = Math.max(0, this.pages.findIndex((p) => p.id === this.store.pageId()));
+    // Ctrl+Tab is a page shortcut everywhere, including inside a field; the
+    // digits stay with the page body so a form keeps its own number keys.
     if (event.key === 'Tab' || event.key === 'PageDown') {
       event.preventDefault();
       const delta = event.shiftKey ? -1 : 1;
       void this.router.navigateByUrl('/' + this.pages[(index + delta + this.pages.length) % this.pages.length].id);
-    } else if (event.key === 'PageUp') {
+      return;
+    }
+    if (event.key === 'PageUp') {
       event.preventDefault();
       void this.router.navigateByUrl('/' + this.pages[(index - 1 + this.pages.length) % this.pages.length].id);
-    } else if (/^[0-9]$/.test(event.key)) {
+      return;
+    }
+    const target = event.target as HTMLElement | null;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+    if (/^[0-9]$/.test(event.key)) {
       event.preventDefault();
       const wanted = event.key === '0' ? this.pages.length : Number(event.key);
       if (wanted <= this.pages.length) void this.router.navigateByUrl('/' + this.pages[wanted - 1].id);

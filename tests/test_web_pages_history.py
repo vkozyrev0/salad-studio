@@ -98,7 +98,7 @@ class HistoryPageTest(unittest.TestCase):
 
     def test_a_row_carries_its_prompt_graph_id_and_rating_but_never_its_request(self) -> None:
         state, _ctx = self.call("view")
-        self.assertEqual(state["columns"], ["When", "Prompt", "Graph", "Rating", "Image"])
+        self.assertEqual(state["columns"], ["When", "Prompt", "Graph", "Rating", "Plate"])
         self.assertEqual(state["count"], 2)
         row = self.row(state, self.newer["ts"])
         self.assertEqual(row["id"], str(self.newer["ts"]))

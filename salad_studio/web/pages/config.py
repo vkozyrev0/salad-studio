@@ -355,10 +355,13 @@ class ConfigController:
                      for row in (vast.load_doc().get("instances") or [])}
         salad_gateways = {p.gateway.strip() for p in profiles.load_all().values() if p.gateway.strip()}
         if self.studio.form.mode == "vast" and (
-            gateway in salad_gateways or profiles.is_salad_gateway(gateway)
+            any(profiles.same_gateway(saved, gateway) for saved in salad_gateways)
+            or profiles.is_salad_gateway(gateway)
         ):
             self.studio.form.gateway = ""
-        elif self.studio.form.mode == "salad" and gateway in endpoints:
+        elif self.studio.form.mode == "salad" and any(
+            profiles.same_gateway(endpoint, gateway) for endpoint in endpoints
+        ):
             self.studio.form.gateway = ""
         self.studio.publish()
         return self.state()
@@ -839,9 +842,13 @@ class ConfigController:
             })
             return self.state()
         key = self.studio.services.token("vast")
+        env = vast.replacement_env(
+            hf_token=self.studio.services.token("huggingface"),
+            civitai_token=self.studio.services.token("civitai"),
+        )
 
         def work() -> Any:
-            return vast.rent_offer(key, offer, image=image)
+            return vast.rent_offer(key, offer, image=image, env=env)
 
         def done(result: Any) -> None:
             if isinstance(result, Exception):
@@ -872,10 +879,15 @@ class ConfigController:
             entry = image_deploy.entry_by_ref(_image_entries(image_deploy.load_settings()), self._image_ref(payload))
             image = str((entry or {}).get("tag") or "")
         key = self.studio.services.token("vast")
+        env = vast.replacement_env(
+            hf_token=self.studio.services.token("huggingface"),
+            civitai_token=self.studio.services.token("civitai"),
+        )
 
         def work() -> Any:
             return vast.replace_destroyed(key=key, endpoint=str(row.get("endpoint") or ""),
-                                          instance_id=row.get("id"), image=image, settings=criteria)
+                                          instance_id=row.get("id"), image=image, settings=criteria,
+                                          env=env)
 
         def done(result: Any) -> None:
             if isinstance(result, Exception):

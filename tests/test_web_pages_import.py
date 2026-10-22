@@ -250,13 +250,19 @@ class ImportTest(unittest.TestCase):
         self.assertEqual(set(self.editor.loaded), {"prompt", "convert_output", "refs"})
         self.assertIn("flux-2-klein-9b-fp8", json.dumps(self.editor.loaded))
         self.assertIn({"kind": "navigate", "page": "editor"}, reply["effects"])
-        self.assertEqual(reply["shell"]["note"], {"text": "Imported Civitai workflow to Prompt Editor",
-                                                  "level": "ok"})
+        self.assertEqual(reply["shell"]["note"]["level"], "ok")
+        self.assertIn("Comfy nodes", reply["shell"]["note"]["text"])
         state = self.controller.state()
         self.assertTrue(state["inspected"])
         self.assertTrue(all(isinstance(n, str) for n in state["issues"] + state["notes"]))
         self.assertTrue(any("imported Civitai paste" in line for line in self.studio.services.lines))
         self.assertFalse(self.controller.state()["stashed"], "the held paste is spent")
+
+    def test_convert_uses_the_checkpoint_select_on_the_metadata_path(self) -> None:
+        self.call("set_paste", {"meta": DISTILLED_META, "unet": "Base 9B"})
+        self.call("convert", {})
+        self.wait("convert")
+        self.assertIn("flux-2-klein-base-9b-fp8", json.dumps(self.editor.loaded))
 
     # -- fetch
 

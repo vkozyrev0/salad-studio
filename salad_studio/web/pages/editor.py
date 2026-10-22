@@ -33,6 +33,10 @@ class EditorController:
         self.model = gm.GraphModel()
         self.status = ("", "info")
         self._set_payload(empty_payload())
+        # The editor holds the request the settings describe from the start, so
+        # Generate works on a fresh studio without a press nobody asked for.
+        # A knob the store cannot hold leaves it empty, and Validate says why.
+        self._rebuild_now(quiet=True)
 
     def register(self, table: Any) -> None:
         table.action("editor.view")(self.view)
@@ -248,11 +252,12 @@ class EditorController:
         self._set_payload(parsed.payload, relayout=not kept)
         self._message(["JSON valid"], "ok")
 
-    def _rebuild_now(self) -> None:
+    def _rebuild_now(self, *, quiet: bool = False) -> None:
         try:
             self._set_payload(_from_form(*_snapshot(self.studio)))
         except ValueError as exc:
-            self._say(f"Refused: {exc}", "warn")
+            if not quiet:
+                self._say(f"Refused: {exc}", "warn")
 
     # -- the status
 

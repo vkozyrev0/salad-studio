@@ -19,7 +19,9 @@ import {
 @Component({
   selector: 'app-field',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  host: { '[style.--w.px]': 'w()' },
+  // A field with no width takes the row's whole width. Binding the host style
+  // unconditionally would set `--w: 0px` and collapse every such field.
+  host: { '[style.--w.px]': 'w() || null' },
   template: `
     <div class="field">
       <label [attr.for]="fieldId()">{{ label() }}</label>

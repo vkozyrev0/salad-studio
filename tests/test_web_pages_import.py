@@ -76,6 +76,12 @@ class StubStudio:
         self.busy: dict[str, bool] = {}
         self.note_line: tuple[str, str] | None = None
         self.shell = self
+        # The editor reads these the moment it is built, to open on the request
+        # its settings describe.
+        from salad_studio.web.form import Form
+
+        self.form = Form()
+        self.profile = None
 
     def note(self, text: str, *, level: str = "info") -> None:
         self.note_line = (text, level)
@@ -88,6 +94,9 @@ class StubStudio:
 
     def publish(self) -> None:
         pass
+
+    def stored_profile(self):
+        return None
 
     def next_reply_id(self) -> str:
         self.ids += 1

@@ -2714,7 +2714,9 @@ class ArtificealFetch(unittest.TestCase):
         self.assertNotIn("prompt", meta)
         self.assertEqual(meta.get("tools"), "Draw Things")
         self.assertEqual(ci.detect_import_tool(metadata_text=text), ci.TOOL_DRAW_THINGS)
-        body = ci.import_to_request(metadata_text=text)
+        # No live Civitai lookup: the same paste must convert the same way offline.
+        with patch.object(ci.ls, "fetch_civitai_image", return_value=None):
+            body = ci.import_to_request(metadata_text=text)
         prompt = body["prompt"]
         self.assertEqual(
             prompt["70"]["inputs"]["unet_name"],

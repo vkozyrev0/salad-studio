@@ -5,7 +5,7 @@
 > re-run the Civitai/Salad investigations below.
 >
 > Host-ranking research (Vast/RunPod ToS, fal 422 overreach) still lives
-> in [`13-gpu-host-catalog-plans.md`](C:/Users/vkozy/repos/lifesim-design/docs/workflow/13-gpu-host-catalog-plans.md). That
+> in `lifesim-design/docs/workflow/13-gpu-host-catalog-plans.md`. That
 > file's old "RESEARCH / no pods / live T2I is banana-pro only" banner is
 > **stale** for Salad: a Comfy group is deployed and was used for probes.
 >
@@ -149,7 +149,7 @@ Klein T2I is a different graph: `UNETLoader` + `CLIPLoader` type `flux2` (`qwen_
 
 ## 5. Pointers
 
-- Catalog spec: [`02-image-catalog.md`](C:/Users/vkozy/repos/lifesim-design/docs/systems/02-image-catalog.md)
+- Catalog spec: `lifesim-design/docs/systems/02-image-catalog.md` (another checkout)
 - Face compose: `salad_catalog_faces.py` `HOUSE` + `compose()`
 - Body compose: `salad_probe_klein.py` `_klein_body_prompt` + the pack's `body_age_markers` / `body_pregnancy` (the body path is hand-written prose; the old body templates were removed)
 - Local LoRA/checkpoint cache (gitignored): `art/model-cache/`. `python model_catalog.py seed` then `fetch-missing`. Each index row keeps Civitai page + version id + sha256. Salad still URL-loads on a new replica; this cache is this machine + a future custom image bake. UltraRealPhoto v2 is ~2 GB, metadata only unless `--force`.

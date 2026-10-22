@@ -3,8 +3,8 @@
 A subprocess drives one real call per layer -- import, persistence, logging,
 Salad communication, Vast.ai communication, image deployment, AI communication
 -- and then asserts that neither ``tkinter`` nor ``flet`` is in ``sys.modules``.
-The pages and the window are the only code allowed to import a UI toolkit, so
-a regression here means widget code crept back into a layer.
+The page is a browser document, so nothing in this package should ever import
+a UI toolkit again; this test is the tripwire if one creeps back.
 """
 from __future__ import annotations
 
@@ -161,32 +161,30 @@ class LayerSeparability(unittest.TestCase):
             )
         self.assertIn("layers: no UI toolkit imported", output)
 
-    def test_only_the_pages_and_the_window_import_flet(self) -> None:
-        """The other half of the split: the window is flet_app, and it imports flet."""
-        source = (PKG / "flet_app.py").read_text(encoding="utf-8")
-        self.assertIn("import flet as ft", source)
-        for module in (
-            "ai_helper.py",
-            "comfy_import.py",
-            "generator.py",
-            "image_deploy.py",
-            "profiles.py",
-            "prompt_history.py",
-            "request_json.py",
-            "salad_queue.py",
-            "salad_status.py",
-            "studio_log.py",
-            "studio_meta.py",
-            "tokens.py",
-            "vast.py",
-        ):
-            text = (PKG / module).read_text(encoding="utf-8")
-            self.assertNotIn(
-                "import flet",
-                text,
-                f"{module} must stay importable without the UI layer",
-            )
+    def test_no_module_in_the_package_imports_a_ui_toolkit(self) -> None:
+        """The page is served as HTML, so the package holds no widgets at all."""
+        offenders = [
+            str(path.relative_to(TOOLS))
+            for path in PKG.rglob("*.py")
+            if "import flet" in path.read_text(encoding="utf-8")
+            or "import tkinter" in path.read_text(encoding="utf-8")
+            or "from tkinter" in path.read_text(encoding="utf-8")
+        ]
+        self.assertEqual(offenders, [], "a UI toolkit crept back into the package")
 
+    def test_the_server_package_imports_without_a_ui_toolkit(self) -> None:
+        import importlib
+
+        # The package puts its own directory and the package on the path, the
+        # way ``python -m salad_studio`` does; a test process needs the same.
+        for path in (TOOLS, PKG):
+            if str(path) not in sys.path:
+                sys.path.insert(0, str(path))
+        for name in ("actions", "app", "controllers", "core", "engine", "events",
+                     "form", "pages", "registry", "server", "services", "shell"):
+            with self.subTest(module=name):
+                module = importlib.import_module(f"salad_studio.web.{name}")
+                self.assertNotIn("flet", getattr(module, "__dict__", {}))
 
 if __name__ == "__main__":
     unittest.main()

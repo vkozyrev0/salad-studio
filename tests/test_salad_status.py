@@ -401,21 +401,14 @@ class ContainerCounts(unittest.TestCase):
 
 
 class SourceButton(unittest.TestCase):
-    def test_the_window_has_the_check_button_and_the_strip(self) -> None:
-        src = (PKG / "flet_app.py").read_text(encoding="utf-8")
-        self.assertIn('"Check Salad status"', src)
-        self.assertIn("self.services.check_salad", src)
-        self.assertIn("salad_status.strip_counts", src)
-        services = (PKG / "flet_services.py").read_text(encoding="utf-8")
+    def test_the_server_has_the_check_action_and_the_strip_counts(self) -> None:
+        services = (PKG / "web" / "services.py").read_text(encoding="utf-8")
         self.assertIn("salad_status.snapshot_gateway", services)
         self.assertIn("check_salad(silent=True)", services)
-        # The policy fields and their actions live on the Config page, one
-        # policy per profile; there is no Policy page.
-        config = (PKG / "pages" / "config.py").read_text(encoding="utf-8")
-        self.assertNotIn('ft.Text("Policy")', config)
-        self.assertIn("def apply_policy", config)
-
-
+        shell = (PKG / "web" / "shell.py").read_text(encoding="utf-8")
+        self.assertIn("salad_status.strip_counts", shell)
+        controllers = (PKG / "web" / "controllers.py").read_text(encoding="utf-8")
+        self.assertIn('"shell.check_salad"', controllers)
 
 class PolicyRoundtrip(unittest.TestCase):
     def test_policy_from_group_reads_probes(self) -> None:

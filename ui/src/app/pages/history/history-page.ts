@@ -1,0 +1,201 @@
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { ColDef } from 'ag-grid-community';
+import { StudioStore } from '../../core/studio-store';
+import { PageFrame } from '../../shell/page-frame';
+import { DataGrid } from '../../shared/data-grid';
+import { clock } from '../../shared/format';
+
+interface HistoryRow {
+  id: string;
+  ts?: number;
+  prompt?: string;
+  graph?: string;
+  rating?: number;
+  image?: string;
+  profile?: string;
+}
+
+interface HistoryState {
+  rows?: HistoryRow[];
+  empty_text?: string;
+  selected?: string | null;
+}
+
+/**
+ * Prompt History: every request, its prompt, its graph and its rating.
+ *
+ * The graph cell is the request's stats, cut at 48 characters as the Flet
+ * table cut it, with the whole line as its tooltip. A rating is stars, and a
+ * rating that is not there reads as a dash rather than as an empty cell.
+ */
+@Component({
+  selector: 'app-history-page',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [PageFrame, DataGrid],
+  template: `
+    <app-page-frame>
+      <div class="wrap">
+        <div class="meta">
+          <span><b>{{ rows().length }}</b> requests · <b>{{ rated() }}</b> rated</span>
+          <span>Newest first</span>
+        </div>
+
+        <div class="table">
+          @if (rows().length) {
+            <app-data-grid [rows]="rows()" [columns]="columns" field="id" [selected]="selected()" (picked)="pick($event)" />
+          } @else {
+            <p class="empty">{{ state()?.empty_text || 'No prompts yet. Every Generate stores its request here.' }}</p>
+          }
+        </div>
+
+        <div class="foot">
+          <div class="selection">
+            <span class="eyebrow">Selected</span>
+            <span class="selection-meta">{{ chosen()?.prompt || 'No request selected' }}</span>
+          </div>
+
+          <div class="rating-control" role="group" aria-label="Rate the selected request">
+            <span class="eyebrow">Rating</span>
+            @for (n of stars; track n) {
+              <button
+                class="star"
+                type="button"
+                [class.on]="n <= (chosen()?.rating ?? 0)"
+                [attr.aria-label]="'Rate ' + n + (n === 1 ? ' star' : ' stars')"
+                [attr.aria-pressed]="n === chosen()?.rating"
+                [disabled]="!chosen() || busy('rate')"
+                (click)="rate(n)"
+              >★</button>
+            }
+            <button class="btn quiet sm" type="button" [disabled]="!chosen() || busy('rate')" (click)="rate(0)">No stars</button>
+          </div>
+
+          <div class="btn-row">
+            <button class="btn ghost" type="button" [disabled]="!chosen() || busy('reuse')" (click)="act('reuse')">
+              @if (busy('reuse')) { <span class="spinner" aria-hidden="true"></span> }
+              Reuse
+            </button>
+            <button class="btn danger" type="button" [disabled]="!chosen() || busy('delete')" (click)="act('delete')">
+              Delete
+            </button>
+          </div>
+        </div>
+      </div>
+    </app-page-frame>
+  `,
+  styles: `
+    :host { display: block; height: 100%; }
+    .wrap { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; min-height: 0; }
+    .meta {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      padding: 13px 0 8px;
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--fg-muted);
+    }
+    .meta b { font-weight: 500; color: var(--fg); }
+    .table { min-height: 0; overflow: hidden; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+    .empty { margin: 0; padding: 16px 2px; font-size: 12.5px; color: var(--fg-muted); }
+    .foot { display: flex; align-items: center; gap: 20px; min-height: 58px; padding-top: 8px; }
+    .selection { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex: 1; }
+    .selection-meta {
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      color: var(--fg);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .rating-control { display: flex; align-items: center; gap: 1px; flex: none; }
+    .rating-control .eyebrow { margin-right: 9px; }
+    .star {
+      width: 26px;
+      height: 28px;
+      padding: 0;
+      border: 0;
+      border-radius: 2px;
+      background: none;
+      color: var(--rule);
+      font-family: 'Segoe UI Symbol', var(--font-ui);
+      font-size: 15px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .star:hover:not(:disabled) { color: var(--fg); background: var(--wash); }
+    .star.on { color: var(--accent); }
+    .star:disabled { opacity: 0.35; cursor: default; }
+    @media (max-width: 900px) {
+      .foot { flex-wrap: wrap; gap: 10px; }
+      .selection { flex-basis: 100%; }
+    }
+  `,
+})
+export class HistoryPage {
+  private readonly store = inject(StudioStore);
+
+  protected readonly state = computed(() => this.store.page() as HistoryState | null);
+  protected readonly rows = computed(() => this.state()?.rows ?? []);
+  private readonly local = signal<string | null>(null);
+  protected readonly selected = computed(() => this.local() ?? this.state()?.selected ?? null);
+  protected readonly chosen = computed(() => this.rows().find((row) => row.id === this.selected()) ?? null);
+  protected readonly rated = computed(() => this.rows().filter((row) => (row.rating ?? 0) > 0).length);
+  protected readonly stars = [1, 2, 3, 4, 5];
+
+  /**
+   * The prompt is the only column that grows. Every other one has a base
+   * width its content fits, so the grid never crushes Graph or Rating into an
+   * ellipsis while the prompt takes all the slack.
+   */
+  protected readonly columns: ColDef[] = [
+    { headerName: 'When', field: 'ts', start: 78, flex: 0, valueFormatter: (p) => clock(p.value) },
+    { headerName: 'Prompt', field: 'prompt', flex: 3, minWidth: 240, tooltipField: 'prompt', cellStyle: { 'white-space': 'normal', 'line-height': '1.35' } },
+    {
+      headerName: 'Graph',
+      field: 'graph',
+      start: 250,
+      flex: 0,
+      tooltipField: 'graph',
+      valueFormatter: (p) => String(p.value ?? '').replace(/\s+/g, ' ').slice(0, 48),
+      cellStyle: { 'font-size': '11px', color: 'var(--fg-muted)' },
+    },
+    {
+      headerName: 'Rating',
+      field: 'rating',
+      start: 92,
+      flex: 0,
+      valueFormatter: (p) => (Number(p.value) > 0 ? '★'.repeat(Number(p.value)) : '-'),
+      cellStyle: { color: 'var(--accent)', 'letter-spacing': '1px' },
+    },
+    {
+      headerName: 'Plate',
+      field: 'image',
+      start: 62,
+      flex: 0,
+      cellRenderer: (p: { value?: string }) =>
+        p.value
+          ? `<span class="print small" style="width:36px;height:36px;display:inline-block"><img src="${p.value}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover"></span>`
+          : '',
+    },
+  ];
+
+  protected busy(action: string): boolean {
+    return this.store.inFlight().has(`history.${action}`);
+  }
+
+  protected pick(id: string): void {
+    this.local.set(id);
+  }
+
+  protected rate(stars: number): void {
+    void this.store.act('history', 'rate', { id: this.selected(), stars });
+    this.local.set(null);
+  }
+
+  protected act(action: 'reuse' | 'delete'): void {
+    void this.store.act('history', action, { id: this.selected() });
+  }
+}

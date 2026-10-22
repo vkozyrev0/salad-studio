@@ -18,7 +18,7 @@ for p in (str(TOOLS), str(PKG)):
 
 from salad_studio import tokens as tok  # noqa: E402
 from tests import _stores  # noqa: E402
-from tests.test_launch import _TempPaths  # noqa: E402
+from tests._paths import _TempPaths  # noqa: E402
 
 GITIGNORE = HERE.parent / ".gitignore"
 
@@ -297,66 +297,24 @@ class TokenFiles(unittest.TestCase):
         self.assertIn("deepseek", doc)
 
 
-class LiveTokensTab(unittest.TestCase):
-    """The Tokens page reads the saved keys back and saves what the page holds."""
+class TokensOnTheServer(unittest.TestCase):
+    """The key store as the new studio reads it: a saved key is what Generate sends."""
 
-    def setUp(self) -> None:
-        self._td = tempfile.TemporaryDirectory()
-        self.addCleanup(self._td.cleanup)
-        self.tmp = Path(self._td.name)
-        self._ctx = _TempPaths(self.tmp)
-        self._ctx.__enter__()
-        self.addCleanup(lambda: self._ctx.__exit__(None, None, None))
+    def test_a_saved_key_is_the_one_the_studio_reads_back(self) -> None:
+        from tests._studio import studio
 
-    def _page(self):
-        from salad_studio.pages.tokens_page import TokensPage
-        from tests._flet_host import Host
+        with studio() as made:
+            status, _reply = made.act("tokens", "save_key", {"values": {"salad": "sk-from-the-page"}})
+            self.assertEqual(status, 200)
+            self.assertEqual(made.studio.services.salad_key(), "sk-from-the-page")
+            slots = {slot["id"]: slot for slot in made.state("tokens")["slots"]}
+            self.assertEqual(slots["salad"]["value"], "sk-from-the-page")
 
-        host = Host()
-        page = TokensPage(host)
-        self.addCleanup(page.refresh_states)  # a mounted page, for the probes' repaint
-        return host, page
+    def test_the_rail_lists_the_pages_in_order(self) -> None:
+        from salad_studio.web.registry import PAGE_IDS
 
-    def test_tokens_tab_loads_saved_salad_key_and_generate_reads_it(self) -> None:
-        from salad_studio.flet_shell import TAB_ORDER
-
-        self.assertEqual(list(TAB_ORDER), ["Config", "Prompt Settings", "Tokens", "LoRAs",
-                                           "Prompt Editor", "Prompt Assist", "Prompt Catalog",
-                                           "Import", "Prompt History", "Queue", "Logs"])
-        tok.write_token("salad", "salad-live-key-xyz9")
-        tok.write_token("huggingface", "hf_live_token_abcd")
-        host, page = self._page()
-        self.assertEqual(page.fields["salad"].value, "salad-live-key-xyz9")
-        self.assertEqual(page.fields["huggingface"].value, "hf_live_token_abcd")
-        # Every spec gets a field, and each is shown as a password until revealed.
-        for kind, _label, _rel in tok.TOKEN_SPECS:
-            self.assertIn(kind, page.fields)
-            self.assertTrue(page.fields[kind].password)
-        self.assertEqual(page.fields["deepseek"].label, "DeepSeek")
-        self.assertEqual(page.fields["salad"].label, "Salad")
-
-        # Check keys: one probe per field, and the dot takes the probe's state.
-        probed: list[str] = []
-
-        def probe(kind, **_kwargs):
-            probed.append(kind)
-            return {"kind": kind, "state": tok.INVALID if kind == "salad" else tok.VALID}
-
-        with mock.patch.object(tok, "probe_token", probe):
-            page.check_keys()
-        self.assertEqual(probed, [kind for kind, _label, _rel in tok.TOKEN_SPECS])
-        self.assertEqual(page.dots["salad"].color, host.colors[tok.state_color(tok.INVALID)])
-        self.assertEqual(page.dots["huggingface"].color, host.colors[tok.state_color(tok.VALID)])
-        self.assertIn("Rejected: salad", host.notes[-1][1])
-
-        # Save key writes what the page holds, and the window's key read follows it.
-        page.fields["salad"].value = "salad-replaced-key-Q"
-        page.save_key()
-        self.assertEqual(tok.read_token("salad"), "salad-replaced-key-Q")
-        self.assertEqual(host.services.salad_key(), "salad-replaced-key-Q")
-        self.assertEqual(page.fields["salad"].value, "salad-replaced-key-Q")
-        self.assertTrue(tok.LOCAL_PATH.is_file())
-        self.assertFalse(tok.default_path("salad").exists())
+        self.assertEqual(list(PAGE_IDS), ["config", "settings", "tokens", "loras", "editor",
+                                          "assist", "catalog", "import", "history", "queue", "logs"])
 
 
 if __name__ == "__main__":

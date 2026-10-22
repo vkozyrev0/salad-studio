@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Salad Studio visual chrome, one apply path the live app and tests share.
+"""Salad Studio's palette, role maps, type scale and contrast helpers.
 
-The palette, the contrast helpers, the type scale and the spacing scale. No UI
-toolkit is imported here: the Flet theme in ``flet_theme`` reads these values.
+No UI toolkit is imported here. The page reads these values through
+``/api/theme`` when it needs one the stylesheet does not define, and the
+contrast helpers are what a test holds every text pair to.
 """
 from __future__ import annotations
 
@@ -158,6 +159,129 @@ CONTRAST_MIN = 4.5
 # Selected tab grows up/sides (raised, attached to the page); unselected drop down.
 NOTEBOOK_TAB_EXPAND_SELECTED = (1, 2, 1, 0)
 NOTEBOOK_TAB_EXPAND_UNSELECTED = (0, 0, 0, 2)
+
+
+DARK = {
+    "surface": PALETTE["bg"],
+    "surface_dim": PALETTE["bg"],
+    "surface_bright": PALETTE["ground"],
+    "surface_container_low": PALETTE["status"],
+    "surface_container": PALETTE["surface"],
+    "surface_container_high": PALETTE["surface_hi"],
+    "surface_container_highest": PALETTE["border"],
+    "on_surface": PALETTE["fg"],
+    "on_surface_variant": PALETTE["fg_muted"],
+    "primary": PALETTE["accent"],
+    # A primary fill is the rose with the chrome's own ink on it: black text on
+    # a light rose reads as a button, not as disabled text. accent_hi is too
+    # close to accent to be a container.
+    "on_primary": PALETTE["accent_fg"],
+    "primary_container": PALETTE["select_tint"],
+    "on_primary_container": PALETTE["fg"],
+    "secondary": PALETTE["select_bg"],
+    "on_secondary": PALETTE["select_fg"],
+    "secondary_container": PALETTE["surface_hi"],
+    "on_secondary_container": PALETTE["fg"],
+    "tertiary": PALETTE["info"],
+    "error": PALETTE["invalid"],
+    "on_error": PALETTE["accent_fg"],
+    "error_container": "#4A2630",
+    "on_error_container": PALETTE["fg"],
+    "outline": PALETTE["border"],
+    "outline_variant": PALETTE["border"],
+}
+
+LIGHT = {
+    "surface": "#F6F2EA",
+    "surface_bright": "#FBF8F2",
+    "surface_container_low": "#FFFFFF",
+    "surface_container": "#EFE8DC",
+    "surface_container_high": "#E6DDCE",
+    "surface_container_highest": "#D9CEBC",
+    "on_surface": "#1B2836",
+    "on_surface_variant": "#4A5766",
+    "primary": "#9B4F61",
+    "on_primary": "#FFFFFF",
+    "primary_container": "#F3CDD4",
+    "on_primary_container": "#3B1820",
+    "secondary": "#3A5C4A",
+    "on_secondary": "#FFFFFF",
+    "secondary_container": "#CFE3D6",
+    "on_secondary_container": "#14251B",
+    "tertiary": "#2C6A8A",
+    "error": "#A63C4E",
+    "on_error": "#FFFFFF",
+    "error_container": "#F7D7DC",
+    "on_error_container": "#3B1820",
+    "outline": "#8A96A4",
+    "outline_variant": "#C9D0D8",
+}
+
+# Canvas colours by role, so a graph or a plate does not carry its own copy.
+DARK_CANVAS = {
+    "well": PALETTE["well"],
+    "card": PALETTE["surface"],
+    "card_stroke": PALETTE["border"],
+    "text": PALETTE["fg"],
+    "muted": PALETTE["fg_muted"],
+    "accent": PALETTE["accent"],
+    "select": PALETTE["select_bg"],
+}
+
+LIGHT_CANVAS = {
+    "well": "#FFFFFF",
+    "card": "#FFFFFF",
+    "card_stroke": "#C9D0D8",
+    "text": "#1B2836",
+    "muted": "#4A5766",
+    "accent": "#9B4F61",
+    "select": "#CFE3D6",
+}
+def _control_colors(roles: dict[str, str]) -> dict[str, str]:
+    """Every role a widget reads, so a page never takes a hex from anywhere else."""
+    return {
+        "on_surface": roles["on_surface"],
+        "muted": roles["on_surface_variant"],
+        "chrome": roles["surface"],
+        "page": roles["surface_bright"],
+        "primary_container": roles["primary_container"],
+        "on_primary_container": roles["on_primary_container"],
+        "on_primary": roles["on_primary"],
+        "surface_container": roles["surface_container"],
+        "outline": roles["outline"],
+        "error": roles["error"],
+        "ok": PALETTE["valid"] if roles["surface"] == PALETTE["bg"] else "#2F6B44",
+        "warn": PALETTE["warn"] if roles["surface"] == PALETTE["bg"] else "#8A5A12",
+    }
+
+
+def canvas_colors(dark: bool, _dark: bool | None = None) -> dict[str, str]:
+    """The page palette. The second argument is kept so ``canvas_colors(True, dark=…)`` still reads."""
+    base = DARK_CANVAS if dark else LIGHT_CANVAS
+    return {
+        **base,
+        **_control_colors(DARK if dark else LIGHT),
+        "info": PALETTE["info"],
+        "unknown": PALETTE["unknown"],
+        "valid": PALETTE["valid"],
+        "invalid": PALETTE["invalid"],
+        "accent": PALETTE["accent"],
+        "accent_fg": PALETTE["accent_fg"],
+        "surface_hi": PALETTE["surface_hi"],
+        "button": PALETTE["button"],
+        "select_fg": PALETTE["select_fg"],
+    }
+
+
+def check_contrast() -> list[str]:
+    """Rows that fail the WCAG bar in either scheme. A test asserts this is empty."""
+    fails: list[str] = []
+    for name, roles in (("dark", DARK), ("light", LIGHT)):
+        for fg in ("on_surface", "on_surface_variant", "primary", "error", "tertiary"):
+            for bg in ("surface", "surface_container", "surface_container_low"):
+                if contrast(roles[fg], roles[bg]) < CONTRAST_MIN:
+                    fails.append(f"{name}: {fg} on {bg}")
+    return fails
 
 
 def rgb(key: str) -> tuple[int, int, int]:

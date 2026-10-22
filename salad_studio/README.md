@@ -1,7 +1,15 @@
 # Salad Studio (not Eldermark)
 
 Windows helper for SaladCloud ComfyUI image generation and preview, separate
-from `eldermark`. Run `python -m salad_studio`.
+from `eldermark`. Run `python -m salad_studio`: it starts a local server on
+127.0.0.1 and opens the page in your browser. The page is Angular, served from
+`ui/dist/`; the Python side is the server and the stores.
+
+Every action is one `POST /api/action` naming a page and an action; the reply
+carries that page's whole state. The 15 s probe, the 2 s generation tick, log
+lines and finished background actions arrive on `GET /api/events` as
+server-sent events. The server binds loopback and refuses a request whose
+`Origin` is another site.
 
 **Top action bar**: a rose **Generate**, live status every 2 s, and ready
 (green), starting (amber) and not-started (red) container counts in one recessed
@@ -14,7 +22,7 @@ the ring, Home and End take its ends, and Enter opens the ringed plate. While
 the page holds the keys, the arrows move the selected row of its table.
 
 - **Config**. Sub-tabs in order: **Profile**, **Images**, **Salad group**,
-  **Vast.ai**; each scrolls alone.
+  **Vast.ai**; each scrolls alone. A save writes only the section it sits on.
 
   **Profile.** **Active profile** lists stored profiles; **Add profile** (name,
   seeds the metadata family list and typed URL), **Save profile**, **Delete
@@ -23,8 +31,9 @@ the page holds the keys, the arrows move the selected row of its table.
   instance** fills the URL from the Vast.ai active row; Generate uses the
   target, and the tab is an instance list, not a second engine switch.
   **Checkpoints this profile serves**: filename or label, **Add**,
-  **Remove selected**; a list may span families (the image must carry all), and
-  listing a checkpoint routes it.
+  **Remove selected** (which removes the row you picked, not the text you
+  typed); a list may span families (the image must carry all), and listing a
+  checkpoint routes it.
 
   **Images.** **Container images** lists deployable images and host needs from
   `routing.families.<family>.deployment` (doc 23 §1.2). **Image** picks one.
@@ -115,8 +124,8 @@ the page holds the keys, the arrows move the selected row of its table.
   narrows to names containing the text, any case; **Clear** restores all, and a
   narrowed grid still sorts.
 - **Prompt Editor**. The JSON body POSTed to the target's `/prompt`. The graph
-  is **drawn on a Flet canvas**; see
-  [the prompt graph pane](#prompt-graph-pane-painted-from-the-model). Selecting
+  is **drawn from the request** beside it, and the pane is read-only apart from
+  selection: two same-class cards can be swapped. Selecting
   LoRAs on Prompt Settings rebuilds the `LoraLoader` chain here; **Rebuild from
   JSON** reverses it. **Validate** runs the same `parse_request_json` gate as
   Generate, and also fails on a missing Civitai token or an unverified weight
@@ -274,17 +283,18 @@ switch),
 
 ## Layers
 
-`flet_app.py` owns the window; `flet_shell.py` the rail, the shortcuts and the
-status lines; `flet_services.py` the queue, the log, the probe and the timers;
-`flet_pages.py` the page list and the form the pages share; `pages/` one module
-per page. No non-UI module loads a UI toolkit, and `tests/test_layers.py`
-drives one real call per non-UI layer in a process where neither tkinter nor
-flet is imported.
+The page is an Angular app in `ui/`, built to `ui/dist/`. The server in `web/`
+is the only thing it talks to: `server.py` serves the page and three routes,
+`engine.py` turns one request into one reply, `core.py` runs every handler on
+one thread, `shell.py` holds what the window used to own, and `pages/` holds one
+controller per page. No module in this package imports a UI toolkit, and
+`tests/test_layers.py` is the tripwire if one creeps back.
 
 | Layer | Modules |
 |---|---|
-| UI | `flet_app.py`, `flet_shell.py`, `flet_services.py`, `flet_pages.py`, `flet_pump.py`, `flet_theme.py`, `flet_widgets.py`, `desktop.py`, `__main__.py`, `graph_model.py`, `graph_canvas.py`, `editor_logic.py`, `theme.py`, `ui_state.py`, `json_highlight.py` |
-| Import | `comfy_import.py`, `civitai_verify.py`, `request_json.py` |
+| Server | `server.py`, `engine.py`, `core.py`, `actions.py`, `events.py`, `shell.py`, `services.py`, `form.py`, `registry.py`, `app.py`, `controllers.py`, `__main__.py`; one controller per page in `web/pages/` |
+| Page | `ui/src/app/` (Angular), `theme.py` (the palette and the role maps) |
+| Import | `comfy_import.py`, `civitai_verify.py`, `request_json.py`, `graph_model.py` |
 | Persistence | `tokens.py`, `prompt_history.py`, `prompt_catalog.py`, `lora_store.py`, `profiles.py`, `hostings.py`, `studio_meta.py` |
 | Logging | `studio_log.py` |
 | Salad communication | `generator.py`, `salad_status.py`, `salad_queue.py`, `salad_gen.py` (repo root) |
@@ -326,12 +336,16 @@ the root [`README.md`](../README.md) (Configuration, Known limitations).
 Run the commands separately:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1190 tests, ~40 s
+python -m unittest discover -s tests -p "test_*.py"    # 1062 tests, ~35 s
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```
 
 Run from the repo root; the third command runs in `salad_klein/`.
+
+The page is built once and committed: `cd ui && npx ng build` writes
+`ui/dist/ui/browser`, and `tests/test_web_app.py` fails if a page the rail names
+does not answer.
 
 ## Container groups
 
@@ -340,11 +354,12 @@ container are in
 [doc 23](../docs/workflow/23-salad-container-group-deployment.md).
 `salad_status.py` is its client.
 
-## Prompt graph pane: painted from the model
+## Prompt graph pane: drawn from the model
 
-The pane draws `graph_model.GraphModel` straight onto a Flet canvas, cards and
-wires on two layers so a drag repaints only the wires. The layout keeps the
-JointJS pane's look: one column per class, cards sized to their rows, and a
-right-angled wire from each output port to its input port. Tests:
-`test_graph_model.py` and `test_graph_canvas.py`.
+`graph_model.py` lays the request out as data: one column per class, cards sized
+to their rows, a right-angled wire from each output port to its input port. The
+editor controller returns that model in the page state and
+`ui/src/app/pages/editor/graph.ts` draws it. A drag moves a card on the page and
+sends the final position, so the request JSON is never rewritten by a gesture.
+Tests: `test_graph_model.py`.
 [Decision record](../docs/history/65-salad-studio-prompt-graph-decision-2026-10-17.md).

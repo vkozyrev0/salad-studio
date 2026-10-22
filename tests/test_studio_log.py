@@ -123,16 +123,11 @@ class ExplainHttp(unittest.TestCase):
 
 
 class SourceLogsTab(unittest.TestCase):
-    def test_app_has_logs_tab(self) -> None:
-        page = (PKG / "pages" / "logs_page.py").read_text(encoding="utf-8")
-        self.assertIn('super().__init__("Logs"', page)
-        self.assertIn("refresh_lines", page)
-        services = (PKG / "flet_services.py").read_text(encoding="utf-8")
-        self.assertIn("on_log=self.log", services)
-        self.assertIn('"Logs",', (PKG / "flet_shell.py").read_text(encoding="utf-8"))
+    def test_the_server_has_a_logs_page(self) -> None:
+        page = (PKG / "web" / "pages" / "logs.py").read_text(encoding="utf-8")
+        self.assertIn('table.action("logs.view")', page)
+        self.assertIn('table.action("logs.clear")', page)
+        services = (PKG / "web" / "services.py").read_text(encoding="utf-8")
+        self.assertIn('self.hub.publish("log"', services)
         self.assertIn("explain_http", (PKG / "generator.py").read_text(encoding="utf-8"))
         self.assertIn("wait_gateway_ready", (PKG / "generator.py").read_text(encoding="utf-8"))
-
-
-if __name__ == "__main__":
-    unittest.main()

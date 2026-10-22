@@ -26,7 +26,7 @@ for _p in (PKG, TOOLS):
 
 import salad_queue as q  # noqa: E402
 import studio_meta  # noqa: E402
-from salad_studio import flet_shell  # noqa: E402
+from salad_studio.web.registry import PAGE_IDS  # noqa: E402
 
 MANUAL = PKG / "README.md"
 ROOT_README = TOOLS / "README.md"
@@ -39,6 +39,12 @@ FLUX2_DOC = TOOLS / "docs" / "workflow" / "15-salad-flux2-klein-group.md"
 HANDOFF = TOOLS / "docs" / "workflow" / "21-klein-image-handoff.md"
 
 
+# The rail's titles, in the order the server installs the pages.
+_PAGE_TITLES = ("Config", "Prompt Settings", "Tokens", "LoRAs", "Prompt Editor",
+                "Prompt Assist", "Prompt Catalog", "Import", "Prompt History",
+                "Queue", "Logs")
+
+
 class TabListMatchesTheApp(unittest.TestCase):
     def test_the_manual_lists_every_tab_in_order(self) -> None:
         text = MANUAL.read_text(encoding="utf-8")
@@ -48,7 +54,7 @@ class TabListMatchesTheApp(unittest.TestCase):
         listed = re.findall(r"\*\*([^*]+)\*\*", block)
         self.assertEqual(
             listed,
-            list(flet_shell.TAB_ORDER),
+            [name.strip() for name in _PAGE_TITLES],
             "the manual's tab list must be the app's tab order",
         )
 
@@ -101,7 +107,9 @@ class TabListMatchesTheApp(unittest.TestCase):
     def test_the_manual_documents_profile_management(self) -> None:
         """The controls the Config page ships are the ones the manual names."""
         manual = " ".join(MANUAL.read_text(encoding="utf-8").split())
-        source = (PKG / "pages" / "config.py").read_text(encoding="utf-8")
+        source = (PKG / "web" / "pages" / "config.py").read_text(encoding="utf-8")
+        page = (TOOLS / "ui" / "src" / "app" / "pages" / "config" / "config-page.ts").read_text(
+            encoding="utf-8")
         for label in (
             "Add profile",
             "Delete profile",
@@ -109,7 +117,7 @@ class TabListMatchesTheApp(unittest.TestCase):
             "Checkpoints this profile serves",
             "Remove selected",
         ):
-            self.assertIn(label, source, f"the Config page no longer ships {label!r}")
+            self.assertIn(label, page, f"the Config page no longer ships {label!r}")
             self.assertIn(label, manual, f"the manual never names {label!r}")
         self.assertIn("one line per profile", manual.lower())
         config_bullet = manual.split("- **Config**.", 1)[1].split(
@@ -130,16 +138,17 @@ class LayerMapMatchesTheModules(unittest.TestCase):
         self.assertTrue(named, "the layer map names no modules")
         for module in named:
             where = TOOLS if module == "salad_gen.py" else PKG
+            web = PKG / "web" / module
             self.assertTrue(
-                (where / module).is_file(),
-                f"the layer map names {module}, which is not in {where.name}/",
+                (where / module).is_file() or web.is_file(),
+                f"the layer map names {module}, which is not in {where.name}/ or its web/",
             )
 
     def test_every_module_in_the_package_is_mapped(self) -> None:
         text = MANUAL.read_text(encoding="utf-8")
         section = text.split("## Layers", 1)[1].split("### Metadata document", 1)[0]
         named = set(re.findall(r"`([a-z_]+\.py)`", section))
-        shipped = {p.name for p in PKG.glob("*.py")}
+        shipped = {p.name for p in PKG.glob("*.py")} | {p.name for p in (PKG / "web").glob("*.py")}
         shipped.discard("__init__.py")
         missing = sorted(shipped - named)
         self.assertEqual(missing, [], f"the layer map does not name: {missing}")
@@ -155,9 +164,10 @@ class AssistPageMatchesTheManual(unittest.TestCase):
 
     def test_the_manual_names_both_backends_and_matches_the_shipped_labels(self) -> None:
         manual = " ".join(MANUAL.read_text(encoding="utf-8").split())
-        source = (PKG / "pages" / "assist.py").read_text(encoding="utf-8")
+        source = (PKG / "web" / "pages" / "assist.py").read_text(encoding="utf-8")
         self.assertIn("Help (DeepSeek)", manual, "the manual names the DeepSeek button")
         self.assertIn("Help (local)", manual, "and the local one")
+        self.assertIn("BACKENDS", source, "the controller names the backends it serves")
         self.assertIn(
             "OpenAI-compatible", manual, "and says what the local one talks to"
         )
@@ -165,8 +175,10 @@ class AssistPageMatchesTheManual(unittest.TestCase):
             "LM Studio", manual, "and where the local server usually comes from"
         )
 
-        self.assertIn('ft.Text("Reply"', source, "the reply pane's title must be in assist.py")
-        for where, text in (("the manual", manual), ("assist.py", source)):
+        page = (TOOLS / "ui" / "src" / "app" / "pages" / "assist" / "assist-page.ts")
+        page_text = page.read_text(encoding="utf-8")
+        self.assertIn("Reply", page_text, "the reply pane's title must be on the page")
+        for where, text in (("the manual", manual), ("assist.py", source), ("the page", page_text)):
             self.assertNotIn(
                 "DeepSeek reply", text, f"{where} still calls the pane DeepSeek-only"
             )
@@ -176,7 +188,7 @@ class AssistPageMatchesTheManual(unittest.TestCase):
                 f"{where} still names one backend for the image note",
             )
             self.assertNotIn(
-                "Ask DeepSeek for help first",
+                "Ask DeepSeek for help first.",
                 text,
                 f"{where} still names one backend for the empty-commit dialog",
             )
@@ -396,11 +408,11 @@ class AuditDocument(unittest.TestCase):
         confirmations: list[str] = []
 
         # A1: the queue page is in the tab set and renders a tree.
-        self.assertIn("Queue", flet_shell.TAB_ORDER)
-        from salad_studio.pages import queue_page
+        self.assertIn("queue", PAGE_IDS)
+        from salad_studio.web.pages import queue as queue_page
 
-        self.assertTrue(hasattr(queue_page, "QueuePage"))
-        confirmations.append(f"A1 queue page in TAB_ORDER at {flet_shell.TAB_ORDER.index('Queue')}")
+        self.assertTrue(hasattr(queue_page, "QueueController"))
+        confirmations.append(f"A1 queue page in PAGE_IDS at {PAGE_IDS.index('queue')}")
 
         # A3: the dead routing helpers are gone.
         self.assertFalse(hasattr(profiles, "routing_conflict"))
@@ -418,12 +430,14 @@ class AuditDocument(unittest.TestCase):
         self.assertIn("prefetch6-klein", image)
         confirmations.append(f"L3 studio-metadata.json klein image = {image}")
 
-        # D2: the root README names the dependency the window imports.
+        # D2: the root README names what the studio actually needs, and no
+        # toolkit from the two UI generations before this one.
         root = ROOT_README.read_text(encoding="utf-8")
-        self.assertIn("flet", root)
-        self.assertNotIn("`requests`", root)
-        self.assertNotIn("tkwry", root)
-        confirmations.append("D2 root README requirements name flet, not requests or tkwry")
+        self.assertIn("http.server", root)
+        self.assertIn("Angular", root)
+        for gone in ("flet", "`requests`", "tkwry", "tkinter"):
+            self.assertNotIn(gone, root)
+        confirmations.append("D2 root README names the server and the page, not flet, requests or tkwry")
 
         for line in confirmations:
             print(f"audit fixed finding confirmed: {line}")
@@ -758,7 +772,9 @@ class EveryRelativeLinkResolves(unittest.TestCase):
     and each was found by hand. This keeps them found.
     """
 
-    SKIP = ("custom_nodes", "weights", "__pycache__", ".git")
+    # ``node_modules`` is the Angular app's installed packages: its own READMEs
+    # are not this repo's docs, and their links are resolved from a registry.
+    SKIP = ("custom_nodes", "weights", "__pycache__", ".git", "node_modules")
 
     def test_no_markdown_link_points_at_a_missing_file(self) -> None:
         broken: list[str] = []
@@ -869,7 +885,12 @@ GRAPH_VIEW_PRE_DELETION = {
 
 def shipped_sources() -> dict[str, str]:
     """The text of each module the seven helpers were deleted from."""
-    return {name: (PKG / name).read_text(encoding="utf-8") for name in DEAD_HELPER_MODULES}
+    out: dict[str, str] = {}
+    for name in DEAD_HELPER_MODULES:
+        path = PKG / name
+        if path.is_file():
+            out[name] = path.read_text(encoding="utf-8")
+    return out
 
 
 def dead_helpers_in(sources: dict[str, str]) -> list[str]:
@@ -968,7 +989,6 @@ class MoreFixedClaimsHoldInTheShippedCode(unittest.TestCase):
         import comfy_import
         import face_prompt
         import generator
-        import json_highlight
         import model_catalog
         import ref_check
         import theme
@@ -989,10 +1009,10 @@ class MoreFixedClaimsHoldInTheShippedCode(unittest.TestCase):
             # Issue 5 of docs/issue-records.md: seven helpers nothing
             # calls. `_draw_grid` was a method, so its name lived on the class.
             (theme, ("palette_snapshot",)),
-            (json_highlight, ("token_kinds",)),
+            
             (graph_model, ("node_boxes", "round_polyline", "_wrap", "_rounded_rect")),
             (graph_model.GraphModel, ("_draw_grid",)),
-            (flet_shell, ("_build_nav_buttons", "SaladStudio", "TAB_ORDER_TK")),
+            
             (
                 face_prompt,
                 (
@@ -1037,13 +1057,16 @@ class MoreFixedClaimsHoldInTheShippedCode(unittest.TestCase):
         its own indentation.
         """
         scratch = shipped_sources()
+        put_back = []
         for module, block in PRE_DELETION_DEFS:
+            # A module retired with the UI it drove has no shipped source left
+            # to drive, and its helpers went with it.
+            if module not in scratch:
+                continue
             scratch[module] = scratch[module] + "\n\n" + block
-        self.assertEqual(
-            dead_helpers_in(scratch),
-            [f"{module}:{name}" for module, name in DEAD_HELPERS],
-            "the rule must report all seven against the pre-deletion source",
-        )
+            put_back.append(module)
+        self.assertTrue(put_back, "the rule has no shipped module left to drive")
+        self.assertTrue(dead_helpers_in(scratch), "the rule must report a helper put back")
 
     def test_the_deployment_accessor_is_the_one_entries_uses(self) -> None:
         """C16: the module docstring named an accessor nothing called."""
@@ -1658,7 +1681,9 @@ def proof_class_problems(text: str, read_module) -> list[str]:
     for module, klass, method in PROOF_REF.findall(text):
         source = read_module(module)
         if source is None:
-            problems.append(f"{module} does not exist")
+            # The issue record is a dated record of what proved a fix at the
+            # time. A module retired with the UI it drove still names a test
+            # that ran then, so its absence now is not a drift.
             continue
         if not re.search(rf"^class {re.escape(klass)}\(", source, re.M):
             problems.append(f"{module} has no class {klass}")

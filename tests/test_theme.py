@@ -1,8 +1,9 @@
-"""The palette and the Flet theme built from it.
+"""The palette, the role maps built from it, and the page's own stylesheet.
 
-Nothing here starts a window. The palette is held to the WCAG bar on every
-pair the app draws, and the Flet theme in both schemes is held to the same bar,
-seeded from the same roles, and given to the page by ``flet_theme.apply``.
+Nothing here starts a window or a browser. The palette is held to the WCAG bar
+on every pair the app draws, the two role maps are held to the same bar, and
+``ui/src/styles.css`` must spend the palette rather than inventing a colour the
+theme cannot change.
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ ROOT = HERE.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from salad_studio import flet_theme  # noqa: E402
+from salad_studio import theme  # noqa: E402
 from salad_studio.theme import (  # noqa: E402
     CONTRAST_MIN,
     FONT_HEAD,
@@ -53,52 +54,33 @@ class Palette(unittest.TestCase):
         self.assertEqual(SPACE, {"xs": 4, "sm": 8, "md": 12, "lg": 16})
 
 
-class FletTheme(unittest.TestCase):
+class RoleMaps(unittest.TestCase):
     def test_no_text_role_falls_below_the_contrast_bar(self) -> None:
-        self.assertEqual(flet_theme.check_contrast(), [])
+        self.assertEqual(theme.check_contrast(), [])
 
-    def test_both_schemes_are_material_3_and_seeded_from_the_palette(self) -> None:
-        for name, roles in (("dark", flet_theme.DARK), ("light", flet_theme.LIGHT)):
-            theme = flet_theme._theme(roles, flet_theme.DARK_CANVAS, name == "dark")
-            with self.subTest(scheme=name):
-                self.assertTrue(theme.use_material3)
-                self.assertEqual(theme.color_scheme.surface, roles["surface"])
-                self.assertEqual(theme.color_scheme.primary, roles["primary"])
-        self.assertEqual(flet_theme.DARK["surface"], PALETTE["bg"])
-        self.assertEqual(flet_theme.DARK["primary"], PALETTE["accent"])
-        self.assertEqual(flet_theme.DARK["on_surface"], PALETTE["fg"])
-        self.assertNotEqual(flet_theme.LIGHT["surface"], flet_theme.DARK["surface"])
+    def test_both_maps_share_the_palette(self) -> None:
+        self.assertEqual(theme.DARK["surface"], PALETTE["bg"])
+        self.assertEqual(theme.DARK["primary"], PALETTE["accent"])
+        self.assertEqual(theme.DARK["on_surface"], PALETTE["fg"])
+        self.assertNotEqual(theme.LIGHT["surface"], theme.DARK["surface"])
 
-    def test_apply_hands_the_page_both_schemes_and_opens_dark(self) -> None:
-        import flet as ft
-
-        page = type("Page", (), {})()
-        flet_theme.apply(page)
-        self.assertTrue(page.theme.use_material3)
-        self.assertTrue(page.dark_theme.use_material3)
-        self.assertEqual(page.theme.color_scheme.surface, flet_theme.LIGHT["surface"])
-        self.assertEqual(page.dark_theme.color_scheme.surface, flet_theme.DARK["surface"])
-        self.assertEqual(page.theme_mode, ft.ThemeMode.DARK)
-
-    def test_gap_names_the_shared_spacing_steps(self) -> None:
-        self.assertEqual(flet_theme.GAP, {"xs": SPACE["xs"], "sm": SPACE["sm"], "md": SPACE["md"], "lg": SPACE["lg"]})
-        self.assertEqual(flet_theme.PAGE_PAD, SPACE["lg"])
-
-    def test_the_widget_palette_reads_its_roles_from_the_scheme(self) -> None:
+    def test_a_role_map_reads_the_palette_by_name(self) -> None:
         for dark in (True, False):
-            colors, roles = flet_theme.canvas_colors(dark), flet_theme.DARK if dark else flet_theme.LIGHT
+            colors, roles = theme.canvas_colors(dark), theme.DARK if dark else theme.LIGHT
             with self.subTest(dark=dark):
                 self.assertEqual(colors["on_surface"], roles["on_surface"])
                 self.assertEqual(colors["muted"], roles["on_surface_variant"])
                 self.assertEqual(colors["error"], roles["error"])
                 self.assertEqual(colors["accent"], PALETTE["accent"])
 
-    def test_the_pages_carry_no_colour_of_their_own(self) -> None:
-        """A hex outside the theme is a colour the theme cannot change."""
-        pages = ROOT / "salad_studio" / "pages"
-        for path in sorted(pages.glob("*.py")):
-            with self.subTest(module=path.name):
-                self.assertEqual(HEX.findall(path.read_text(encoding="utf-8")), [])
+    def test_the_stylesheet_spends_the_palette(self) -> None:
+        """A hex in the page is a colour the theme cannot change."""
+        css = (ROOT / "ui" / "src" / "styles.css").read_text(encoding="utf-8")
+        root_block = css[css.index(":root {"):css.index("}", css.index(":root {"))]
+        declared = set(HEX.findall(root_block))
+        for value in (PALETTE["bg"], PALETTE["accent"], PALETTE["fg"], PALETTE["surface"]):
+            self.assertIn(value.upper(), {v.upper() for v in declared},
+                          f"{value} is not one of the page's own tokens")
 
 
 if __name__ == "__main__":

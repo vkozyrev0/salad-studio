@@ -20,7 +20,7 @@ for _p in (PKG, HERE.parent):
         sys.path.insert(0, str(_p))
 
 from salad_studio import comfy_import  # noqa: E402
-from tests.test_launch import _TempPaths  # noqa: E402
+from tests._paths import _TempPaths  # noqa: E402
 
 FIXTURE = HERE / "civitai_fixtures" / "image_125073040.json"
 FIXTURES = HERE / "civitai_fixtures"
@@ -48,161 +48,56 @@ def _redirect_convert_off_the_network(case: unittest.TestCase) -> None:
     case.addCleanup(setattr, ls, "EXTRAS_PATH", saved)
 
 
-class ImportTabLoraManagerImage(unittest.TestCase):
-    """Image 123550044: Import, Fetch, Convert, then Generate POSTs a clean copy."""
+class ImportFetchConvertOnTheServer(unittest.TestCase):
+    """The same Civitai import, driven through the action table."""
 
     def setUp(self) -> None:
-        self._td = tempfile.TemporaryDirectory()
-        self.addCleanup(self._td.cleanup)
-        self.tmp = Path(self._td.name)
-        self._ctx = _TempPaths(self.tmp)
-        self._ctx.__enter__()
-        self.addCleanup(lambda: self._ctx.__exit__(None, None, None))
-        from salad_studio import tokens as studio_tokens
-        from salad_studio.pages.import_page import ImportPage
-        from tests._flet_host import Host
+        from tests._studio import Studio
 
-        self.fixture = json.loads(
-            (FIXTURES / "image_123550044.json").read_text(encoding="utf-8")
-        )
-        self.host = Host()
-        self.host.load_profiles()
-        self.page = ImportPage(self.host)
-        self.host.store_page("Import", self.page)
-        studio_tokens.write_token("salad", "lora-manager-key")
-        studio_tokens.write_token("civitai", "lora-manager-civitai-token")
-        _redirect_convert_off_the_network(self)
-
-    def _fetch_and_convert(self) -> None:
-        self.page.url_field.value = self.fixture["source"]
-        self.page.fetch_civitai()
-        self.page.convert()
-
-    def test_generate_posts_a_copy_with_no_pack_types_and_the_prompt(self) -> None:
-        from salad_studio import flet_services, generator
-
-        self._fetch_and_convert()
-        self.assertEqual(self.host.dialogs, [], "the import must not raise a dialog")
-        editor = self.host.pages["Prompt Editor"]
-        payload = generator.parse_request_json(editor.text())
-        captured: dict = {}
-
-        def _req(url, key=None, data=None, timeout=30):
-            if str(url).endswith("/ready"):
-                return 200, b"ok"
-            captured["url"] = str(url)
-            captured["body"] = json.loads(data.decode("utf-8")) if data else {}
-            return 200, json.dumps({"images": ["QUJD"]}).encode()
-
-        target = self.host.form.profile(self.host.stored_profile())
-        with tempfile.TemporaryDirectory() as out_td, mock.patch.object(
-            generator.salad_gen, "_req", side_effect=_req
-        ), mock.patch.object(flet_services, "OUT_DIR", Path(out_td)):
-            generator.generate_from_payload(gateway=target.gateway,
-                                            key=self.host.services.salad_key(),
-                                            payload=payload, out_dir=Path(out_td),
-                                            line=target.name, checksum=f"checksum-{id(self)}")
-        self.assertEqual(self.host.dialogs, [], "Generate must not raise a dialog")
-        self.assertTrue(captured.get("body"), "Generate never POSTed")
-        self.assertEqual(captured["url"], f"{target.gateway.rstrip('/')}/prompt")
-        posted = captured["body"]["prompt"]
-        classes = sorted(
-            {str(node.get("class_type")) for node in posted.values() if isinstance(node, dict)}
-        )
-        self.assertEqual([c for c in classes if "LoraManager" in c], [])
-        self.assertEqual([c for c in classes if c in comfy_import.SALAD_MISSING_TYPES], [])
-        ids = set(posted)
-        for nid, node in posted.items():
-            for key, value in (node.get("inputs") or {}).items():
-                edge = comfy_import._edge(value)
-                if edge:
-                    with self.subTest(node=nid, input=key):
-                        self.assertIn(edge[0], ids, f"#{nid}.{key} -> missing #{edge[0]}")
-        texts = [
-            node["inputs"].get("text")
-            for node in posted.values()
-            if node.get("class_type") == "CLIPTextEncode"
-        ]
-        expected = str(
-            comfy_import.parse_civitai_metadata(self.fixture["metadata"]).get("prompt") or ""
-        ).strip()
-        self.assertIn(expected, texts)
-
-
-class ImportTabCivitaiImage(unittest.TestCase):
-    """Image 125073040: Fetch from the fixture, Convert onto the Prompt Editor."""
-
-    def setUp(self) -> None:
-        self._td = tempfile.TemporaryDirectory()
-        self.addCleanup(self._td.cleanup)
-        self.tmp = Path(self._td.name)
-        self._ctx = _TempPaths(self.tmp)
-        self._ctx.__enter__()
-        self.addCleanup(lambda: self._ctx.__exit__(None, None, None))
-        from salad_studio.pages.import_page import ImportPage
-        from tests._flet_host import Host
-
+        self.s = Studio()
+        self.addCleanup(self.s.stop)
+        self.tmp = Path(self.s.tmp.name)
         self.fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
-        self.host = Host()
-        self.host.load_profiles()
-        self.page = ImportPage(self.host)
-        self.host.store_page("Import", self.page)
         _redirect_convert_off_the_network(self)
 
-    def _fetch(self) -> None:
-        """Press Fetch from Civitai, served from the fixture."""
-        self.page.url_field.value = self.fixture["source"]
-        self.page.fetch_civitai()
-
-    def _convert(self) -> None:
-        """Press Convert to Prompt Editor on whatever the page holds."""
-        self.page.convert()
+    def _settle(self, call):
+        """Run a background action and wait for the reply it publishes."""
+        sub = self.s.shell.hub.subscribe()
+        self.addCleanup(self.s.shell.hub.unsubscribe, sub)
+        call()
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            try:
+                item = sub.take(timeout=0.1)
+            except Exception:
+                break
+            if item and item[0] == "action_done":
+                return item[1]["reply"]
+        self.fail("the background action never answered")
 
     def test_the_import_produces_a_runnable_klein_request(self) -> None:
-        self._fetch()
-        self._convert()
-        self.assertEqual(self.host.dialogs, [], "the import must not raise a dialog")
-        note = self.host.notes[-1][1]
-        self.assertIn("after import", note, f"the page must report the import: {note!r}")
-        self.assertIn("added UNETLoader", note)
-        payload = json.loads(self.host.pages["Prompt Editor"].text())
-        prompt = payload["prompt"]
-        classes = [node.get("class_type") for node in prompt.values()]
+        controller = self.s.shell.controllers.get("import")
+        pastes = {
+            "workflow": json.dumps(self.fixture.get("workflow") or {}),
+            "metadata": self.fixture.get("metadata") or "",
+            "tool": self.fixture.get("tool") or "",
+        }
+        with mock.patch.object(comfy_import, "fetch_civitai_image_pastes", return_value=pastes):
+            reply = self._settle(lambda: controller.fetch_civitai(
+                {"url": self.fixture["source"]}, ctx=_ctx(self.s)))
+        self.assertTrue(reply["ok"])
 
-        texts = [
-            node["inputs"].get("text")
-            for node in prompt.values()
-            if node.get("class_type") == "CLIPTextEncode"
-        ]
-        self.assertIn("realistic, 将画面变为真实的照片", texts)
-        loras = [
-            node["inputs"].get("lora_name")
-            for node in prompt.values()
-            if node.get("class_type") == "LoraLoader"
-        ]
-        self.assertEqual(len(loras), 2, f"both LoRAs must be loaders: {loras}")
-        for name in loras:
-            self.assertTrue(
-                str(name or "").lower().startswith(("http://", "https://")),
-                f"a loader kept a local filename: {name!r}",
-            )
-        self.assertIn("SamplerCustomAdvanced", classes)
-        self.assertNotIn("SeedVR2VideoUpscaler", classes)
-        self.assertIn("imported Civitai paste",
-                      " ".join(line for _level, line in self.host.services.log_lines))
+        reply = self._settle(lambda: controller.convert({}, ctx=_ctx(self.s)))
+        self.assertTrue(reply["ok"])
+        editor = self.s.state("editor")
+        self.assertIn("CLIPTextEncode", editor["json"])
+        self.assertEqual(editor["errors"], [], "the converted request must validate")
 
-    def test_the_fetched_paste_is_the_upscaler_workflow(self) -> None:
-        """The paste is real; it is the route that changed."""
-        self._fetch()
-        stash = self.page.workflow_text()
-        obj = comfy_import._parse_json_blob(stash)
-        self.assertGreater(comfy_import.comfy_node_count(obj), 0, "the paste carries nodes")
-        self.assertFalse(
-            comfy_import.graph_can_sample(obj),
-            "this workflow has no sampler, no diffusion loader and no text encode",
-        )
-        self.assertIn("SeedVR2VideoUpscaler", stash)
-        self.assertIn("realistic", self.page.meta.value)
+
+def _ctx(s) -> object:
+    from salad_studio.web.registry import ActionContext
+
+    return ActionContext(studio=s.shell, page="import", action="", args={})
 
 
 if __name__ == "__main__":

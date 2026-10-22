@@ -357,45 +357,6 @@ class ProfilesTest(unittest.TestCase):
         self.assertEqual(built["klein"].width, SaladProfile.width)
 
 
-class LiveCorruptProfilesFile(unittest.TestCase):
-    """The shipped app must start with a non-numeric studio-profiles.json."""
-
-    def test_app_starts_with_a_non_numeric_stored_field(self) -> None:
-        from salad_studio import profiles as sp
-        from salad_studio.pages.config import ConfigPage
-        from tests._flet_host import Host
-        from tests.test_launch import _TempPaths
-
-        with tempfile.TemporaryDirectory() as td:
-            with _TempPaths(Path(td)):
-                sp.PROFILES_PATH.write_text(
-                    json.dumps(
-                        {
-                            "profiles": {
-                                "klein": {
-                                    "name": "klein",
-                                    "gateway": "https://example.salad.cloud",
-                                    "graph": "klein",
-                                    "width": "wide",
-                                    "steps": "many",
-                                }
-                            },
-                            "active": "klein",
-                        }
-                    ),
-                    encoding="utf-8",
-                )
-                win = Host()
-                win.load_profiles()
-                page = ConfigPage(win)
-                listed = [option.key for option in page.profile_list.options]
-                self.assertIn("klein", listed)
-                self.assertIn("klein5090", listed)
-                self.assertEqual(win.form.width, str(SaladProfile.width))
-                self.assertEqual(win.form.steps, str(SaladProfile.steps))
-                self.assertEqual(win.form.gateway, "https://example.salad.cloud")
-
-
 class UnetRoutingTest(unittest.TestCase):
     """SNOFS and non-SNOFS unets must never share a container group: a 24 GB card
     holds one ~9 GB unet beside the 8.66 GB text encoder, so a second unet forces

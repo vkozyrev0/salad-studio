@@ -55,13 +55,15 @@ class HostingsTable(unittest.TestCase):
             self.assertIsInstance(reason, str)
             self.assertTrue(callable(adapter.generate))
 
-    def test_the_generate_press_dispatches_through_the_adapter(self) -> None:
-        """The window reads the profile's hosting from the adapter table."""
-        from salad_studio import flet_app
+    def test_the_studio_reads_the_profile_mode_through_the_adapter(self) -> None:
+        """A stored mode the adapter table does not know reads as the default one."""
+        from tests._studio import studio
+        from salad_studio import profiles
 
-        source = (PKG / "flet_app.py").read_text(encoding="utf-8")
-        self.assertIn("p.mode if p.mode in hostings.BY_KEY else hostings.DEFAULT", source)
-        self.assertIs(flet_app.hostings, __import__("hostings"))
+        with studio() as made:
+            stale = profiles.SaladProfile(name="klein", gateway="https://x.test", mode="nonsense")
+            made.shell.apply_profile(stale)
+            self.assertEqual(made.shell.form.mode, hostings.DEFAULT)
 
     def test_a_vast_adapter_refuses_when_no_row_is_selected(self) -> None:
         url, reason = hostings.BY_KEY["vast"](_App()).pick_url()

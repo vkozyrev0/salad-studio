@@ -55,7 +55,7 @@ interface LorasState {
         </div>
 
         <div class="table">
-          @if (rows().length) {
+          @if (rows().length || store.loading() || store.loadError()) {
             <app-data-grid [rows]="rows()" [columns]="columns" field="id" [selected]="selected()" (picked)="pick($event)" />
           } @else {
             <p class="empty">{{ state()?.empty_text || 'No LoRAs in the library.' }}</p>
@@ -121,7 +121,7 @@ interface LorasState {
   `,
 })
 export class LorasPage {
-  private readonly store = inject(StudioStore);
+  protected readonly store = inject(StudioStore);
 
   protected readonly state = computed(() => this.store.page() as LorasState | null);
   protected readonly rows = computed(() => this.state()?.rows ?? []);

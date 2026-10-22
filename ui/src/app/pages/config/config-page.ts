@@ -131,6 +131,7 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
       <div class="body" role="tabpanel" [id]="'panel-' + section()" [attr.aria-labelledby]="'tab-' + section()">
         @switch (section()) {
           @case ('profile') {
+            <p class="empty-line">Provider keys live on Tokens. Paste them there before the first render.</p>
             <div class="cols">
               <section class="main" aria-labelledby="profiles-head">
                 <div class="section" role="group" aria-labelledby="profiles-head">
@@ -344,7 +345,7 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
               <div class="section" role="group" aria-labelledby="vast-head">
                 <div class="section-head"><h2 class="eyebrow" id="vast-head">vast.ai instances</h2></div>
                 <div class="table short">
-                  @if (instances().length) {
+                  @if (instances().length || store.loading() || store.loadError()) {
                     <app-data-grid [rows]="instances()" [columns]="instanceColumns" field="key" [selected]="instanceKey()" (picked)="pickInstance($event)" />
                   } @else {
                     <p class="empty-line">(no instances)</p>
@@ -377,7 +378,7 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
                 </div>
                 <p class="hint mono">Floors: {{ vast().floors }}</p>
                 <div class="table tall">
-                  @if (offers().length) {
+                  @if (offers().length || store.loading() || store.loadError()) {
                     <app-data-grid [rows]="offers()" [columns]="offerColumns" field="id" [selected]="offerId()" (picked)="pickOffer($event)" />
                   } @else {
                     <p class="empty-line">(Find offers)</p>
@@ -392,7 +393,7 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
   `,
   styles: `
     :host { display: block; height: 100%; }
-    .tabs { display: flex; gap: 26px; margin-top: 6px; border-bottom: 1px solid var(--rule); }
+    .tabs { display: flex; flex-wrap: wrap; gap: 26px; margin-top: 6px; border-bottom: 1px solid var(--rule); }
     .tab {
       position: relative;
       height: 38px;
@@ -435,7 +436,7 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
   `,
 })
 export class ConfigPage {
-  private readonly store = inject(StudioStore);
+  protected readonly store = inject(StudioStore);
   private readonly offerSelection = new Selection();
   private readonly instanceSelection = new Selection();
 
@@ -673,13 +674,15 @@ export class ConfigPage {
 
   protected pickInstance(key: string): void {
     this.instanceSelection.pick(key);
-    void this.store.act('config', 'select_vast', { key });
+    const index = this.instances().findIndex((row) => row.key === key);
+    if (index >= 0) void this.store.act('config', 'select_vast', { index });
   }
 
   protected pickOffer(id: string): void {
     this.offerSelection.pick(id);
     this.offerSelectionRev.update((n) => n + 1);
-    void this.store.act('config', 'select_offer', { offer: id });
+    const index = this.offers().findIndex((row) => row['id'] === id);
+    if (index >= 0) void this.store.act('config', 'select_offer', { index });
   }
 
   protected vastAct(action: 'add_vast' | 'fetch_vast' | 'set_vast_image' | 'make_profile_for_vast' | 'remove_vast' | 'save_vast' | 'search_offers' | 'rent_offer' | 'replace_destroyed'): void {

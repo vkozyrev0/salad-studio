@@ -53,7 +53,7 @@ declare module 'ag-grid-community' {
       [rowSelection]="selection"
       [gridOptions]="options"
       [loading]="loading() || store.loading()"
-      [overlayNoRowsTemplate]="empty()"
+      [overlayNoRowsTemplate]="emptyText()"
       (gridReady)="ready($event)"
       (selectionChanged)="pick($event)"
       (sortChanged)="orderChanged()"
@@ -91,6 +91,10 @@ export class DataGrid {
   });
 
   private readonly store = inject(StudioStore);
+
+  /** A failed page load is not "no rows"; say which one it is. */
+  protected readonly emptyText = computed(() =>
+    this.store.loadError() ? 'Could not load this table.' : this.empty());
 
   protected readonly options = {
     animateRows: false,

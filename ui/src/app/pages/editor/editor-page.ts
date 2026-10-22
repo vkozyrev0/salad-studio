@@ -35,7 +35,7 @@ const PROMPT_DEBOUNCE_MS = 200;
       <div class="wrap">
         <div class="split">
           <app-field class="json" label="Request JSON" kind="textarea" [value]="json()" [mono]="true" [rows]="14" (changed)="typeJson($event)" />
-          <app-graph [graph]="graph()" (pick)="toggle($event)" />
+          <app-graph [graph]="graph()" [selected]="selection()" (pick)="toggle($event)" />
         </div>
 
         <div class="prompts">

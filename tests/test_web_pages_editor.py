@@ -164,9 +164,11 @@ class EditorTest(unittest.TestCase):
         self.assertIsInstance(state["rev"], int)
         self.assertEqual(set(state["status"]), {"text", "level"})
         self.assertIsInstance(state["errors"], list)
-        self.assertEqual(state["graph"]["nodes"], [])
-        self.assertEqual(state["graph"]["edges"], [])
-        json.loads(state["json"])
+        # The editor opens on the request the settings describe, so its graph
+        # is drawn from the first look rather than after a rebuild.
+        self.assertTrue(state["graph"]["nodes"], "a fresh editor shows the request it holds")
+        self.assertTrue(state["graph"]["edges"], "a request this size has wires")
+        self.assertTrue(json.loads(state["json"])["prompt"])
 
     def test_a_valid_edit_lays_out_the_graph_and_fills_the_boxes(self) -> None:
         state = self.set_json(json.dumps(klein()), self.editor().rev)["state"]
@@ -277,10 +279,16 @@ class EditorTest(unittest.TestCase):
     # -- validation, as a list of lines
 
     def test_validate_answers_with_one_line_per_problem(self) -> None:
+        self.set_json(json.dumps({"prompt": {}}), self.editor().rev)
         state = self.act("validate")["state"]
         self.assertEqual(state["status"]["level"], "error")
         self.assertTrue(state["errors"])
         self.assertEqual(state["status"]["text"].split("\n"), state["errors"])
+
+    def test_a_fresh_editor_validates_clean(self) -> None:
+        state = self.act("validate")["state"]
+        self.assertEqual(state["errors"], [], "the request the settings describe is valid")
+        self.assertEqual(state["status"]["text"], "JSON valid")
 
     def test_validate_passes_a_klein_request(self) -> None:
         self.set_json(json.dumps(klein()), self.editor().rev)

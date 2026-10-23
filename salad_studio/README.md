@@ -344,7 +344,7 @@ the root [`README.md`](../README.md) (Configuration, Known limitations).
 Run the commands separately:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1097 tests, ~35 s
+python -m unittest discover -s tests -p "test_*.py"    # 1082 tests, ~35 s
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```
@@ -367,7 +367,6 @@ container are in
 `graph_model.py` lays the request out as data: one column per class, cards sized
 to their rows, a right-angled wire from each output port to its input port. The
 editor controller returns that model in the page state and
-`ui/src/app/pages/editor/graph.ts` draws it. A drag moves a card on the page and
-sends the final position, so the request JSON is never rewritten by a gesture.
+`ui/src/app/pages/editor/graph.ts` draws it. A wheel or the zoom control scales
+the view and a drag pans it, so the request JSON is never rewritten by a gesture.
 Tests: `test_graph_model.py`.
-[Decision record](../docs/history/65-salad-studio-prompt-graph-decision-2026-10-17.md).

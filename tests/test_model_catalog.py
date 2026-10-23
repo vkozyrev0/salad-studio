@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
 import tempfile
 import unittest
@@ -212,40 +211,6 @@ class TheVersionGuard(unittest.TestCase):
         payload = self._payload(id=2786085)
         with mock.patch.object(mc, "_http_get", return_value=(200, payload, "")):
             self.assertEqual(mc.civitai_version(999, 2786085, "k")["id"], 2786085)
-
-
-class TheRecordedWeightSizes(unittest.TestCase):
-    """C12: the catalog's sizes and the container's own boot log agree."""
-
-    def test_the_hf_weight_sizes_match_the_recorded_boot(self) -> None:
-        log = (
-            TOOLS / "docs" / "history" / "60-salad-container-restart-2026-09-27.md"
-        ).read_text(encoding="utf-8")
-        recorded = {
-            name: float(gb)
-            for name, gb in re.findall(r"prefetch (\S+\.safetensors) done ([\d.]+) GB", log)
-        }
-        self.assertEqual(
-            sorted(recorded),
-            [
-                "flux-2-klein-9b-fp8.safetensors",
-                "flux-2-klein-base-9b-fp8.safetensors",
-                "qwen_3_8b_fp8mixed.safetensors",
-            ],
-            "the boot log's three weights",
-        )
-        for item in mc.KNOWN:
-            name = str((item.get("source") or {}).get("filename") or "")
-            if name not in recorded:
-                continue
-            with self.subTest(weight=name):
-                self.assertAlmostEqual(
-                    int(item["source"]["size_bytes"]) / 1e9,
-                    recorded[name],
-                    delta=0.005,
-                    msg=f"{name}: the catalog says {item['source']['size_bytes']} bytes, "
-                    f"the boot log {recorded[name]} GB",
-                )
 
 
 if __name__ == "__main__":

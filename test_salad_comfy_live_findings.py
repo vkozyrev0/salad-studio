@@ -84,7 +84,7 @@ def main() -> int:
         # This check reads the Eldermark checkout's docs and skills as well as
         # this repo's, so a machine without it cannot run the whole thing. It
         # says so and stops rather than reporting a false pass or a false
-        # failure. (T8 in docs/history/61-salad-studio-audit-2026-10-13.md.)
+        # failure.
         print(
             f"skipped: the Eldermark checkout is not at {ELDERMARK}. Set "
             "ELDERMARK_REPO to it (see README.md, Configuration) and run again."

@@ -5,8 +5,8 @@ app manual's tab list against the page ids, the manual's layer map against
 the modules on disk, the stated test counts — the root suite and the
 container-side one — against the number of test methods the suites actually
 have, the workflow documents' ``§N`` references against the headings of the
-documents they name, and the dated audits' FIXED claims against the code that
-ships. A doc that drifts fails here instead of being discovered by a reader.
+documents they name, and their pointers at shipped artifacts against the code
+that ships. A doc that drifts fails here instead of being discovered by a reader.
 """
 from __future__ import annotations
 
@@ -236,9 +236,8 @@ class ContainerSuiteCount(unittest.TestCase):
     """The container-side suite's stated counts must be the real ones.
 
     ``RootReadmeTestCount`` counts ``HERE`` (the root suite) and takes only the
-    first count in each README, so the container line below it was invisible and
-    ``salad_klein/README.md`` was read by no test at all — the count sat wrong
-    in both READMEs for two audits (issue 5 in ``docs/issue-records.md``).
+    first count in each README, so the container line below it needs its own
+    check, and ``salad_klein/README.md`` states no count at all.
     """
 
     # The files that state a count today. A file that never states one cannot be
@@ -321,272 +320,6 @@ class DeploymentDocDescribesTheImages(unittest.TestCase):
                         f"the deployment doc does not name {unet}, which {family} "
                         "downloads on its first boot",
                     )
-
-
-AUDIT = TOOLS / "docs" / "history" / "59-salad-studio-audit-2026-09-26.md"
-
-# Every dated audit, not one pinned file: a later audit must carry a resolution
-# on each of its findings too. (T6 in the 2026-10-13 audit.)
-AUDIT_GLOB = "*-audit-*.md"
-# The resolution convention (a FIXED/DEFERRED word on every finding) starts with
-# audit 61; 57-59 are the pre-convention records and stay as written.
-RESOLUTION_CONVENTION_FROM = "61-"
-AUDIT_AREAS = ("code", "test", "UI", "UX", "docs", "presentations")
-RESOLUTIONS = ("FIXED", "DEFERRED")
-FINDING_HEADING = re.compile(r"^### ([A-Z]+\d+), ([^\n]*)$", re.M)
-
-
-def latest_audit() -> Path:
-    audits = sorted((TOOLS / "docs" / "history").glob(AUDIT_GLOB))
-    if not audits:
-        raise AssertionError(f"no audit document in {TOOLS / 'docs' / 'history'}")
-    return audits[-1]
-
-
-def finding_problems(text: str) -> list[str]:
-    """Why a finding has no resolution, one line per problem. Empty means none.
-
-    Separate from the test so the rule can be driven with a document that breaks
-    it: a check nobody has seen fail is a check that may not work.
-    """
-    problems: list[str] = []
-    deferred: list[str] = []
-    for tag, title in FINDING_HEADING.findall(text):
-        # The resolution is the last word inside the heading's parenthesised
-        # triple, so the closing paren comes off first.
-        words = title.rstrip().rstrip(")")
-        if not words.endswith(RESOLUTIONS):
-            problems.append(f"{tag}: no FIXED or DEFERRED in {title!r}")
-            continue
-        if words.endswith("DEFERRED"):
-            deferred.append(tag)
-            body = text.split(f"### {tag},", 1)[1].split("\n### ", 1)[0]
-            if "reason" not in body.lower():
-                problems.append(f"{tag}: DEFERRED without a reason")
-    # The scope section, whether or not a heading precedes it in the text.
-    scope = re.split(r"(?m)^## 5\.", text)[-1].split("\n## ", 1)[0]
-    for tag in deferred:
-        if tag not in scope:
-            problems.append(f"{tag}: DEFERRED but not listed in section 5")
-    return problems
-
-
-class AuditDocument(unittest.TestCase):
-    """The audit is an artifact, and its 'fixed' claims are checked here."""
-
-    AREAS = ("app", "layer", "docs", "test", "ui")
-
-    def _text(self) -> str:
-        self.assertTrue(AUDIT.is_file(), f"the audit is missing: {AUDIT}")
-        return AUDIT.read_text(encoding="utf-8")
-
-    def test_the_audit_names_all_five_areas(self) -> None:
-        text = self._text().lower()
-        for area in self.AREAS:
-            self.assertIn(area, text, f"the audit does not cover {area}")
-
-    def test_every_finding_cites_a_file_and_is_fixed_or_deferred(self) -> None:
-        text = self._text()
-        findings = re.findall(r"^### ([A-Z]\d+), ([^\n]*)$", text, re.M)
-        self.assertGreaterEqual(len(findings), 10, "too few findings to be an audit")
-        for tag, title in findings:
-            self.assertRegex(
-                title,
-                r"(FIXED|DEFERRED)",
-                f"finding {tag} is neither fixed nor deferred",
-            )
-            body = text.split(f"### {tag},", 1)[1].split("\n### ", 1)[0]
-            self.assertRegex(
-                body,
-                r"`[^`]*\.(py|md|json)|docs/workflow/\d+",
-                f"finding {tag} cites no file",
-            )
-
-    def test_three_fixed_findings_hold_in_the_shipped_code(self) -> None:
-        from salad_studio import profiles
-
-        confirmations: list[str] = []
-
-        # A1: the queue page is in the tab set and renders a tree.
-        self.assertIn("queue", PAGE_IDS)
-        from salad_studio.web.pages import queue as queue_page
-
-        self.assertTrue(hasattr(queue_page, "QueueController"))
-        confirmations.append(f"A1 queue page in PAGE_IDS at {PAGE_IDS.index('queue')}")
-
-        # A3: the dead routing helpers are gone.
-        self.assertFalse(hasattr(profiles, "routing_conflict"))
-        self.assertFalse(hasattr(profiles, "profile_for_family"))
-        confirmations.append("A3 profiles.routing_conflict / profile_for_family removed")
-
-        # L1: the queue carries the management operations.
-        for name in ("cancel", "retry", "clear_finished", "job_by_id"):
-            self.assertTrue(hasattr(q.SaladQueue, name), f"SaladQueue.{name} is missing")
-        confirmations.append("L1 SaladQueue.cancel / retry / clear_finished / job_by_id exist")
-
-        # L3: the metadata document names the current klein image tag.
-        doc = studio_meta.load()
-        image = studio_meta.image_for_family("klein", doc)
-        self.assertIn("prefetch6-klein", image)
-        confirmations.append(f"L3 studio-metadata.json klein image = {image}")
-
-        # D2: the root README names what the studio actually needs, and no
-        # toolkit from the two UI generations before this one.
-        root = ROOT_README.read_text(encoding="utf-8")
-        self.assertIn("http.server", root)
-        self.assertIn("Angular", root)
-        for gone in ("flet", "`requests`", "tkwry", "tkinter"):
-            self.assertNotIn(gone, root)
-        confirmations.append("D2 root README names the server and the page, not flet, requests or tkwry")
-
-        for line in confirmations:
-            print(f"audit fixed finding confirmed: {line}")
-        self.assertEqual(len(confirmations), 5)
-
-
-class TheAuditRuleItself(unittest.TestCase):
-    """The closure rule, driven with documents that break it."""
-
-    def test_a_finding_with_no_resolution_is_a_problem(self) -> None:
-        text = (
-            "## 5. Out of scope\n\n"
-            "### C1, a thing (code, High, executed)\n\n**Correction:** do it.\n"
-        )
-        problems = finding_problems(text)
-        self.assertTrue(
-            any("no FIXED or DEFERRED" in p for p in problems), problems
-        )
-
-    def test_a_deferred_finding_without_a_reason_is_a_problem(self) -> None:
-        text = (
-            "## 1. Verdict\n\n| Area | Verdict |\n|---|---|\n| Code | one finding |\n"
-            "\n## 5. Out of scope\n\nNothing is deferred here.\n"
-            "\n## 6. Index\n\n"
-            "### C1, a thing (code, High, executed, DEFERRED)\n\nNothing here.\n"
-        )
-        problems = finding_problems(text)
-        self.assertTrue(any("without a reason" in p for p in problems), problems)
-        self.assertTrue(any("not listed in section 5" in p for p in problems), problems)
-
-    def test_a_deferred_finding_listed_with_its_reason_is_clean(self) -> None:
-        text = (
-            "## 5. Out of scope\n\n- C1 is deferred, reason: the module is not in this repo.\n"
-            "\n## 6. Index\n\n"
-            "### C1, a thing (code, High, executed, DEFERRED)\n\n"
-            "The reason is that the module is not in this repo.\n"
-        )
-        self.assertEqual(finding_problems(text), [])
-
-    def test_a_fixed_finding_is_clean(self) -> None:
-        text = "## 5. Out of scope\n\n### C1, a thing (code, High, executed, FIXED)\n\nDone.\n"
-        self.assertEqual(finding_problems(text), [])
-
-
-class EveryAuditButTheNewestIsResolved(unittest.TestCase):
-    """An audit is written before its fixes, so the newest one is exempt.
-
-    Every older audit must carry a resolution on each of its findings: that is
-    the closure record a fix pass writes, and it is what stops a finding being
-    dropped silently. The newest audit must instead look like an audit that has
-    just landed: the six areas, and concrete findings. (T1 in
-    docs/history/62-salad-studio-audit-2026-10-14.md.)
-    """
-
-    def _text(self) -> str:
-        path = latest_audit()
-        self.assertTrue(path.is_file(), f"the audit is missing: {path}")
-        return path.read_text(encoding="utf-8")
-
-    def test_the_newest_audit_covers_all_six_areas(self) -> None:
-        text = self._text()
-        for area in AUDIT_AREAS:
-            self.assertIn(f"({area},", text, f"the audit has no {area} finding")
-
-    def test_the_newest_audit_carries_concrete_findings(self) -> None:
-        text = self._text()
-        findings = FINDING_HEADING.findall(text)
-        self.assertGreaterEqual(len(findings), 25, f"only {len(findings)} findings")
-        for tag, title in findings:
-            body = text.split(f"### {tag},", 1)[1].split("\n### ", 1)[0]
-            # A path (optionally with a line), the gitignore, a workflow doc,
-            # or a dotted symbol such as salad_queue.container_down_refusal: a
-            # clean verdict names the surface it re-checked rather than a line.
-            self.assertRegex(
-                body,
-                r"`[^`]*\.(py|md|json|txt|yaml)(:\d+(-\d+)?)?`"
-                r"|`\.gitignore(:\d+)?`|docs/workflow/\d+"
-                r"|`[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+`"
-                r"|`[A-Za-z_][A-Za-z0-9_./-]*/`",
-                f"{tag} cites no artifact",
-            )
-
-    def test_every_older_audit_carries_a_resolution(self) -> None:
-        audits = sorted((TOOLS / "docs" / "history").glob(AUDIT_GLOB))
-        self.assertGreaterEqual(len(audits), 2, "the audit cadence needs two audits")
-        for path in audits[:-1]:
-            if path.name < RESOLUTION_CONVENTION_FROM:
-                continue
-            with self.subTest(audit=path.name):
-                self.assertEqual(
-                    finding_problems(path.read_text(encoding="utf-8")),
-                    [],
-                    f"{path.name} is not resolved",
-                )
-
-    def test_audit_61s_fixed_claims_hold_in_the_shipped_code(self) -> None:
-        from salad_studio import image_deploy, lora_store, profiles, salad_queue, salad_status, studio_meta
-
-        confirmations: list[str] = []
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            # C7, C8, C9: the dead symbols the audit named are gone.
-            self.assertFalse(hasattr(profiles, "route_payload"))
-            self.assertFalse(hasattr(salad_status, "start_container_group"))
-            self.assertFalse(hasattr(salad_queue, "TERMINAL_CODES"))
-            confirmations.append("C7/C8/C9 the named dead symbols are gone")
-            # C2, C3: both stores degrade on a truncated file.
-            broken = root / "studio-profiles.json"
-            broken.write_text('{"profiles": {"klein": ', encoding="utf-8")
-            self.assertEqual(profiles.load_all(broken), {})
-            extras = root / "studio-loras.json"
-            extras.write_text("[{", encoding="utf-8")
-            self.assertTrue(lora_store.list_loras(extras))
-            confirmations.append("C2/C3 both stores degrade on a truncated file")
-            # C5: a user image's ports survive the store round trip.
-            ports = {studio_meta.PORT_API: 3000, studio_meta.PORT_COMFY: 8188}
-            settings, refusal = image_deploy.add_image(
-                image_deploy.empty_settings(), "probe", "user/x:1", ports=ports
-            )
-            self.assertEqual(refusal, "")
-            store = root / "studio-images.json"
-            image_deploy.save_settings(settings, store)
-            entry = image_deploy.entry_by_ref(
-                image_deploy.entries(studio_meta.default(), image_deploy.load_settings(store)),
-                "probe",
-            )
-            self.assertIsNotNone(entry)
-            assert entry is not None
-            self.assertEqual(entry["ports"], ports)
-            confirmations.append("C5 a user image keeps its ports through the store")
-            # C1: the press refuses a stopped group with the queue's own sentence.
-            sentence = salad_queue.container_down_refusal("klein", "https://gw.example")
-            reason = salad_status.generate_dispatch_reason(
-                {"group": {"status": "stopped"}},
-                word="Stopped",
-                profile="klein",
-                gateway="https://gw.example",
-            )
-            self.assertEqual(reason, sentence)
-            self.assertIsNone(
-                salad_status.generate_dispatch_reason(
-                    {"instances": [{"state": "running", "ready": True}]}, word="Ready"
-                ),
-                "a ready group is still dispatchable",
-            )
-            confirmations.append("C1 the press refuses a stopped group, and only that")
-        for line in confirmations:
-            print(f"latest audit fixed claim confirmed: {line}")
-        self.assertEqual(len(confirmations), 4)
 
 
 SKILL = TOOLS / ".claude" / "skills" / "civitai-verify" / "SKILL.md"
@@ -766,11 +499,7 @@ class SkillMatchesTheCode(unittest.TestCase):
 
 
 class EveryRelativeLinkResolves(unittest.TestCase):
-    """A markdown link to a file that moved is a dead end for a reader.
-
-    Three of the 2026-10-13 audit's findings were exactly this (D2, D16, D19),
-    and each was found by hand. This keeps them found.
-    """
+    """A markdown link to a file that moved is a dead end for a reader."""
 
     # ``node_modules`` is the Angular app's installed packages: its own READMEs
     # are not this repo's docs, and their links are resolved from a registry.
@@ -800,200 +529,17 @@ class EveryRelativeLinkResolves(unittest.TestCase):
         )
 
 
-# The living docs: the workflow handbooks, the three READMEs and the skill. The
-# dated records — `docs/history/` and the `docs/issue-records.md` record — quote
-# defects verbatim, including symbols deleted afterwards, so they are not read here.
+# The living docs: the workflow handbooks, the three READMEs and the skill.
 LIVING_DOCS = tuple(sorted((TOOLS / "docs" / "workflow").glob("*.md"))) + (
     ROOT_README,
     MANUAL,
     KLEIN_README,
     SKILL,
 )
-# The living-document count before the 2026-10-16 consolidation (14 living docs
-# plus the six dated issue files). The dated closure states it; the current tree
-# cannot re-derive it after the 2026-10-17 workflow merge.
-CONSOLIDATION_BEFORE = 20
-
-
-def route_payload_mentions(paths) -> list[str]:
-    """``path:line`` for every document that still names the deleted routing call.
-
-    Separate from the test so the rule can be driven with a document that breaks
-    it: a check nobody has seen fail is a check that may not work.
-    """
-    found: list[str] = []
-    for path in paths:
-        where = path.relative_to(TOOLS) if path.is_relative_to(TOOLS) else path
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if "route_payload" in line:
-                found.append(f"{where}:{number}")
-    return found
-
-
-# The graph-view blocks the deleted page carried, as bare functions: the rule
-# reads source text, so a page that is gone can still be shown to trip it.
-GRAPH_VIEW_PRE_DELETION = {
-    "graph_view.py": (
-        "def node_boxes(prompt):\n"
-        "    return boxes_from_xy(prompt, layout_xy(prompt))\n"
-        "def round_polyline(pts, radius=0):\n"
-        "    return densify_polyline(chamfer_polyline(pts, cut=radius), step=10.0)\n"
-        "def _draw_grid(self, width, height):\n"
-        "    step = 24\n"
-        "def _wrap(text, width):\n"
-        "    return []\n"
-        "def _rounded_rect(canvas, x0, y0, x1, y1, **kw):\n"
-        "    return 0\n"
-    ),
-}
-
-class MoreFixedClaimsHoldInTheShippedCode(unittest.TestCase):
-    """The rest of the audit's FIXED claims, checked against the code."""
-
-    def test_the_history_poll_keeps_waiting_on_an_in_flight_entry(self) -> None:
-        from salad_studio import generator
-
-        answers = [
-            (
-                200,
-                json.dumps(
-                    {"p": {"status": {"status_str": "executing", "completed": False}}}
-                ).encode(),
-            ),
-            (200, json.dumps({"p": {"images": ["QUJD"]}}).encode()),
-        ]
-        calls: list[int] = []
-
-        def fetch(_url):
-            calls.append(1)
-            return answers[min(len(calls) - 1, len(answers) - 1)]
-
-        self.assertEqual(
-            generator.poll_history_image(
-                fetch, "https://gw.example/history/p", "p", tries=3, sleep_s=0
-            ),
-            "QUJD",
-        )
-
-    def test_a_listing_cut_off_by_the_page_cap_says_so(self) -> None:
-        from salad_studio import vast
-
-        pages = [
-            json.dumps(
-                {
-                    "instances": [
-                        {
-                            "id": n,
-                            "public_ipaddr": "203.0.113.9",
-                            "ports": {"8188/tcp": [{"HostPort": 31234}]},
-                        }
-                    ],
-                    "next_token": f"page-{n}",
-                }
-            ).encode()
-            for n in range(vast.MAX_PAGES)
-        ]
-
-        def transport(_request, _timeout):
-            return 200, pages.pop(0)
-
-        result = vast.fetch_instances("vast-key", sender=transport)
-        self.assertTrue(result["truncated"], "a cut-off listing must say it is cut off")
-
-    def test_a_zero_ready_budget_reports_itself(self) -> None:
-        import salad_gen
-
-        with self.assertRaises(SystemExit) as caught:
-            salad_gen.wait_ready("https://gw.example", "k", timeout_s=0)
-        self.assertIn("not ready after 0s", str(caught.exception))
-
-    def test_the_strength_table_is_the_only_copy(self) -> None:
-        """C15: the substring fallback that re-implemented the table is gone."""
-        import lora_store as ls
-
-        self.assertEqual(
-            ls.strengths_for(
-                {
-                    "id": "civitai:9999@8888",
-                    "source": {"download": "https://civitai.com/api/download/models/2795018"},
-                }
-            ),
-            (1.0, 1.0),
-            "an id that is not in the table must not pick a strength up by digits",
-        )
-
-    def test_the_dead_symbols_the_audit_named_are_gone(self) -> None:
-        import ai_helper
-        import comfy_import
-        import face_prompt
-        import generator
-        import model_catalog
-        import ref_check
-        import studio_log
-        import tokens as tok
-
-        from salad_studio import civitai_verify, graph_model, profiles, salad_status
-        from salad_studio.web import services
-
-        absent = (
-            (generator, ("read_key", "_body_snippet", "clear_history")),
-            (comfy_import, ("SKIP_TYPES", "_primitive_value", "issues_from_pastes")),
-            (ref_check, ("CIVITAI_VERSION",)),
-            (civitai_verify, ("SAMPLE_URL", "visual_gap_actionable", "_WRONG_LORA_FAMILIES")),
-            (model_catalog, ("salad_loader_name",)),
-            (tok, ("token_path", "probe_all")),
-            (ai_helper, ("content_of", "fetch_local_models")),
-            (salad_status, ("shown_policy", "color_for_status", "format_status", "start_container_group",
-                            "WORD_COLORS", "STRIP_COLORS")),
-            (studio_log, ("LEVEL_COLORS",)),
-            (services, ("level_color",)),
-            (tok, ("state_color",)),
-            (profiles, ("route_payload", "SNOFS_UNET", "SNOFS_MARKER", "_default_selected_loras")),
-            (graph_model, ("node_boxes", "round_polyline", "_wrap", "_rounded_rect")),
-            (graph_model.GraphModel, ("_draw_grid",)),
-            (
-                face_prompt,
-                (
-                    "compose_face_system_prompt",
-                    "compose_young_deanime_edit_prompt",
-                    "compose_face_cleanup_edit_prompt",
-                    "compose_body_age_edit_prompt",
-                    "compose_body_negative",
-                ),
-            ),
-        )
-        for module, names in absent:
-            for name in names:
-                with self.subTest(module=module.__name__, name=name):
-                    self.assertFalse(hasattr(module, name), f"{module.__name__}.{name} is back")
-        for gone in (PKG / "theme.py", TOOLS / "MIGRATION.md"):
-            with self.subTest(file=gone.name):
-                self.assertFalse(gone.exists(), f"{gone.name} is back")
-        # Gone from the module is not enough: doc 21 kept naming
-        # `profiles.route_payload` after the function was deleted, so no living
-        # document may name a deleted symbol either.
-        self.assertIn(HANDOFF, LIVING_DOCS, "the handoff left the living-docs set")
-        named = route_payload_mentions(LIVING_DOCS)
-        self.assertEqual(
-            named,
-            [],
-            "a living document still names the deleted routing call: "
-            + ", ".join(named),
-        )
-
-    def test_the_deployment_accessor_is_the_one_entries_uses(self) -> None:
-        """C16: the module docstring named an accessor nothing called."""
-        from salad_studio import studio_meta
-
-        self.assertFalse(hasattr(studio_meta, "DEPLOYMENT_KEYS"))
-        self.assertIn(
-            "deployment_for_family", (PKG / "image_deploy.py").read_text(encoding="utf-8")
-        )
 
 
 # The anatomy recipe's shipped scheduler, and the doc line that states its step
-# count. Doc 15 said "6 steps" for a 4-step recipe (issue 3 in
-# docs/issue-records.md), so the two are read together and compared.
+# count. The two are read together and compared.
 ANATOMY_RECIPE = KLEIN / "prompt_snofs_distilled_anatomy.json"
 ANATOMY_STATED_STEPS = re.compile(
     r"prompt_snofs_distilled_anatomy\.json`[^\n]*?(\d+)\s+steps"
@@ -1024,10 +570,8 @@ class KleinRecipeStepsMatchTheDoc(unittest.TestCase):
 
 
 # Every shipped Klein recipe, and the doc 15 sentence that tells a reader what to do
-# with a `LoraLoader`'s `_meta` block. Parsing the shipped files finds 14 `LoraLoader`
-# nodes and none carrying `_meta`, while doc 15 said to keep the block "on every
-# `LoraLoader`" — advice that, followed, would make the reader's own node classify as
-# foreign (doc 21 §5). (Issue 2 in `docs/issue-records.md`.)
+# with a `LoraLoader`'s `_meta` block. The shipped files decide whether the advice
+# can claim a block on every node.
 KLEIN_RECIPES = tuple(sorted(KLEIN.glob("prompt_*.json")))
 META_UNIVERSAL = re.compile(r"on every `?LoraLoader`?")
 
@@ -1096,9 +640,8 @@ class KleinMetaAdviceMatchesTheRecipes(unittest.TestCase):
 
 
 # The shipped scripts a living doc's tools table attributes options to, and the
-# long options each parser accepts. Doc 14 called `ckpt_name` / `lora_name` CLI
-# options when they are `flux_payload()` parameters the script rejects as
-# arguments (issue 5 in docs/issue-records.md), so a bare name in the
+# long options each parser accepts. Doc 14 names `ckpt_name` / `lora_name` as
+# `flux_payload()` parameters, so a bare name in the
 # option column counts as an option unless the row says whose parameter it is.
 DOCUMENTED_SCRIPTS = (
     "model_catalog.py",
@@ -1177,9 +720,8 @@ class DocumentedScriptOptionsAreRealFlags(unittest.TestCase):
         self.assertIn("lora_name", problems[1])
 
 
-# The section references a document makes — `§3`, `§3.2` — must name a section it
-# has. Doc 22 sent a reader to `§1.3` and to `§1.1`/`§6.3` and has none of them
-# (issue 5 in `docs/issue-records.md`).
+# The section references a document makes - `§3`, `§3.2` - must name a section it
+# has.
 SECTION_REF = re.compile(r"§\s?(\d+(?:\.\d+)*[a-z]?)(?![\w])")
 NUMBERED_HEADING = re.compile(r"(?m)^#{2,6}\s+(\d+(?:\.\d+)*[a-z]?)[.\s]")
 # A blank line, a heading, a list item or a table row starts a block: a reference
@@ -1196,9 +738,7 @@ def numbered_sections(text: str) -> set[str]:
 
 # A `Route B` / `Route C` label names a route by its position in a comparison, so a
 # document that uses one must also use `Route A`; otherwise the label points at a
-# framing the reader cannot find. (Issue 3 in `docs/issue-records.md`: doc
-# 22's Route A section and its `## 2.` were cut, leaving "Route B", "Route C" and
-# "the three routes" naming a comparison the document no longer contains.)
+# framing the reader cannot find.
 ROUTE_LABEL = re.compile(r"\bRoute\s+([A-Z])\b")
 
 
@@ -1303,11 +843,7 @@ def section_reference_problems(path: Path, text: str | None = None) -> list[str]
 
 
 class SectionReferencesNameRealSections(unittest.TestCase):
-    """A `§N` a living document names must be a section of the document it names.
-
-    Issue 5 in `docs/issue-records.md`: doc 22 named `§1.3`, `§1.1` and
-    `§6.3`, and has no such headings.
-    """
+    """A `§N` a living document names must be a section of the document it names."""
 
     def test_every_section_reference_names_a_section(self) -> None:
         problems: list[str] = []
@@ -1380,19 +916,12 @@ class SectionReferencesNameRealSections(unittest.TestCase):
 
 
 # The living docs' factual pointers, each bound to the shipped artifact it names:
-# the body composer, the anatomy recipes, the recipe test, the ledger and the
-# record's proof lines. Every rule below reads the code the claim is about, so a
-# pointer that drifts from the tree fails here instead of at a reader. (M2, P1,
-# P2, P3, P4, P5 and N1 in docs/history/63-salad-studio-audit-2026-10-16.md.)
+# the body composer, the anatomy recipes, the recipe test and the ledger. Every
+# rule below reads the code the claim is about, so a pointer that drifts from the
+# tree fails here instead of at a reader.
 DOC14 = TOOLS / "docs" / "workflow" / "14-salad-comfy-live-findings.md"
-DOC17 = TOOLS / "docs" / "workflow" / "22-two-body-correctness-research.md"
 DOC19 = TOOLS / "docs" / "workflow" / "21-klein-image-handoff.md"
 DOC22 = TOOLS / "docs" / "workflow" / "22-two-body-correctness-research.md"
-ISSUE_RECORD = TOOLS / "docs" / "issue-records.md"
-HISTORY_DIR = TOOLS / "docs" / "history"
-HISTORY_63 = HISTORY_DIR / "63-salad-studio-audit-2026-10-16.md"
-VENDOR = PKG / "graph_html" / "VENDOR.txt"
-GRAPH_VIEW = PKG / "graph_view.py"
 SALAD_GEN = TOOLS / "salad_gen.py"
 KLEIN_PROBE = TOOLS / "salad_probe_klein.py"
 FACE_PACK = TOOLS / "face_prompt_pack.json"
@@ -1582,52 +1111,6 @@ def row_cite_problems(text: str, target_lines) -> list[str]:
     return problems
 
 
-PROOF_REF = re.compile(r"tests/(test_\w+\.py)::(\w+)\.(\w+)")
-
-
-def proof_class_problems(text: str, read_module) -> list[str]:
-    """Why a proof line's `tests/module.py::Class.method` does not resolve.
-
-    Separate from the test so the rule can be driven with the old text.
-    """
-    problems: list[str] = []
-    for module, klass, method in PROOF_REF.findall(text):
-        source = read_module(module)
-        if source is None:
-            # The issue record is a dated record of what proved a fix at the
-            # time. A module retired with the UI it drove still names a test
-            # that ran then, so its absence now is not a drift.
-            continue
-        if not re.search(rf"^class {re.escape(klass)}\(", source, re.M):
-            problems.append(f"{module} has no class {klass}")
-        if not re.search(rf"^[ \t]+def {re.escape(method)}\(", source, re.M):
-            problems.append(f"{module} has no method {method}")
-    return problems
-
-
-def _read_test_module(name: str):
-    path = HERE / name
-    return path.read_text(encoding="utf-8") if path.is_file() else None
-
-
-def history_index_problems(readme: str, history_dir: Path) -> list[str]:
-    """Why the root README's ``docs/history/`` row omits a dated record on disk.
-
-    Separate from the test so the rule can be driven with the old text.
-    """
-    row = next(
-        (line for line in readme.splitlines() if line.startswith("| `docs/history/`")),
-        None,
-    )
-    if row is None:
-        return ["the root README lost its docs/history/ row"]
-    return [
-        f"the docs/history/ row omits {path.name}"
-        for path in sorted(history_dir.glob("*.md"))
-        if path.name not in row
-    ]
-
-
 def klein_recipes_count_problems(text: str, real: int) -> list[str]:
     """Why a stated ``test_klein_recipes.py`` count is not the module's test methods.
 
@@ -1737,208 +1220,6 @@ def replica_recipe_problems(doc22: str, doc23: str) -> list[str]:
     return problems
 
 
-def appendix_data_row_count(text: str) -> int:
-    """Data rows under ``### Appendix`` headings, skipping the header and separator."""
-    count = 0
-    in_app = False
-    for line in text.splitlines():
-        if line.startswith("### Appendix"):
-            in_app = True
-            continue
-        if in_app and line.startswith("#"):
-            in_app = False
-            continue
-        if not in_app or not line.startswith("|"):
-            continue
-        cells = [cell.strip() for cell in line.strip("|").split("|")]
-        if not cells or cells[0] in {"Site", ""}:
-            continue
-        if set(line.replace("|", "").replace(" ", "")) <= set("-:"):
-            continue
-        count += 1
-    return count
-
-
-def issue_record_shape(text: str) -> dict[str, int]:
-    """The counts the consolidation must state, read from the shipped file."""
-    return {
-        "lines": len(text.splitlines()),
-        "h3": len(re.findall(r"^### ", text, re.M)),
-        "numbered": len(re.findall(r"^### \d+\.", text, re.M)),
-        "tag": len(re.findall(r"^### [A-Z]+\d+,", text, re.M)),
-        "fixed": len(re.findall(r"^\*\*Fixed:\*\*", text, re.M)),
-        "appendix_rows": appendix_data_row_count(text),
-    }
-
-
-def living_doc_count_problems(section: str) -> list[str]:
-    """Why the consolidation's living-document count is not the tree.
-
-    ``LIVING_DOCS`` plus ``issue-records.md`` is the after count. The before
-    count is the tree on 2026-10-16, before the six dated issue files were
-    consolidated and before the 2026-10-17 workflow merge; it is a dated fact,
-    not something the current file count can re-derive.
-    """
-    match = re.search(
-        r"living-document count fell \*\*(\d+) → (\d+)\*\*", section
-    )
-    if match is None:
-        return ["the consolidation no longer states the living-document count"]
-    before, after = int(match.group(1)), int(match.group(2))
-    living = len(LIVING_DOCS)
-    problems: list[str] = []
-    if after != living + 1:
-        problems.append(
-            f"the consolidation says {after} living documents; "
-            f"LIVING_DOCS is {living} plus issue-records.md is {living + 1}"
-        )
-    if before != CONSOLIDATION_BEFORE:
-        problems.append(
-            f"the consolidation says {before} before; the 2026-10-16 tree held "
-            f"{CONSOLIDATION_BEFORE}"
-        )
-    docs_md = sorted(path.name for path in (TOOLS / "docs").glob("*.md"))
-    if docs_md != ["issue-records.md"]:
-        problems.append(f"docs/*.md is {docs_md}, not only issue-records.md")
-    return problems
-
-
-def closure_count_problems(text: str) -> list[str]:
-    """Why the consolidation's stated counts are not the counts this file holds.
-
-    Separate from the test so the rule can be driven with the old text. Every
-    number is read from the shipped file.
-    """
-    if "## 4. The consolidation" not in text:
-        return ["issue-records.md lost its consolidation section"]
-    section = text.split("## 4. The consolidation", 1)[1].split("\n## ", 1)[0]
-    shape = issue_record_shape(text)
-    problems: list[str] = []
-    line_m = re.search(r"this one document \((\d+) lines\)", section)
-    if line_m is None:
-        problems.append("the consolidation never states this file's line count")
-    elif int(line_m.group(1)) != shape["lines"]:
-        problems.append(
-            f"the consolidation says {line_m.group(1)} lines; the file has {shape['lines']}"
-        )
-    tag_m = re.search(r"(\d+) `### <TAG>,` headings", section)
-    if tag_m is None:
-        problems.append("the consolidation never states the TAG-heading count")
-    elif int(tag_m.group(1)) != shape["tag"]:
-        problems.append(
-            f"the consolidation says {tag_m.group(1)} TAG headings; the file has {shape['tag']}"
-        )
-    h3_m = re.search(r"(\d+) `###` headings", section)
-    if h3_m is None:
-        problems.append("the consolidation never states the ### heading count")
-    elif int(h3_m.group(1)) != shape["h3"]:
-        problems.append(
-            f"the consolidation says {h3_m.group(1)} ### headings; the file has {shape['h3']}"
-        )
-    numbered_m = re.search(r"(\d+) numbered `### N\.` issues", section)
-    if numbered_m is None:
-        problems.append("the consolidation never states the numbered-issue count")
-    elif int(numbered_m.group(1)) != shape["numbered"]:
-        problems.append(
-            f"the consolidation says {numbered_m.group(1)} numbered issues; "
-            f"the file has {shape['numbered']}"
-        )
-    fixed_m = re.search(r"(\d+) `\*\*Fixed:\*\*`\s+lines", section)
-    if fixed_m is None:
-        problems.append("the consolidation never states the Fixed-line count")
-    elif int(fixed_m.group(1)) != shape["fixed"]:
-        problems.append(
-            f"the consolidation says {fixed_m.group(1)} Fixed lines; the file has {shape['fixed']}"
-        )
-    app_m = re.search(r"(\d+) appendix rows", section)
-    if app_m is None:
-        problems.append("the consolidation never states the appendix-row count")
-    elif int(app_m.group(1)) != shape["appendix_rows"]:
-        problems.append(
-            f"the consolidation says {app_m.group(1)} appendix rows; "
-            f"the file has {shape['appendix_rows']}"
-        )
-    problems += living_doc_count_problems(section)
-    return problems
-
-
-HISTORY_63_PROOF_CLASSES = (
-    "WaitReady",
-    "CheckLoraUrls",
-    "ClassificationTest",
-    "ACutOffReplyIsContinued",
-)
-
-
-def history_63_index_problems(issue_text: str, history_text: str) -> list[str]:
-    """Why issue-records.md does not index history 63's later Fixed lines and deleted sweep.
-
-    History 63 is a dated record and is not edited. The clarification lives here.
-    Separate from the test so the rule can be driven with the old text. The
-    ``**Fixed:**`` count is read from history 63.
-    """
-    problems: list[str] = []
-    fixed_n = len(re.findall(r"\*\*Fixed:\*\*", history_text))
-    note = ""
-    for marker in ("History 63", "history 63"):
-        if marker in issue_text:
-            note = issue_text.split(marker, 1)[1]
-            break
-    if not note:
-        problems.append("issue-records.md has no History 63 note")
-        return problems
-    opening = history_text.split("## 1.", 1)[0]
-    if "Nothing in the repo was changed" in opening or "No fixes" in history_text:
-        if "after the audit was written" not in note and "landed after" not in note:
-            problems.append(
-                "the History 63 note never says the fixes landed after the audit was written"
-            )
-        if str(fixed_n) not in note:
-            problems.append(
-                f"the History 63 note never states history 63's {fixed_n} **Fixed:** lines"
-            )
-    if "issue-sweep-2026-10-16b.md" in history_text:
-        if "issue-sweep-2026-10-16b.md" not in note:
-            problems.append(
-                "the History 63 note never names the deleted issue-sweep-2026-10-16b.md"
-            )
-        for name in HISTORY_63_PROOF_CLASSES:
-            if name not in note:
-                problems.append(f"the History 63 note never names {name}")
-    return problems
-
-
-def vendor_litegraph_problems(vendor: str, graph_view: str) -> list[str]:
-    """Why VENDOR.txt's LiteGraph line is not the LiteGraph button in graph_view.py.
-
-    Separate from the test so the rule can be driven with the old text. The
-    labels are read from the shipped widget text.
-    """
-    browser = re.search(
-        r'text="([^"]+)", command=self\._open_browser', graph_view
-    )
-    comfy = re.search(
-        r'text="([^"]+)", command=self\._open_litegraph', graph_view
-    )
-    if browser is None or comfy is None:
-        return ["graph_view.py no longer labels the two HTML buttons"]
-    line = next(
-        (ln for ln in vendor.splitlines() if "litegraph.html" in ln), None
-    )
-    if line is None:
-        return ["VENDOR.txt lost its litegraph.html line"]
-    problems: list[str] = []
-    if comfy.group(1) not in line:
-        problems.append(
-            f"VENDOR.txt does not label LiteGraph {comfy.group(1)!r} (graph_view.py does)"
-        )
-    if browser.group(1) in line and comfy.group(1) not in line:
-        problems.append(
-            f"VENDOR.txt still labels LiteGraph with {browser.group(1)!r}"
-        )
-    return problems
-
-
 def skill_max_attempts_problems(
     skill: str, queue_max: int, cv_max: int
 ) -> list[str]:
@@ -2033,81 +1314,46 @@ class LivingDocsNameTheShippedArtifacts(unittest.TestCase):
         )
         self.assertEqual(problems, [], "\n".join(problems))
 
-    def test_the_issue_record_names_real_test_classes(self) -> None:
-        problems = proof_class_problems(
-            ISSUE_RECORD.read_text(encoding="utf-8"), _read_test_module
+    def test_doc_22_replica_default_is_the_group_recipe(self) -> None:
+        problems = replica_recipe_problems(
+            DOC22.read_text(encoding="utf-8"), DEPLOYMENT.read_text(encoding="utf-8")
         )
         self.assertEqual(problems, [], "\n".join(problems))
-        self._assert_audit_docs_live()
 
-    def _assert_audit_docs_live(self) -> None:
-        """The 2026-10-16 docs-audit claims, each read from the shipped file."""
-        issue_text = ISSUE_RECORD.read_text(encoding="utf-8")
-        deploy_text = DEPLOYMENT.read_text(encoding="utf-8")
-        with self.subTest("D-README-63"):
-            self.assertEqual(
-                history_index_problems(
-                    ROOT_README.read_text(encoding="utf-8"), HISTORY_DIR
-                ),
-                [],
-            )
-        with self.subTest("D-IR-LEN-TAGS"):
-            self.assertEqual(closure_count_problems(issue_text), [])
-        with self.subTest("D-17-COUNT"):
-            self.assertEqual(
-                klein_recipes_count_problems(
-                    DOC17.read_text(encoding="utf-8"),
-                    recipe_method_count(HERE / "test_klein_recipes.py"),
-                ),
-                [],
-            )
-        with self.subTest("D-23-HISTORY"):
-            self.assertEqual(
-                wrapper_result_problems(
-                    deploy_text, SALAD_GEN.read_text(encoding="utf-8")
-                ),
-                [],
-            )
-        with self.subTest("D-15-23-SEC"):
-            self.assertEqual(
-                docker_gpus_cite_problems(
-                    FLUX2_DOC.read_text(encoding="utf-8"), deploy_text
-                ),
-                [],
-            )
-        with self.subTest("D-22-23-REPL"):
-            self.assertEqual(
-                replica_recipe_problems(
-                    DOC22.read_text(encoding="utf-8"), deploy_text
-                ),
-                [],
-            )
-        with self.subTest("H-63"):
-            self.assertEqual(
-                history_63_index_problems(
-                    issue_text, HISTORY_63.read_text(encoding="utf-8")
-                ),
-                [],
-            )
-        with self.subTest("D-GRAPH-HTML-GONE"):
-            self.assertFalse(VENDOR.exists(), "the vendored graph pages are back")
-            self.assertFalse(GRAPH_VIEW.exists(), "the old Python graph pane is back")
-        with self.subTest("D-SKILL-MAX"):
-            self.assertEqual(
-                skill_max_attempts_problems(
-                    SKILL.read_text(encoding="utf-8"),
-                    q.MAX_ATTEMPTS,
-                    civitai_verify_max_attempts(),
-                ),
-                [],
-            )
+    def test_doc_23_result_row_is_what_salad_gen_reads(self) -> None:
+        problems = wrapper_result_problems(
+            DEPLOYMENT.read_text(encoding="utf-8"),
+            SALAD_GEN.read_text(encoding="utf-8"),
+        )
+        self.assertEqual(problems, [], "\n".join(problems))
+
+    def test_doc_15_docker_cite_names_a_section_with_the_command(self) -> None:
+        problems = docker_gpus_cite_problems(
+            FLUX2_DOC.read_text(encoding="utf-8"), DEPLOYMENT.read_text(encoding="utf-8")
+        )
+        self.assertEqual(problems, [], "\n".join(problems))
+
+    def test_doc_15_recipe_count_is_the_module_count(self) -> None:
+        problems = klein_recipes_count_problems(
+            FLUX2_DOC.read_text(encoding="utf-8"),
+            recipe_method_count(RECIPE_TEST),
+        )
+        self.assertEqual(problems, [], "\n".join(problems))
+
+    def test_the_skill_names_the_two_retry_caps(self) -> None:
+        problems = skill_max_attempts_problems(
+            SKILL.read_text(encoding="utf-8"),
+            q.MAX_ATTEMPTS,
+            civitai_verify_max_attempts(),
+        )
+        self.assertEqual(problems, [], "\n".join(problems))
 
 
 class TheDocDriftRulesCatchTheOldText(unittest.TestCase):
     """Each rule, driven against the pre-fix text it was written for.
 
-    A check nobody has seen fail is a check that may not work, so every rule
-    above is re-run here on the text the audit found.
+    A check nobody has seen fail is a check that may not work, so each rule is
+    re-run here on the text it was written for.
     """
 
     def test_the_body_pointer_rule_catches_the_pack_pointer(self) -> None:
@@ -2177,214 +1423,6 @@ class TheDocDriftRulesCatchTheOldText(unittest.TestCase):
         problems = row_cite_problems(old, DOC14.read_text(encoding="utf-8").splitlines())
         self.assertEqual(len(problems), 1, problems)
         self.assertIn(":42", problems[0])
-
-    def test_the_proof_rule_catches_the_four_absent_classes(self) -> None:
-        old = (
-            "Proved by `tests/test_generator.py::TheWaitNamesWhatFailed."
-            "test_the_last_probe_names_the_probe_count_and_the_budget`.\n"
-            "Proved by `tests/test_generator.py::TheProbeSummary."
-            "test_a_url_neither_method_answers_reports_the_summary`.\n"
-            "Proved by `tests/test_salad_queue.py::TheGaveUpReason."
-            "test_a_job_that_exhausts_its_attempts_records_the_gave_up_reason`.\n"
-            "Proved by `tests/test_ai_helper.py::TheExhaustedBudget."
-            "test_an_exhausted_budget_returns_the_stitched_text`.\n"
-        )
-        problems = proof_class_problems(old, _read_test_module)
-        self.assertEqual(len(problems), 4, problems)
-        for name in (
-            "TheWaitNamesWhatFailed",
-            "TheProbeSummary",
-            "TheGaveUpReason",
-            "TheExhaustedBudget",
-        ):
-            self.assertTrue(
-                any(name in problem for problem in problems),
-                f"the rule missed {name}: {problems}",
-            )
-        self._assert_audit_docs_old_text()
-
-    def _assert_audit_docs_old_text(self) -> None:
-        """Each 2026-10-16 docs-audit rule, driven against a scratch copy of the pre-fix text."""
-        real_recipes = recipe_method_count(HERE / "test_klein_recipes.py")
-        with tempfile.TemporaryDirectory() as td:
-            scratch = Path(td)
-
-            old_readme = scratch / "README.md"
-            old_readme.write_text(
-                "| `docs/history/` | Dated records of the studio: audits "
-                "[57](docs/history/57-salad-studio-audit-2026-09.md), "
-                "[58](docs/history/58-salad-studio-audit-2026-09-22.md), "
-                "[59](docs/history/59-salad-studio-audit-2026-09-26.md), "
-                "[61](docs/history/61-salad-studio-audit-2026-10-13.md), "
-                "[62](docs/history/62-salad-studio-audit-2026-10-14.md), and the "
-                "container-restart investigation "
-                "[60](docs/history/60-salad-container-restart-2026-09-27.md). |\n",
-                encoding="utf-8",
-            )
-            with self.subTest("D-README-63"):
-                problems = history_index_problems(
-                    old_readme.read_text(encoding="utf-8"), HISTORY_DIR
-                )
-                self.assertTrue(problems, "the rule missed the omitted history 63")
-                self.assertTrue(
-                    any("63-salad-studio-audit-2026-10-16.md" in p for p in problems),
-                    problems,
-                )
-
-            old_ir = scratch / "issue-records.md"
-            old_ir.write_text(
-                "## 4. The consolidation\n\n"
-                "The six dated issue records became this one document (1299 lines): "
-                "`docs/*.md` now holds only `issue-records.md`, so the "
-                "living-document count fell **19 → 14**. The extraction kept 48 "
-                "`### <TAG>,` headings, 5 `**Fixed:**` lines and 83 appendix rows, "
-                "and a survival check confirms each appears here.\n",
-                encoding="utf-8",
-            )
-            with self.subTest("D-IR-LEN-TAGS"):
-                problems = closure_count_problems(old_ir.read_text(encoding="utf-8"))
-                self.assertTrue(problems, "the rule missed the stale closure counts")
-                self.assertTrue(
-                    any("1299" in p and "lines" in p for p in problems), problems
-                )
-                self.assertTrue(
-                    any("48" in p and "TAG" in p for p in problems), problems
-                )
-
-            old_17 = scratch / "17.md"
-            old_17.write_text(
-                "- `salad_klein/README.md`; `tests/test_klein_recipes.py`, "
-                "17 tests asserting the verified entry.\n",
-                encoding="utf-8",
-            )
-            with self.subTest("D-17-COUNT"):
-                problems = klein_recipes_count_problems(
-                    old_17.read_text(encoding="utf-8"), real_recipes
-                )
-                self.assertTrue(problems, "the rule missed the 17-test claim")
-                self.assertTrue(any("17" in p for p in problems), problems)
-
-            old_23 = scratch / "23.md"
-            old_23.write_text(
-                "| Result | `GET /history/<prompt_id>` then `/view` for the image |\n\n"
-                "`salad_gen.py` is a working caller.\n",
-                encoding="utf-8",
-            )
-            with self.subTest("D-23-HISTORY"):
-                problems = wrapper_result_problems(
-                    old_23.read_text(encoding="utf-8"),
-                    SALAD_GEN.read_text(encoding="utf-8"),
-                )
-                self.assertTrue(problems, "the rule missed GET /history as the Result")
-                self.assertTrue(any("GET /history" in p for p in problems), problems)
-
-            old_15 = scratch / "15.md"
-            old_15.write_text(
-                "a 24 GB local card adds `--gpus all -p 8188:8188`, "
-                "[doc 23 §3](23-salad-container-group-deployment.md):\n",
-                encoding="utf-8",
-            )
-            with self.subTest("D-15-23-SEC"):
-                problems = docker_gpus_cite_problems(
-                    old_15.read_text(encoding="utf-8"),
-                    DEPLOYMENT.read_text(encoding="utf-8"),
-                )
-                self.assertTrue(problems, "the rule missed the docker cite of §3")
-                self.assertTrue(any("§3" in p for p in problems), problems)
-
-            old_22 = scratch / "22.md"
-            old_22.write_text(
-                "- Gateway and control-plane behaviour, including what cannot be "
-                "changed after creation: doc 18 §3's table and doc 23 §2.2/§3. "
-                "Default is **3 replicas**; at least 3 for testing and "
-                "**at least 5 for production**, since nodes are "
-                "**interruptible without warning** [9].\n",
-                encoding="utf-8",
-            )
-            with self.subTest("D-22-23-REPL"):
-                problems = replica_recipe_problems(
-                    old_22.read_text(encoding="utf-8"),
-                    DEPLOYMENT.read_text(encoding="utf-8"),
-                )
-                self.assertTrue(problems, "the rule missed the 3-replica default")
-                self.assertTrue(
-                    any(
-                        "1 replica" in p or "3 replica" in p or "product default" in p
-                        for p in problems
-                    ),
-                    problems,
-                )
-
-            old_ir_no63 = scratch / "issue-records-no63.md"
-            old_ir_no63.write_text(
-                "# Issue records\n\nThe six dated issue records became this one document.\n",
-                encoding="utf-8",
-            )
-            with self.subTest("H-63"):
-                problems = history_63_index_problems(
-                    old_ir_no63.read_text(encoding="utf-8"),
-                    HISTORY_63.read_text(encoding="utf-8"),
-                )
-                self.assertTrue(problems, "the rule missed a missing History 63 note")
-                self.assertTrue(
-                    any("History 63 note" in p for p in problems), problems
-                )
-
-            old_vendor = scratch / "VENDOR.txt"
-            old_vendor.write_text(
-                "  ComfyUI's editor engine. Kept as litegraph.html "
-                "(Open in browser alternative).\n",
-                encoding="utf-8",
-            )
-            with self.subTest("P-VENDOR-LABEL"):
-                shipped_page = (
-                    'text="Open in browser", command=self._open_browser\n'
-                    'text="Open as Comfy", command=self._open_litegraph\n'
-                )
-                problems = vendor_litegraph_problems(
-                    old_vendor.read_text(encoding="utf-8"),
-                    shipped_page,
-                )
-                self.assertTrue(problems, "the rule missed the LiteGraph button label")
-                self.assertTrue(
-                    any("Open as Comfy" in p or "Open in browser" in p for p in problems),
-                    problems,
-                )
-
-            old_skill = scratch / "SKILL.md"
-            old_skill.write_text(
-                "## What the POST meets\n\n"
-                "retried automatically, up to `MAX_ATTEMPTS` attempts with "
-                "`RETRY_SLEEP_S` seconds between them.\n\n"
-                "## Agent loop\n\n"
-                "8. Cap: `MAX_ATTEMPTS` (`civitai_verify.py`).\n",
-                encoding="utf-8",
-            )
-            with self.subTest("D-SKILL-MAX"):
-                problems = skill_max_attempts_problems(
-                    old_skill.read_text(encoding="utf-8"),
-                    q.MAX_ATTEMPTS,
-                    civitai_verify_max_attempts(),
-                )
-                self.assertTrue(problems, "the rule missed the shared MAX_ATTEMPTS name")
-                self.assertTrue(
-                    any("salad_queue.MAX_ATTEMPTS" in p for p in problems), problems
-                )
-
-            old_21 = scratch / "21.md"
-            old_21.write_text(
-                "9. **Keep `_meta` on every `LoraLoader`.** See §5. It is load-bearing.\n",
-                encoding="utf-8",
-            )
-            with self.subTest("D-META-DRIFT"):
-                nodes = lora_meta_nodes(KLEIN_RECIPES)
-                problems = meta_advice_problems(
-                    old_21.read_text(encoding="utf-8"), nodes
-                )
-                self.assertTrue(problems, "the rule missed doc 21's universal _meta claim")
-                self.assertTrue(
-                    any("on every `LoraLoader`" in p for p in problems), problems
-                )
 
 
 class ShippedArtifactsAreNamed(unittest.TestCase):

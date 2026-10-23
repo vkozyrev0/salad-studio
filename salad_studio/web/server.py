@@ -26,6 +26,7 @@ from salad_studio.web.actions import Registry
 
 HOST = "127.0.0.1"
 MAX_BODY = 8 * 1024 * 1024
+BODY_TIMEOUT_S = 15.0
 EVENT_WAIT_S = 15.0
 
 MISSING_BUILD = """<!doctype html><meta charset="utf-8">
@@ -178,7 +179,26 @@ class StudioHandler(BaseHTTPRequestHandler):
         if length > MAX_BODY:
             self._json(413, {"error": {"kind": "too_large", "message": "body is too large"}})
             return None
-        return self.rfile.read(length)
+        if length == 0:
+            return b""
+        try:
+            self.connection.settimeout(BODY_TIMEOUT_S)
+            data = self.rfile.read(length)
+        except (TimeoutError, OSError):
+            data = None
+        finally:
+            self.connection.settimeout(None)
+        if data is None:
+            self.close_connection = True
+            self._json(408, {"error": {"kind": "timeout",
+                                       "message": "the body was not received in time"}})
+            return None
+        if len(data) < length:
+            self.close_connection = True
+            self._json(400, {"error": {"kind": "bad_payload",
+                                       "message": "the body ended before Content-Length"}})
+            return None
+        return data
 
     def _json(self, status: int, payload: Any) -> None:
         data = json.dumps(payload, default=str).encode()

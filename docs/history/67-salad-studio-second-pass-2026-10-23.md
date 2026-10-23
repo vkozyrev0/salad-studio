@@ -8,7 +8,7 @@ four Config tabs, the confirm dialog, a selected History row, the keyboard skip
 path, and the populated strip. The design pass ran against those captures.
 
 **Gate.** `npx ng build`, `node audit.cjs`, `npx ng test --watch=false` (9
-specs), `python -m unittest discover -s tests -p "test_*.py"` (1096 tests) all
+specs), `python -m unittest discover -s tests -p "test_*.py"` (1097 tests) all
 pass. `ui/dist` is rebuilt.
 
 ## Verdict
@@ -101,6 +101,8 @@ does not throw the zoom away.
   what will fill them; the strip ring clamps when Clean gallery shrinks it.
 - At 720 the rail wraps into two rows instead of hiding pages behind a
   horizontal scroll.
+- `Ctrl+0` opens Queue, the tenth page, so the digit order follows the rail.
+  Logs stays on the rail and the page switcher.
 - Dead code removed: the unused store `busy` signal, `Api.file`, `Field.focus`,
   `Selection`'s order/step methods, `DataGrid.order`, and the duplicate
   `pageId` in `route-sync`.
@@ -144,17 +146,21 @@ after the action finishes. Tested in `test_web_engine.py`.
 `vast.save_doc` used `Path.write_text`; a crash could leave a truncated
 `studio-vast.json`. It now uses `atomic.write_text`, like every other store.
 
-## Deferred
+### 17. A partial POST body could hold a handler thread (Low)
+`web/server.py:149-176`: `_body` read `Content-Length` bytes with no socket
+timeout, so a client that sent a short body and kept the socket open could
+block a handler thread forever. The read now has a 15 second timeout. A timeout
+answers 408, a body that ends before its declared length answers 400, and both
+close the connection. Proved by `test_web_http.py`, which sends a short body
+over a raw socket with the timeout patched to 0.2 seconds and asserts the reply
+arrives as 408 or 400.
 
-- **A partial POST body can hold a handler thread.** `_body` reads
-  `Content-Length` bytes without a socket timeout. Loopback only and daemon
-  threads make this low-impact; a timeout would need a slow socket test.
-- **Ctrl+0 opens Logs; Queue has no digit shortcut.** The rail and the page
-  switcher reach every page; changing the mapping is a preference, not a defect.
+## Kept as history
+
 - **Dated Tk/Flet records** in `docs/history/57-65` and `docs/issue-records.md`
-  remain as history. The live tree has no Flet/Tk import; `test_layers.py` and
-  `test_docs_match.py` guard the imports and names, and `test_theme.py` guards
-  the page palette.
+  remain as the repository's dated record. The live tree has no Flet/Tk import;
+  `test_layers.py` and `test_docs_match.py` guard the imports and names, and
+  `test_theme.py` guards the page palette.
 
 ## Checks
 

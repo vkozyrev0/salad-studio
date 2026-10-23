@@ -7,6 +7,7 @@ shape, and that no request from another site can drive the action table.
 from __future__ import annotations
 
 import json
+import socket
 import sys
 import threading
 import unittest
@@ -167,6 +168,20 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(status, 500)
         self.assertEqual(body["error"]["kind"], "failed")
         self.assertNotIn("SECRET_TOKEN", json.dumps(body))
+
+    def test_a_body_that_stops_early_answers_instead_of_hanging(self) -> None:
+        with mock.patch.object(server, "BODY_TIMEOUT_S", 0.2):
+            sock = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+            try:
+                sock.sendall(
+                    b"POST /api/action HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                    b"Content-Type: application/json\r\nContent-Length: 20\r\n\r\n{"
+                )
+                sock.settimeout(3)
+                reply = sock.recv(4096)
+            finally:
+                sock.close()
+        self.assertRegex(reply, rb"HTTP/1.1 (408|400)")
 
     def test_a_get_on_the_action_route_answers_405(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:

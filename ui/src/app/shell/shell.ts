@@ -301,7 +301,8 @@ export class Shell {
     if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
     if (/^[0-9]$/.test(event.key)) {
       event.preventDefault();
-      const wanted = event.key === '0' ? this.pages.length : Number(event.key);
+      // Digits follow the rail: 1-9 are the first nine pages, 0 is the tenth.
+      const wanted = event.key === '0' ? 10 : Number(event.key);
       if (wanted <= this.pages.length) void this.router.navigateByUrl('/' + this.pages[wanted - 1].id);
     }
   }

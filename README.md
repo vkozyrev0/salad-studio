@@ -27,7 +27,7 @@ the first render.
 Tests are `unittest`. Run the commands separately:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1096 tests, ~35 s
+python -m unittest discover -s tests -p "test_*.py"    # 1097 tests, ~35 s
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```

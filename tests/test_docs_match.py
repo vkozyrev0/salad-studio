@@ -929,9 +929,11 @@ class MoreFixedClaimsHoldInTheShippedCode(unittest.TestCase):
         import generator
         import model_catalog
         import ref_check
+        import studio_log
         import tokens as tok
 
         from salad_studio import civitai_verify, graph_model, profiles, salad_status
+        from salad_studio.web import services
 
         absent = (
             (generator, ("read_key", "_body_snippet", "clear_history")),
@@ -941,7 +943,11 @@ class MoreFixedClaimsHoldInTheShippedCode(unittest.TestCase):
             (model_catalog, ("salad_loader_name",)),
             (tok, ("token_path", "probe_all")),
             (ai_helper, ("content_of", "fetch_local_models")),
-            (salad_status, ("shown_policy", "color_for_status", "format_status", "start_container_group")),
+            (salad_status, ("shown_policy", "color_for_status", "format_status", "start_container_group",
+                            "WORD_COLORS", "STRIP_COLORS")),
+            (studio_log, ("LEVEL_COLORS",)),
+            (services, ("level_color",)),
+            (tok, ("state_color",)),
             (profiles, ("route_payload", "SNOFS_UNET", "SNOFS_MARKER", "_default_selected_loras")),
             (graph_model, ("node_boxes", "round_polyline", "_wrap", "_rounded_rect")),
             (graph_model.GraphModel, ("_draw_grid",)),
@@ -960,6 +966,9 @@ class MoreFixedClaimsHoldInTheShippedCode(unittest.TestCase):
             for name in names:
                 with self.subTest(module=module.__name__, name=name):
                     self.assertFalse(hasattr(module, name), f"{module.__name__}.{name} is back")
+        for gone in (PKG / "theme.py", TOOLS / "MIGRATION.md"):
+            with self.subTest(file=gone.name):
+                self.assertFalse(gone.exists(), f"{gone.name} is back")
         # Gone from the module is not enough: doc 21 kept naming
         # `profiles.route_payload` after the function was deleted, so no living
         # document may name a deleted symbol either.

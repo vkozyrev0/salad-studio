@@ -107,10 +107,10 @@ const STANDING_NOTE =
   `,
   styles: `
     :host { display: block; height: 100%; }
-    .wrap { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; min-height: 0; padding-top: 12px; }
+    .wrap { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; min-height: 0; padding-top: 12px; }
     .head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 10px; }
     .summary { margin: 0; font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-muted); text-align: right; }
-    .table { min-height: 0; overflow: hidden; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+    .table { min-width: 0; width: 100%; max-width: 100%; min-height: 0; overflow: hidden; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
     .foot { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 16px; padding-top: 10px; }
     .note { margin: 0; font-size: 12px; color: var(--fg-muted); max-width: 80ch; }
     .hint { font-family: var(--font-mono); font-size: 10px; color: var(--fg-muted); white-space: nowrap; }
@@ -127,14 +127,14 @@ export class QueuePage {
   protected readonly standard = STANDING_NOTE;
 
   protected readonly columns: ColDef[] = [
-    numeric('#', 'id', 64),
-    { headerName: 'Profile', field: 'profile', start: 150 },
-    { headerName: 'State', field: 'state', start: 110 },
-    numeric('Attempts', 'attempts', 92),
-    numeric('Last status', 'status', 100),
-    { headerName: 'Reason', field: 'reason', start: 220, tooltipField: 'reason' },
-    { headerName: 'Request', field: 'request', start: 160 },
-    numeric('Finished', 'finished', 90),
+    numeric('#', 'id', 45),
+    { headerName: 'Profile', field: 'profile', start: 105 },
+    { headerName: 'State', field: 'state', start: 80 },
+    numeric('Attempts', 'attempts', 75),
+    numeric('Last status', 'status', 90),
+    { headerName: 'Reason', field: 'reason', flex: 1, minWidth: 140, tooltipField: 'reason' },
+    { headerName: 'Request', field: 'request', start: 115, tooltipField: 'request' },
+    numeric('Finished', 'finished', 75),
   ];
 
   protected readonly summary = computed(() => {

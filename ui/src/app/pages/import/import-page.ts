@@ -94,7 +94,7 @@ const KNOBS: readonly { key: string; label: string }[] = [
 
         <section class="issues" aria-labelledby="issues-head">
           <h2 class="eyebrow" id="issues-head">Salad replica issues</h2>
-          <pre class="readout" tabindex="0">{{ issuesText() }}</pre>
+          <pre class="readout" tabindex="0">{{ issuesText() || 'No paste checked yet. Paste Civitai data or a Comfy workflow above.' }}</pre>
         </section>
 
         <div class="btn-row">
@@ -166,8 +166,17 @@ export class ImportPage {
 
   constructor() {
     effect(() => {
-      this.store.page();
-      untracked(() => this.draft.set(null));
+      const state = this.state();
+      untracked(() => {
+        const draft = this.draft();
+        if (!draft) return;
+        const next = { ...draft } as Record<string, unknown>;
+        if (state?.stashed) delete next['workflow'];
+        for (const key of Object.keys(next)) {
+          if (this.serverValue(state, key) === String(next[key] ?? '')) delete next[key];
+        }
+        this.draft.set(Object.keys(next).length ? (next as Partial<ImportState>) : null);
+      });
     });
   }
 
@@ -175,6 +184,14 @@ export class ImportPage {
     const draft = this.draft() as Record<string, string> | null;
     if (draft && key in draft) return String(draft[key]);
     return this.state()?.knobs?.find((k) => k.key === key)?.value ?? '';
+  }
+
+  /** The server's value for one draft key, so a matched draft can be dropped. */
+  private serverValue(state: ImportState | null, key: string): string {
+    if (key === 'url' || key === 'meta' || key === 'workflow' || key === 'scheduler' || key === 'unet') {
+      return String(state?.[key] ?? '');
+    }
+    return String(state?.knobs?.find((k) => k.key === key)?.value ?? '');
   }
 
   protected readonly choices = computed(() => ({

@@ -325,7 +325,7 @@ class ConfigController:
             ctx.effects.append({
                 "kind": "confirm",
                 "token": self.studio.issue_confirm("config", "delete_profile", {"name": name}),
-                "title": "Salad Studio",
+                "title": "Delete profile",
                 "body": (f"Delete profile {name!r}? The last profile is recreated as a default. "
                          "This cannot be undone."),
             })
@@ -619,7 +619,7 @@ class ConfigController:
             ctx.effects.append({
                 "kind": "confirm",
                 "token": self.studio.issue_confirm("config", "reallocate", {}),
-                "title": "Salad Studio",
+                "title": "Reallocate the instance",
                 "body": "Reallocate the container instance now? Live renders on it are lost.",
             })
             return self.state()
@@ -770,7 +770,7 @@ class ConfigController:
             ctx.effects.append({
                 "kind": "confirm",
                 "token": self.studio.issue_confirm("config", "remove_vast", {"index": self.vast_index}),
-                "title": "Salad Studio",
+                "title": "Remove instance",
                 "body": (f"Remove instance {vast.row_label(row)} from the list? The machine itself is "
                          "not destroyed."),
             })
@@ -837,7 +837,7 @@ class ConfigController:
             ctx.effects.append({
                 "kind": "confirm",
                 "token": self.studio.issue_confirm("config", "rent_offer", {"image": self._image_ref(payload)}),
-                "title": "Salad Studio",
+                "title": "Rent this instance",
                 "body": f"Rent {vast.offer_label(offer)}? This spends money on your vast.ai account.",
             })
             return self.state()

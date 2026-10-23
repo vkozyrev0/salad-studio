@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, untracked } from '@angular/core';
+import { RouterLink } from '@angular/router';
 import { ColDef } from 'ag-grid-community';
 import { StudioStore } from '../../core/studio-store';
 import { PageFrame } from '../../shell/page-frame';
@@ -106,7 +107,7 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
 @Component({
   selector: 'app-config-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [PageFrame, Field, DataGrid],
+  imports: [PageFrame, Field, DataGrid, RouterLink],
   template: `
     <app-page-frame>
       <div class="tabs" role="tablist" aria-label="Config sections" (keydown)="tabKey($event)">
@@ -121,7 +122,7 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
             [attr.aria-controls]="'panel-' + tab.id"
             [disabled]="unported(tab.id)"
             [attr.title]="unported(tab.id) ? 'The server does not send this section yet.' : null"
-            (click)="section.set(tab.id)"
+            (click)="openSection(tab.id)"
           >
             {{ tab.label }}
           </button>
@@ -131,7 +132,7 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
       <div class="body" role="tabpanel" [id]="'panel-' + section()" [attr.aria-labelledby]="'tab-' + section()">
         @switch (section()) {
           @case ('profile') {
-            <p class="empty-line">Provider keys live on Tokens. Paste them there before the first render.</p>
+            <p class="empty-line">Provider keys live on <a class="inline-link" routerLink="/tokens">Tokens</a>. Paste them there before the first render.</p>
             <div class="cols">
               <section class="main" aria-labelledby="profiles-head">
                 <div class="section" role="group" aria-labelledby="profiles-head">
@@ -412,6 +413,8 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
     .tab:hover { color: var(--fg); }
     .tab[aria-selected='true'] { color: var(--fg); }
     .tab[aria-selected='true']::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--accent); }
+    .inline-link { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+    .inline-link:hover { color: var(--accent-hi); }
     .body { min-height: 0; height: calc(100% - 45px); padding-top: 16px; overflow: auto; }
     .cols { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 30px; align-items: start; }
     .main { display: flex; flex-direction: column; gap: 22px; max-width: 1180px; padding-bottom: 16px; }
@@ -468,8 +471,10 @@ export class ConfigPage {
     return PROBE_WIDTHS[key];
   }
 
-  /** The open tab is the page's; the reply's section is the start. */
+  /** The open tab is the page's; the reply's section seeds it once, then it stays put. */
   protected readonly section = signal<string>('profile');
+  private sectionSeeded = false;
+  private profileSeeded = '';
 
   /** The Profile section's typed fields, until a reply replaces the form. */
   protected readonly name = signal('');
@@ -506,18 +511,19 @@ export class ConfigPage {
   });
 
   protected readonly instanceColumns: ColDef[] = [
-    { headerName: 'Key', field: 'key', start: 110, filter: false, tooltipField: 'key' },
-    { headerName: 'Label', field: 'label', start: 140, tooltipField: 'label' },
-    { headerName: 'Address', field: 'endpoint', start: 200, cellStyle: { 'font-family': 'var(--font-mono)', 'font-size': '11.5px' } },
-    { headerName: 'Image', field: 'image', start: 160 },
-    { headerName: 'State', field: 'state', start: 100 },
-    { headerName: 'GPU', field: 'gpu', start: 110 },
+    { headerName: 'Key', field: 'key', start: 95, filter: false, tooltipField: 'key' },
+    { headerName: 'Label', field: 'label', start: 120, tooltipField: 'label' },
+    { headerName: 'Address', field: 'endpoint', flex: 1, minWidth: 120, tooltipField: 'endpoint', cellStyle: { 'font-family': 'var(--font-mono)', 'font-size': '11.5px' } },
+    { headerName: 'Image', field: 'image', start: 140, tooltipField: 'image' },
+    { headerName: 'State', field: 'state', start: 80, tooltipField: 'state' },
+    { headerName: 'GPU', field: 'gpu', start: 90, tooltipField: 'gpu' },
     {
       headerName: 'Active',
       field: 'active',
-      start: 70,
+      start: 82,
       filter: false,
-      valueFormatter: (p) => (p.value ? '*' : ''),
+      cellRenderer: (p: { value?: boolean }) => (p.value ? '● active' : ''),
+      cellStyle: (p) => ({ color: p.value ? 'var(--valid)' : 'var(--fg-muted)' }),
     },
   ];
 
@@ -534,14 +540,24 @@ export class ConfigPage {
     effect(() => {
       const state = this.state();
       untracked(() => {
-        if (state?.section) this.section.set(state.section);
+        // The server's section is the start; after that the tab is the page's.
+        // Re-seeding it on every reply would yank a person back to Profile
+        // after any action on another tab.
+        if (!this.sectionSeeded && state?.section) {
+          this.section.set(state.section);
+          this.sectionSeeded = true;
+        }
         const instance = this.instances().find((row) => row.selected);
         if (instance) this.instanceSelection.pick(instance.key);
         this.offerSelection.pick(null);
         this.offerSelectionRev.update((n) => n + 1);
         this.drafts.set({});
-        this.name.set(state?.profile?.name ?? '');
-        this.gateway.set(state?.profile?.gateway ?? '');
+        const profile = state?.profile?.name ?? '';
+        if (profile !== this.profileSeeded) {
+          this.profileSeeded = profile;
+          this.name.set(profile);
+          this.gateway.set(state?.profile?.gateway ?? '');
+        }
         this.vastEndpoint.set('');
         if (!this.vastGpus()) this.vastGpus.set(state?.vast?.gpus ?? 'RTX 5090, RTX 4090');
       });
@@ -567,6 +583,12 @@ export class ConfigPage {
     return id === 'images' && this.state()?.images === undefined;
   }
 
+  /** A tab click is the page's, and the server keeps it for the next load. */
+  protected openSection(id: string): void {
+    this.section.set(id);
+    void this.store.act('config', 'section', { section: id });
+  }
+
   /** Left and Right walk the tabs, as the ARIA tabs pattern expects. */
   protected tabKey(event: KeyboardEvent): void {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
@@ -575,7 +597,7 @@ export class ConfigPage {
     const next = tabs[(Math.max(0, at) + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
     if (!next || next.id === this.section()) return;
     event.preventDefault();
-    this.section.set(next.id);
+    this.openSection(next.id);
     (event.currentTarget as HTMLElement | null)?.querySelector<HTMLElement>(`#tab-${next.id}`)?.focus();
   }
 
@@ -583,10 +605,12 @@ export class ConfigPage {
 
   protected loadProfile(name: string): void {
     this.name.set(name);
+    this.profileSeeded = '';
     void this.store.act('config', 'load_profile', { name });
   }
 
   protected profileAct(action: 'add_profile' | 'save_profile' | 'delete_profile' | 'use_selected_instance'): void {
+    this.profileSeeded = '';
     if (action === 'use_selected_instance') {
       void this.store.act('config', action);
       return;

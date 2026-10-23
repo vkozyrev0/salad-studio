@@ -112,6 +112,15 @@ class WebEngine:
         self.studio.hub.publish("action_done", {"id": action_id, "reply": reply})
 
     def _confirm(self, token: str) -> tuple[int, dict[str, Any]]:
+        restored = self.studio.confirms.get(token)
+        if restored is None:
+            return 409, {"ok": False, "error": {"kind": "spent", "message": "that confirmation is no longer valid"}}
+        page, action, _args = restored
+        if self.studio.busy.get(f"{page}.{action}"):
+            # Keep the token: the person can press Yes again once the action
+            # that is already running has finished.
+            return 409, {"ok": False, "error": {"kind": "busy",
+                                                "message": f"{page}.{action} is already running"}}
         restored = self.studio.take_confirm(token)
         if restored is None:
             return 409, {"ok": False, "error": {"kind": "spent", "message": "that confirmation is no longer valid"}}

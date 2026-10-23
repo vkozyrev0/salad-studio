@@ -20,11 +20,6 @@ export class Api {
     return firstValueFrom(this.http.post<ActionReply>('/api/action', { confirm: token }));
   }
 
-  /** One file from the server, as a URL the page can put in src or href. */
-  file(path: string): string {
-    return path;
-  }
-
   events(): EventSource {
     return new EventSource('/api/events');
   }

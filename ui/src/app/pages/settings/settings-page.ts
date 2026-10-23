@@ -161,12 +161,21 @@ export class SettingsPage {
   );
 
   constructor() {
-    // Every reply is the form, so once it lands the boxes take its values.
-    // The effect watches the reply's identity, so a background progress reply
-    // that did not change this page does not wipe a half-typed number.
+    // A reply may carry a value older than the last keystroke. Drop a draft
+    // only once the server's value is the one that was typed, so an unrelated
+    // reply cannot pull the field back.
     effect(() => {
-      this.store.page();
-      untracked(() => this.draft.set({}));
+      const state = this.state();
+      untracked(() => {
+        const draft = this.draft();
+        const keys = Object.keys(draft) as Knob[];
+        if (!keys.length) return;
+        const next = { ...draft };
+        for (const key of keys) {
+          if (String(state?.knobs?.[key] ?? '') === next[key]) delete next[key];
+        }
+        this.draft.set(next);
+      });
     });
   }
 

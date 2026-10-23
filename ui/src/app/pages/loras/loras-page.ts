@@ -111,6 +111,7 @@ interface LorasState {
     :host { display: block; height: 100%; }
     .grid-page {
       display: grid;
+      grid-template-columns: minmax(0, 1fr);
       grid-template-rows: auto minmax(180px, 1fr) auto;
       gap: 12px;
       height: 100%;
@@ -129,7 +130,7 @@ interface LorasState {
       color: var(--fg-muted);
       white-space: nowrap;
     }
-    .table { min-height: 180px; overflow: hidden; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+    .table { min-width: 0; width: 100%; max-width: 100%; min-height: 180px; overflow: hidden; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
     .form { display: flex; flex-direction: column; gap: 12px; padding-bottom: 12px; }
     .form .section-head { justify-content: flex-start; align-items: center; gap: 18px; margin-bottom: 0; }
     .rows { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
@@ -158,16 +159,16 @@ export class LorasPage {
     {
       headerName: 'Verified',
       field: 'verified',
-      start: 100,
+      start: 85,
       filter: false,
       cellRenderer: (p: { value?: boolean }) => (p.value ? '● yes' : '● no'),
       cellStyle: (p) => ({ color: p.value ? 'var(--valid)' : 'var(--invalid)' }),
     },
-    { headerName: 'Id', field: 'id', start: 130, filter: false, tooltipField: 'source', cellStyle: { 'font-family': 'var(--font-mono)', 'font-size': '11.5px' } },
-    { headerName: 'Name', field: 'name', start: 240 },
-    { headerName: 'Version', field: 'version', start: 110 },
-    { headerName: 'Model', field: 'model', start: 130 },
-    { headerName: 'Source', field: 'source', flex: 1, minWidth: 180, tooltipField: 'source', cellStyle: { 'font-family': 'var(--font-mono)', 'font-size': '11.5px' } },
+    { headerName: 'Id', field: 'id', start: 105, filter: false, tooltipField: 'id', cellStyle: { 'font-family': 'var(--font-mono)', 'font-size': '11.5px' } },
+    { headerName: 'Name', field: 'name', start: 190, tooltipField: 'name' },
+    { headerName: 'Version', field: 'version', start: 90 },
+    { headerName: 'Model', field: 'model', start: 100 },
+    { headerName: 'Source', field: 'source', flex: 1, minWidth: 140, tooltipField: 'source', cellStyle: { 'font-family': 'var(--font-mono)', 'font-size': '11.5px' } },
   ];
 
   protected busy(action: string): boolean {

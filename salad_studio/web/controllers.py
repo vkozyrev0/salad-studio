@@ -104,11 +104,21 @@ class TokensController:
 
     def check_keys(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:
         # The page checks one provider at a time. A request that names kinds
-        # probes only those; no kinds stays the old all-five check.
+        # probes only those; no kinds stays the old all-five check. An empty
+        # list is a valid "check none", not the same thing as no list.
         requested = payload.get("kinds")
-        wanted = [kind for kind, _label in SLOTS
-                  if not requested or kind in requested]
         labels = dict(SLOTS)
+        if requested is None:
+            wanted = [kind for kind, _label in SLOTS]
+        else:
+            if not isinstance(requested, list) or any(
+                not isinstance(kind, str) or kind not in labels for kind in requested
+            ):
+                raise ValueError("kinds must be a list of known token kinds")
+            wanted = [kind for kind, _label in SLOTS if kind in requested]
+        if not wanted:
+            ctx.note("No keys selected to check.", level="warn")
+            return self.state()
         values = {kind: _slot_value(kind) for kind in wanted}
 
         def work() -> Any:

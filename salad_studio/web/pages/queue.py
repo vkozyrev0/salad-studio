@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import salad_queue
+import studio_log
 from salad_studio import generator, prompt_history
 
 COLUMNS = ("#", "Profile", "State", "Attempts", "Last status", "Reason", "Request", "Finished")
@@ -35,7 +36,7 @@ def _retried(queue: Any, job: Any, out_dir: Path) -> dict[str, Any]:
     out = ""
     if job.state == salad_queue.ACCEPTED and attempt is not None and isinstance(attempt.result, str):
         out = str(generator.write_plate(attempt.result, Path(out_dir)))
-    return {"state": job.state, "status": job.status, "reason": job.reason,
+    return {"state": job.state, "status": job.status, "reason": studio_log.redact(str(job.reason or "")),
             "attempts": job.attempts, "out": out}
 
 
@@ -84,7 +85,7 @@ class QueueController:
             rows.append({
                 "key": str(job.id), "id": str(job.id), "profile": job.line or "(default)",
                 "state": word, "attempts": str(job.attempts),
-                "status": str(job.status) if job.status else "", "reason": job.reason or "",
+                "status": str(job.status) if job.status else "", "reason": studio_log.redact(str(job.reason or "")),
                 "request": request_word(job.request), "finished": "",
                 "live": True, "cancellable": job.cancellable, "retryable": job.retryable,
             })
@@ -101,7 +102,7 @@ class QueueController:
             rows.append({
                 "key": f"kept-{rid}", "id": str(rid), "profile": str(record.get("profile") or "(default)"),
                 "state": salad_queue.status_word(state), "attempts": str(record.get("attempts") or ""),
-                "status": str(record.get("status") or ""), "reason": str(record.get("reason") or ""),
+                "status": str(record.get("status") or ""), "reason": studio_log.redact(str(record.get("reason") or "")),
                 "request": request_word(record.get("request")),
                 "finished": _finished_label(record.get("finished_at")),
                 "live": False, "cancellable": False, "retryable": False,
@@ -163,7 +164,7 @@ class QueueController:
             ctx.note("Queue: select a request first", level="warn")
             return self.state()
         if not job.retryable:
-            ctx.note(f"Queue: request {job.id} cannot be retried ({job.reason or job.state})", level="warn")
+            ctx.note(f"Queue: request {job.id} cannot be retried ({studio_log.redact(str(job.reason or job.state))})", level="warn")
             return self.state()
         queue = self.studio.services.gen_queue
         jid = int(job.id)
@@ -179,7 +180,7 @@ class QueueController:
                 return
             state = str((result or {}).get("state") or "")
             word = salad_queue.status_word(state)
-            reason = str((result or {}).get("reason") or "")
+            reason = studio_log.redact(str((result or {}).get("reason") or ""))
             self.note = f"Request {jid} was retried: {word}." + (f" {reason}" if reason else "")
             if state == salad_queue.ACCEPTED:
                 out = str((result or {}).get("out") or "")

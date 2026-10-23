@@ -55,7 +55,7 @@ The Tokens page had one `Check keys` that probed every provider in sequence,
 five 15 second timeouts deep when one hung, and there was no per-row way to ask
 about the key in front of you. Each row now has its own Check. The controller's
 `check_keys` reads an optional `kinds` list and probes only those; no list keeps
-the old all-five behaviour for any other caller. The state also reads as a word
+the old all-five behaviour, and an empty list checks none. The state also reads as a word
 under the provider name, so the dot is no longer the only signal. Proved by
 `tests/test_web_engine.py::EngineTest::test_a_check_naming_one_key_probes_only_that_key`,
 which asserts one probe and that the other rows keep their state.

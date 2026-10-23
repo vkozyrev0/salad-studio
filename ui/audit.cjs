@@ -29,7 +29,7 @@ for (const file of sources) {
 const KEY_MODIFIERS = /^key(down|up|press)(\.(enter|space|escape|tab|arrowup|arrowdown))*$/;
 const DOM_EVENTS = new Set([
   'click', 'change', 'input', 'submit', 'dblclick', 'focus', 'blur', 'keydown', 'keyup', 'keypress',
-  'mouseenter', 'pointerdown', 'pointerup', 'scroll',
+  'mouseenter', 'pointerdown', 'pointerup', 'pointermove', 'pointercancel', 'pointerleave', 'scroll', 'wheel',
 ]);
 const CONTROL_INPUTS = new Set([
   'rows', 'columns', 'field', 'selected', 'order', 'value', 'options', 'w', 'kind', 'label', 'mono',

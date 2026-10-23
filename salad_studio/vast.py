@@ -18,6 +18,8 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+import atomic
 from typing import Any
 from urllib.parse import quote, urlencode
 
@@ -557,7 +559,7 @@ def save_doc(doc: dict[str, Any], path: Path | None = None) -> Path:
     if payload["mode"] not in MODES:
         payload["mode"] = MODE_SALAD
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    atomic.write_text(target, json.dumps(payload, indent=2) + "\n")
     return target
 
 

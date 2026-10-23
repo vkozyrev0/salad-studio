@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, ElementRef, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, effect, inject, input, signal } from '@angular/core';
 import { StudioStore } from '../core/studio-store';
 
 /**
@@ -117,6 +117,14 @@ export class HistoryStrip {
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   readonly plates = input<readonly { name: string; url: string }[]>([]);
   protected readonly ring = signal(0);
+
+  constructor() {
+    // Clean gallery can shrink the reel under the ring; keep the ring on a plate.
+    effect(() => {
+      const last = Math.max(0, this.plates().length - 1);
+      if (this.ring() > last) this.ring.set(last);
+    });
+  }
 
   /** A short caption: a render's clock time, or the day a dated file names. */
   protected caption(name: string): string {

@@ -13,6 +13,7 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 for _p in (ROOT, ROOT / "salad_studio"):
@@ -56,10 +57,12 @@ class ServerTest(unittest.TestCase):
         cls.web.shutdown()
         cls.web.server_close()
 
-    def _post(self, body: bytes, path: str = "/api/action") -> tuple[int, dict]:
+    def _post(self, body: bytes, path: str = "/api/action", origin: str | None = None) -> tuple[int, dict]:
+        headers = {"Content-Type": "application/json"}
+        if origin is not None:
+            headers["Origin"] = origin
         req = urllib.request.Request(
-            f"{self.base}{path}", data=body, method="POST",
-            headers={"Content-Type": "application/json"})
+            f"{self.base}{path}", data=body, method="POST", headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=5) as resp:
                 return resp.status, json.loads(resp.read())
@@ -132,6 +135,38 @@ class ServerTest(unittest.TestCase):
             headers={"Content-Type": "application/json", "Origin": self.base})
         with urllib.request.urlopen(req, timeout=5) as resp:
             self.assertEqual(resp.status, 200)
+
+    def test_a_page_opened_at_localhost_may_post(self) -> None:
+        status, _body = self._post(
+            json.dumps({"action": "echo", "payload": {"text": "x"}}).encode(),
+            origin=f"http://localhost:{self.port}")
+        self.assertEqual(status, 200)
+
+    def test_a_page_from_another_port_is_still_refused(self) -> None:
+        status, _body = self._post(
+            json.dumps({"action": "echo", "payload": {"text": "x"}}).encode(),
+            origin=f"http://localhost:{self.port + 1}")
+        self.assertEqual(status, 403)
+
+    def test_a_foreign_get_is_refused(self) -> None:
+        req = urllib.request.Request(f"{self.base}/api/health", headers={"Origin": "https://evil.example"})
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(req, timeout=5)
+        caught.exception.close()
+        self.assertEqual(caught.exception.code, 403)
+
+    def test_a_page_at_localhost_may_read(self) -> None:
+        req = urllib.request.Request(
+            f"{self.base}/api/health", headers={"Origin": f"http://localhost:{self.port}"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+
+    def test_an_action_table_that_raises_still_answers(self) -> None:
+        with mock.patch.object(self.web.registry, "call", side_effect=RuntimeError("SECRET_TOKEN")):
+            status, body = self._post(json.dumps({"action": "echo", "payload": {"text": "x"}}).encode())
+        self.assertEqual(status, 500)
+        self.assertEqual(body["error"]["kind"], "failed")
+        self.assertNotIn("SECRET_TOKEN", json.dumps(body))
 
     def test_a_get_on_the_action_route_answers_405(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:

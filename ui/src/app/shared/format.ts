@@ -44,6 +44,23 @@ export function statsHead(stats: unknown, count = 3): string {
     .join(' · ');
 }
 
+/** A graph's shape without its model ids; the tooltip keeps the whole line. */
+export function graphSummary(text: unknown): string {
+  return statsHead(String(text ?? '').replace(/\s*\(civitai:[^)]*\)/gi, ''), 3);
+}
+
+/** Escape a server value before AG Grid writes it as HTML. */
+export function escapeHtml(value: string): string {
+  const entities: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  };
+  return value.replace(/[&<>"']/g, (char) => entities[char] ?? char);
+}
+
 /** A number read from a text box, or null when the box is blank or not a number. */
 export function numberOrNull(raw: string, integer = false): number | null {
   const text = raw.trim();

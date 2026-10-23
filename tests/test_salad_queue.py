@@ -111,6 +111,18 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(q.reason_of(q.Attempt(status=0, error="URLError")), "URLError")
         self.assertEqual(q.reason_of(q.Attempt(status=404, body=b"")), "HTTP 404")
 
+    def test_the_reason_redacts_a_token_before_it_reaches_the_ledger(self) -> None:
+        attempt = q.Attempt(
+            status=400,
+            body=json.dumps({
+                "error": {"message": "could not load https://civitai.com/api/download/models/1?token=SECRET"}
+            }).encode(),
+        )
+        reason = q.reason_of(attempt)
+        self.assertNotIn("SECRET", reason)
+        self.assertIn("token=…", reason)
+        self.assertNotIn("SECRET", q.reason_of(q.Attempt(status=0, error="GET ?token=SECRET failed")))
+
 
 class StatusWordTest(unittest.TestCase):
     """The Queue page's word for a state, and a state it does not know."""

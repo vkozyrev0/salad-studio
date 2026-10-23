@@ -16,7 +16,7 @@ import { DialogHost } from './dialog-host';
   imports: [RouterOutlet, RouterLink, RouterLinkActive, HistoryStrip, DialogHost],
   host: { '(document:keydown)': 'onKey($event)' },
   template: `
-    <a class="skip" href="#page">Skip to page</a>
+    <a class="skip" href="#page" (click)="skipToPage($event)">Skip to page</a>
     <div class="window" [attr.inert]="store.dialog() || store.confirm() ? '' : null">
       <header class="bar">
         <button class="btn primary" type="button" (click)="generate()" [disabled]="shell().gen.busy">
@@ -62,7 +62,7 @@ import { DialogHost } from './dialog-host';
         </div>
       </nav>
 
-      <main class="pane" id="page">
+      <main class="pane" id="page" tabindex="-1">
         <router-outlet />
       </main>
 
@@ -197,6 +197,7 @@ import { DialogHost } from './dialog-host';
       padding: 20px 24px 16px;
       background: var(--ground);
     }
+    .pane:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
     .status {
       grid-area: status;
@@ -235,9 +236,9 @@ import { DialogHost } from './dialog-host';
       }
       .bar { flex-wrap: wrap; height: auto; padding: 8px 16px; }
       .meters { width: auto; margin-left: auto; }
-      .rail { flex-direction: row; align-items: center; overflow-x: auto; padding: 6px 10px; border-right: 0; border-bottom: 1px solid var(--rule); }
+      .rail { flex-direction: row; flex-wrap: wrap; align-items: center; overflow-x: auto; padding: 6px 10px; border-right: 0; border-bottom: 1px solid var(--rule); }
       .rail-head, .rail-eyebrow, .rail-foot { display: none; }
-      .rail-list { flex-direction: row; }
+      .rail-list { flex-direction: row; flex-wrap: wrap; }
       .rail-link { border-left: 0; border-bottom: 2px solid transparent; white-space: nowrap; }
       .rail-link.active { border-bottom-color: var(--accent); }
       .pane { padding: 14px 16px; }
@@ -258,6 +259,14 @@ export class Shell {
   /** The meter's bar, capped so one replica fills it and ten do not overflow. */
   protected scale(value: number): number {
     return Math.min(1, value / 4);
+  }
+
+  /** The skip link moves focus, not the route: `#page` is not a route under hash routing. */
+  protected skipToPage(event: Event): void {
+    event.preventDefault();
+    const main = document.getElementById('page');
+    main?.focus();
+    main?.scrollIntoView({ block: 'start' });
   }
 
   protected generate(): void {

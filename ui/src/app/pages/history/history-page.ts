@@ -3,7 +3,7 @@ import { ColDef } from 'ag-grid-community';
 import { StudioStore } from '../../core/studio-store';
 import { PageFrame } from '../../shell/page-frame';
 import { DataGrid } from '../../shared/data-grid';
-import { clock } from '../../shared/format';
+import { clock, escapeHtml, graphSummary } from '../../shared/format';
 
 interface HistoryRow {
   id: string;
@@ -89,7 +89,7 @@ interface HistoryState {
   `,
   styles: `
     :host { display: block; height: 100%; }
-    .wrap { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; min-height: 0; }
+    .wrap { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; min-height: 0; }
     .meta {
       display: flex;
       align-items: baseline;
@@ -102,7 +102,7 @@ interface HistoryState {
       color: var(--fg-muted);
     }
     .meta b { font-weight: 500; color: var(--fg); }
-    .table { min-height: 0; overflow: hidden; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+    .table { min-width: 0; width: 100%; max-width: 100%; min-height: 0; overflow: hidden; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
     .foot { display: flex; align-items: center; gap: 20px; min-height: 58px; padding-top: 8px; }
     .selection { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex: 1; }
     .selection-meta {
@@ -122,7 +122,7 @@ interface HistoryState {
       border: 0;
       border-radius: 2px;
       background: none;
-      color: var(--rule);
+      color: var(--fg-muted);
       font-family: 'Segoe UI Symbol', var(--font-ui);
       font-size: 15px;
       line-height: 1;
@@ -163,7 +163,7 @@ export class HistoryPage {
       start: 250,
       flex: 0,
       tooltipField: 'graph',
-      valueFormatter: (p) => compactGraph(String(p.value ?? '')),
+      valueFormatter: (p) => graphSummary(String(p.value ?? '')),
       cellStyle: { 'font-family': 'var(--font-mono)', 'font-size': '11.5px', color: 'var(--fg-muted)' },
     },
     {
@@ -184,7 +184,7 @@ export class HistoryPage {
       cellClass: 'plate-cell',
       cellRenderer: (p: { value?: string }) =>
         p.value
-          ? `<span class="print small" style="width:36px;height:36px;display:inline-block"><img src="${p.value}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover"></span>`
+          ? `<span class="print small" style="width:36px;height:36px;display:inline-block"><img src="${escapeHtml(p.value)}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover"></span>`
           : '',
     },
   ];
@@ -207,18 +207,4 @@ export class HistoryPage {
   protected act(action: 'reuse' | 'delete'): void {
     void this.store.act('history', action, { id: this.selected() });
   }
-}
-
-/**
- * A graph summary without the model ids. A history cell has room for the
- * shape of the request, not for every civitai id; the tooltip keeps the
- * whole line.
- */
-function compactGraph(text: string): string {
-  const parts = text
-    .replace(/\s*\(civitai:[^)]*\)/gi, '')
-    .split('·')
-    .map((part) => part.trim())
-    .filter(Boolean);
-  return parts.slice(0, 3).join(' · ');
 }

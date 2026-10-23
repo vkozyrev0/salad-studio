@@ -145,6 +145,18 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(status, 409)
         self.assertFalse(again["ok"])
 
+    def test_a_confirm_while_the_action_is_busy_keeps_the_token(self) -> None:
+        _status, reply = self.engine.handle({"page": "shell", "action": "clean_gallery", "args": {}})
+        token = reply["effects"][0]["token"]
+        self.studio.busy["shell.clean_gallery"] = True
+        status, busy = self.engine.handle({"confirm": token})
+        self.assertEqual(status, 409)
+        self.assertEqual(busy["error"]["kind"], "busy")
+        self.studio.busy.pop("shell.clean_gallery", None)
+        status, done = self.engine.handle({"confirm": token})
+        self.assertEqual(status, 200)
+        self.assertTrue(done["ok"], "the token survived the busy refusal")
+
     def test_generate_reaches_the_services_and_clears_the_header(self) -> None:
         """The press must reach the queue, and the header must show it running."""
         from salad_studio.web.services import GenOutcome
@@ -227,6 +239,71 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(calls, ["salad"], "only the named provider is probed")
         self.assertEqual(states["salad"], "valid")
         self.assertEqual(states["deepseek"], "unknown", "the other rows keep their state")
+
+    def test_a_check_without_kinds_probes_all_five(self) -> None:
+        calls: list[str] = []
+
+        def probe(kind: str, key: str | None = None) -> dict[str, str]:
+            calls.append(kind)
+            return {"state": "valid"}
+
+        with mock.patch.object(tokens, "probe_token", side_effect=probe):
+            status, _reply = self.engine.handle({"page": "tokens", "action": "check_keys", "args": {}})
+            self.assertEqual(status, 200)
+            states = self.studio.controllers.get("tokens").states
+            deadline = time.monotonic() + 2
+            while len([v for v in states.values() if v == "valid"]) < 5 and time.monotonic() < deadline:
+                time.sleep(0.01)
+
+        self.assertEqual(sorted(calls), sorted(kind for kind, _label in controllers.SLOTS))
+        self.assertEqual(set(states.values()), {"valid"})
+
+    def test_a_check_of_two_kinds_probes_only_those(self) -> None:
+        calls: list[str] = []
+
+        def probe(kind: str, key: str | None = None) -> dict[str, str]:
+            calls.append(kind)
+            return {"state": "valid"}
+
+        with mock.patch.object(tokens, "probe_token", side_effect=probe):
+            _status, _reply = self.engine.handle(
+                {"page": "tokens", "action": "check_keys", "args": {"kinds": ["salad", "civitai"]}})
+            states = self.studio.controllers.get("tokens").states
+            deadline = time.monotonic() + 2
+            while states.get("civitai") != "valid" and time.monotonic() < deadline:
+                time.sleep(0.01)
+
+        self.assertEqual(sorted(calls), ["civitai", "salad"])
+
+    def test_an_empty_kinds_list_checks_none(self) -> None:
+        calls: list[str] = []
+
+        with mock.patch.object(tokens, "probe_token", side_effect=lambda kind, key=None: calls.append(kind)):
+            status, reply = self.engine.handle(
+                {"page": "tokens", "action": "check_keys", "args": {"kinds": []}})
+
+        self.assertEqual(status, 200)
+        self.assertEqual(calls, [])
+        self.assertIn("No keys selected", reply["shell"]["note"]["text"])
+
+    def test_a_malformed_kinds_list_is_refused(self) -> None:
+        calls: list[str] = []
+
+        with mock.patch.object(tokens, "probe_token", side_effect=lambda kind, key=None: calls.append(kind)):
+            status, reply = self.engine.handle(
+                {"page": "tokens", "action": "check_keys", "args": {"kinds": "salad"}})
+
+        self.assertEqual(status, 200)
+        self.assertFalse(reply["ok"])
+        self.assertIn("kinds must be", reply["error"])
+        self.assertEqual(calls, [])
+
+        with mock.patch.object(tokens, "probe_token", side_effect=lambda kind, key=None: calls.append(kind)):
+            status, reply = self.engine.handle(
+                {"page": "tokens", "action": "check_keys", "args": {"kinds": ["nope"]}})
+        self.assertEqual(status, 200)
+        self.assertFalse(reply["ok"])
+        self.assertIn("kinds must be", reply["error"])
 
 
 if __name__ == "__main__":

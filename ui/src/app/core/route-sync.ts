@@ -2,6 +2,7 @@ import { DestroyRef, Injectable, inject } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NavigationEnd, Router } from '@angular/router';
 import { StudioStore } from './studio-store';
+import { pageIdFromUrl } from './models';
 
 /**
  * The URL is the page selection, and this keeps the store's idea of the open
@@ -22,9 +23,9 @@ export class RouteSync {
   start(): void {
     this.router.events.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((event) => {
       if (!(event instanceof NavigationEnd)) return;
-      this.open(pageId(event.urlAfterRedirects));
+      this.open(pageIdFromUrl(event.urlAfterRedirects));
     });
-    this.open(pageId(this.router.url));
+    this.open(pageIdFromUrl(this.router.url));
   }
 
   /** Fetch the page the URL names. The server also records it as the open page. */
@@ -33,9 +34,4 @@ export class RouteSync {
     this.store.touch();
     void this.store.load(id);
   }
-}
-
-function pageId(url: string): string {
-  const path = url.split('?')[0].split('#').pop() ?? '';
-  return path.replace(/^\//, '') || 'config';
 }

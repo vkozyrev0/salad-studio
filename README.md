@@ -27,7 +27,7 @@ the first render.
 Tests are `unittest`. Run the commands separately:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1085 tests, ~35 s
+python -m unittest discover -s tests -p "test_*.py"    # 1096 tests, ~35 s
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```
@@ -52,7 +52,7 @@ container needs Docker.
 | `tests/` | The suite, one module per area. |
 | `salad_klein/` | Docker image, `prefetch.py`, and Klein recipes; [`salad_klein/README.md`](salad_klein/README.md) is the short form. |
 | `docs/workflow/` | Five playbooks: [23](docs/workflow/23-salad-container-group-deployment.md) deployment, [21](docs/workflow/21-klein-image-handoff.md) the Klein handoff, [15](docs/workflow/15-salad-flux2-klein-group.md) the 2026-09-21 Klein group record, [14](docs/workflow/14-salad-comfy-live-findings.md) live findings, [22](docs/workflow/22-two-body-correctness-research.md) anatomy research. The graph pane is in [the manual](salad_studio/README.md#prompt-graph-pane-drawn-from-the-model). |
-| `docs/history/` | Dated records: audits [57](docs/history/57-salad-studio-audit-2026-09.md), [58](docs/history/58-salad-studio-audit-2026-09-22.md), [59](docs/history/59-salad-studio-audit-2026-09-26.md), [61](docs/history/61-salad-studio-audit-2026-10-13.md), [62](docs/history/62-salad-studio-audit-2026-10-14.md), [63](docs/history/63-salad-studio-audit-2026-10-16.md), the [2026-10-17 issue pass](docs/history/64-salad-studio-issue-pass-2026-10-17.md), the [prompt-graph decision](docs/history/65-salad-studio-prompt-graph-decision-2026-10-17.md), the [2026-10-18 UI/UX audit](docs/history/65-salad-studio-ui-audit-2026-10-18.md), the [2026-10-23 UI/UX pass](docs/history/66-salad-studio-ui-ux-pass-2026-10-23.md), and the [container-restart investigation](docs/history/60-salad-container-restart-2026-09-27.md). |
+| `docs/history/` | Dated records: audits [57](docs/history/57-salad-studio-audit-2026-09.md), [58](docs/history/58-salad-studio-audit-2026-09-22.md), [59](docs/history/59-salad-studio-audit-2026-09-26.md), [61](docs/history/61-salad-studio-audit-2026-10-13.md), [62](docs/history/62-salad-studio-audit-2026-10-14.md), [63](docs/history/63-salad-studio-audit-2026-10-16.md), the [2026-10-17 issue pass](docs/history/64-salad-studio-issue-pass-2026-10-17.md), the [prompt-graph decision](docs/history/65-salad-studio-prompt-graph-decision-2026-10-17.md), the [2026-10-18 UI/UX audit](docs/history/65-salad-studio-ui-audit-2026-10-18.md), the [2026-10-23 UI/UX pass](docs/history/66-salad-studio-ui-ux-pass-2026-10-23.md), the [2026-10-23 second pass](docs/history/67-salad-studio-second-pass-2026-10-23.md), and the [container-restart investigation](docs/history/60-salad-container-restart-2026-09-27.md). |
 | `docs/` | The [consolidated issue record](docs/issue-records.md) for 2026-10-14 to 2026-10-16. |
 | `model_catalog.py` | Local LoRA and checkpoint cache. `fetch-klein --stage` warms the Docker build. |
 | `salad_gen.py` | One-shot SaladCloud ComfyUI Flux generate. |

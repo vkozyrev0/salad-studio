@@ -59,7 +59,7 @@ interface AssistState {
 
         <section class="reply" aria-labelledby="reply-head">
           <h2 class="eyebrow" id="reply-head">Reply</h2>
-          <pre class="readout prose" tabindex="0">{{ state()?.reply || '' }}</pre>
+          <pre class="readout prose" tabindex="0">{{ state()?.reply || 'No reply yet. Ask DeepSeek or the local model.' }}</pre>
         </section>
       </div>
     </app-page-frame>

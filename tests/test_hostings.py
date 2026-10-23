@@ -20,7 +20,7 @@ import hostings  # noqa: E402
 
 class _App:
     """The three app members the adapters call, so the interface can be checked
-    without building a Tk window."""
+    without starting the server or a page."""
 
     def _generate_salad(self, payload, profile) -> None:
         return None

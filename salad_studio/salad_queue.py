@@ -532,8 +532,8 @@ class SaladQueue:
                 self._gateways[job.line] = gateway
             self._cond.notify_all()
             ahead = len(waiting) - 1
-        # Outside the lock: the log callback marshals onto Tk, and the main
-        # thread may be waiting on this same lock inside a queue refresh.
+        # Outside the lock: the log callback can block on the log sink, and the
+        # refresh path may be waiting on this same lock.
         self._log(
             "info",
             f"queue: request {job.id} queued on {job.line or 'the default line'}"

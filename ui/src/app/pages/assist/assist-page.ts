@@ -40,9 +40,9 @@ interface AssistState {
         </div>
         <p class="hint">{{ state()?.imageNote || 'off, no image is sent' }}</p>
 
-        <app-field label="Image issue / problem" kind="textarea" [rows]="3" [value]="edited().issue" (changed)="edit({ issue: $event })" />
-        <app-field label="Adjusted positive prompt" kind="textarea" [rows]="3" [value]="edited().positive" (changed)="edit({ positive: $event })" />
-        <app-field label="Adjusted negative prompt" kind="textarea" [rows]="3" [value]="edited().negative" (changed)="edit({ negative: $event })" />
+        <app-field label="Image issue / problem" kind="textarea" [rows]="2" [value]="edited().issue" (changed)="edit({ issue: $event })" />
+        <app-field label="Adjusted positive prompt" kind="textarea" [rows]="2" [value]="edited().positive" (changed)="edit({ positive: $event })" />
+        <app-field label="Adjusted negative prompt" kind="textarea" [rows]="2" [value]="edited().negative" (changed)="edit({ negative: $event })" />
 
         <div class="btn-row">
           <button class="btn ghost" type="button" [disabled]="helping()" (click)="help('deepseek')">

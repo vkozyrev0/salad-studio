@@ -12,7 +12,7 @@ environment entries, and images of their own — is kept in
 ``~/.config/salad/studio-images.json``, beside the profiles and the token store,
 so nothing about a deployment lands in the repo.
 
-No tkinter here, and token values are passed in rather than read: every command
+No UI here, and token values are passed in rather than read: every command
 builder is a pure function a test drives with a literal map.
 """
 from __future__ import annotations

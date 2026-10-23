@@ -1,15 +1,14 @@
 """Prompt Editor: the request JSON every other page reads and writes.
 
-The JSON, the two prompt texts and the graph used to live on the Flet page
-object. Here they live on this controller, which is on the core thread, and
-Catalog, History, Import and Prompt Assist reach them through
-``self.studio.controllers.get("editor")`` and the methods below ``state``.
-Nothing else edits them, so ``rev`` counts every write and a keystroke carried
-over from a stale view is dropped rather than overwriting a later one.
+The JSON, the two prompt texts and the graph live on this controller, which is
+on the core thread. Catalog, History, Import and Prompt Assist reach them
+through ``self.studio.controllers.get("editor")`` and the methods below
+``state``. Nothing else edits them, so ``rev`` counts every write and a
+keystroke carried over from a stale view is dropped rather than overwriting a
+later one.
 
 The rules for reading the text (which node is the positive encode, what a
-patch does to it) live in this module with it. ``editor_logic`` belonged to
-the Flet page and went with it.
+patch does to it) live in this module with it.
 
 ``state()`` is pure: it reads what the last action stored. Network work
 belongs in the action that needs it, never here.

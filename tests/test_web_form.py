@@ -1,8 +1,8 @@
 """The form the server holds: what Config and Prompt Settings both edit.
 
-``Form`` used to live in the Flet page factory. It is the one place that knows
-how the knob fields become a profile, so it moved to the server unchanged in
-behaviour; these tests hold that behaviour still.
+``Form`` is the one place that knows how the knob fields become a profile; it
+lives on the server, so Config and Prompt Settings read one form. These tests
+hold that behaviour still.
 """
 from __future__ import annotations
 
@@ -49,8 +49,8 @@ class FormTest(unittest.TestCase):
         self.assertIn("Width", str(caught.exception))
 
     def test_a_seed_that_is_not_a_whole_number_is_truncated_to_its_whole_part(self) -> None:
-        # The Tk and Flet windows did the same: ``int(number(...))``. Pinned so
-        # the port keeps the behaviour rather than silently tightening it.
+        # The old table did the same: ``int(number(...))``. Pinned so the
+        # behaviour does not silently tighten.
         f = Form(seed="1.5")
         self.assertEqual(f.profile().seed, 1)
 

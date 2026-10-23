@@ -10,7 +10,6 @@ from urllib.parse import urlparse
 from salad_gen import UA, _req
 import salad_queue
 from studio_log import explain_http, ready_url
-from theme import SEMANTIC
 
 ORG = "life-sim"
 PROJECT = "default"
@@ -503,20 +502,6 @@ def check_container(gateway: str, key: str) -> dict[str, Any]:
     return out
 
 
-WORD_COLORS: dict[str, str] = {
-    "Ready": SEMANTIC["ok"],
-    "Starting": SEMANTIC["warn"],
-    "Creating": SEMANTIC["warn"],
-    "Downloading": SEMANTIC["warn"],
-    "Allocating": SEMANTIC["info"],
-    "Deploying": SEMANTIC["warn"],
-    "Stopped": SEMANTIC["neutral"],
-    "Failed": SEMANTIC["bad"],
-    "Down": SEMANTIC["bad"],
-    "Unknown": SEMANTIC["neutral"],
-}
-
-
 def pull_pct(progress: Any) -> int | None:
     """Salad reports 0–1 or 0–100. Return 0–100 or None."""
     if progress is None:
@@ -528,16 +513,6 @@ def pull_pct(progress: Any) -> int | None:
     if p <= 1.0:
         p *= 100.0
     return max(0, min(100, int(round(p))))
-
-# The compact status strip's three segments, in order: ready, starting,
-# non-started. The colors are the ones the status words already carry (the Ready
-# green, the amber for a replica that is coming up, the failed/down red), so a
-# dot means what the word it replaced meant.
-STRIP_COLORS: tuple[str, str, str] = (
-    WORD_COLORS["Ready"],
-    WORD_COLORS["Creating"],
-    WORD_COLORS["Failed"],
-)
 
 
 def container_counts(info: dict[str, Any] | None) -> tuple[int, int, int]:

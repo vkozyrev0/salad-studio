@@ -67,6 +67,22 @@ declare module 'ag-grid-community' {
     .grid { display: block; width: 100%; height: 100%; min-height: 180px; }
     :host ::ng-deep .ag-root-wrapper,
     :host ::ng-deep .ag-body-viewport { scrollbar-color: var(--fg-muted) var(--well); scrollbar-width: thin; }
+    /* A header is a mono ledger label, matching the page's eyebrows. The sort
+       and filter marks stay quiet until the header is hovered. */
+    :host ::ng-deep .ag-header-cell-text {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+    :host ::ng-deep .ag-header-cell:hover .ag-header-cell-text,
+    :host ::ng-deep .ag-header-cell.ag-header-active .ag-header-cell-text { color: var(--fg); }
+    :host ::ng-deep .ag-header-cell-filter-button,
+    :host ::ng-deep .ag-header-cell-menu-button { opacity: 0.3; }
+    :host ::ng-deep .ag-header-cell:hover .ag-header-cell-filter-button,
+    :host ::ng-deep .ag-header-cell:hover .ag-header-cell-menu-button { opacity: 1; }
+    :host ::ng-deep .ag-header-cell-resize::after { background-color: var(--hairline); }
   `,
 })
 export class DataGrid {

@@ -28,9 +28,8 @@ import salad_studio.vast as vast  # noqa: E402  the copy the page controller wri
 from tests._paths import _TempPaths  # noqa: E402
 
 # The store ``vast.py`` ships, read by executing the file rather than by reading
-# the live global: modules that build a window (test_app_layout, test_layers,
-# test_theme) redirect ``vast.INSTANCES_PATH`` to a temp dir at import time, and
-# their redirect is still in place when this module is imported.
+# the live global: a fixture that redirects ``vast.INSTANCES_PATH`` to a temp
+# dir at import time leaves its redirect in place for later modules.
 _VAST_SOURCE = PKG / "vast.py"
 
 
@@ -485,7 +484,7 @@ class InstanceStore(unittest.TestCase):
     def test_the_store_is_outside_the_repository(self) -> None:
         """Instance rows are not secrets, but they belong to the user's config.
 
-        The shipped path, not the live global: a window-building module redirects
+        The shipped path, not the live global: a fixture redirects
         ``vast.INSTANCES_PATH`` to a temp dir, and a guard that read the global
         would be checking that redirect.
         """

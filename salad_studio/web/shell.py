@@ -1,10 +1,10 @@
 """The studio: its shell state, its form, its profile, its pages and its confirms.
 
-``Window`` in the Flet app held all of this. Here it is one object on the core
-thread: the shell state a page or a tick can change, the form Config and
-Prompt Settings both edit, the open profile, the controllers, and the pending
-confirms. Every shell write publishes an event, so a status line set by a
-timer reaches the browser without the page having asked.
+The shell is one object on the core thread: the shell state a page or a tick
+can change, the form Config and Prompt Settings both edit, the open profile,
+the controllers, and the pending confirms. Every shell write publishes an
+event, so a status line set by a timer reaches the browser without the page
+having asked.
 """
 from __future__ import annotations
 
@@ -113,7 +113,7 @@ class Shell:
     # -- the two lines
 
     def note(self, text: str, *, level: str = "info") -> None:
-        """A note is the page's line and the window's line at once, as in the Flet app."""
+        """A note is the page's line and the shell's status line at once."""
         line = Line(text, level if level in LEVELS else "info")
         self.note_line = line
         self.status = line

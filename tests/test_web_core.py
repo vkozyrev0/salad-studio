@@ -1,8 +1,8 @@
 """The command loop: one thread owns state, callers wait, timers fire once.
 
-The Flet window ran everything on its event loop, so a page handler could never
-see a half-updated form. The server has HTTP threads instead, so that guarantee
-has to be built. These tests drive the real ``Core`` with real threads.
+A page handler must never see a half-updated form. The server has HTTP threads,
+so that guarantee has to be built. These tests drive the real ``Core`` with
+real threads.
 """
 from __future__ import annotations
 

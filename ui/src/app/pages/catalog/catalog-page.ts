@@ -41,7 +41,10 @@ interface CatalogState {
           @if (rows().length || store.loading() || store.loadError()) {
             <app-data-grid [rows]="rows()" [columns]="columns" field="id" [selected]="selected()" (picked)="pick($event)" />
           } @else {
-            <p class="empty">{{ state()?.empty || 'No kept prompts yet. Give one a short name and copy it from the Prompt Editor.' }}</p>
+            <div class="empty-sheet">
+              <p class="empty-title">The shelf is empty</p>
+              <p class="empty-hint">{{ state()?.empty || 'No kept prompts yet. Give one a short name and copy it from the Prompt Editor.' }}</p>
+            </div>
           }
         </div>
 
@@ -56,7 +59,8 @@ interface CatalogState {
           <button class="btn ghost" type="button" [disabled]="!selected() || busy('update_json')" (click)="act('update_json')">
             Update JSON
           </button>
-          <button class="btn ghost" type="button" [disabled]="!selected() || busy('load')" (click)="act('load')">
+          <button class="btn primary" type="button" [disabled]="!selected() || busy('load')" (click)="act('load')">
+            @if (busy('load')) { <span class="spinner" aria-hidden="true"></span> }
             Load into Prompt Editor
           </button>
           <button class="btn danger" type="button" [disabled]="!selected()" (click)="act('delete')">Delete</button>
@@ -70,7 +74,6 @@ interface CatalogState {
     .wrap { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; min-height: 0; }
     .meta { display: flex; flex-wrap: wrap; gap: 12px; padding: 12px 0; }
     .table { min-height: 0; overflow: hidden; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
-    .empty { margin: 0; padding: 16px 2px; font-size: 12.5px; color: var(--fg-muted); }
     .strip { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; padding-top: 12px; }
     .status { margin: 0 0 0 auto; font-size: 12px; color: var(--fg-muted); }
   `,
@@ -89,10 +92,25 @@ export class CatalogPage {
 
   protected readonly columns: ColDef[] = [
     { headerName: 'Added', colId: 'added', start: 150, valueGetter: (p) => cell(p.data, 0), valueFormatter: (p) => String(p.value ?? '') },
-    { headerName: 'Short name', colId: 'name', start: 160, valueGetter: (p) => cell(p.data, 1) },
-    { headerName: 'Description', colId: 'description', start: 200, valueGetter: (p) => cell(p.data, 2), tooltipField: 'description' },
-    { headerName: 'Prompt', colId: 'prompt', tooltipValueGetter: (p) => cell(p.data, 3), valueGetter: (p) => cell(p.data, 3) },
-    { headerName: 'Graph', colId: 'graph', start: 200, valueGetter: (p) => cell(p.data, 4) },
+    { headerName: 'Short name', colId: 'name', start: 160, valueGetter: (p) => cell(p.data, 1), tooltipValueGetter: (p) => cell(p.data, 1) },
+    {
+      headerName: 'Description',
+      colId: 'description',
+      start: 190,
+      valueGetter: (p) => cell(p.data, 2),
+      tooltipValueGetter: (p) => cell(p.data, 2),
+    },
+    { headerName: 'Prompt', colId: 'prompt', flex: 1, minWidth: 240, tooltipValueGetter: (p) => cell(p.data, 3), valueGetter: (p) => cell(p.data, 3) },
+    {
+      headerName: 'Graph',
+      colId: 'graph',
+      start: 250,
+      flex: 0,
+      valueGetter: (p) => cell(p.data, 4),
+      valueFormatter: (p) => compactGraph(String(p.value ?? '')),
+      tooltipValueGetter: (p) => cell(p.data, 4),
+      cellStyle: { 'font-family': 'var(--font-mono)', 'font-size': '11.5px', color: 'var(--fg-muted)' },
+    },
   ];
 
   constructor() {
@@ -141,4 +159,12 @@ export class CatalogPage {
 function cell(row: unknown, index: number): string {
   const cells = (row as CatalogRow | null | undefined)?.cells;
   return Array.isArray(cells) ? String(cells[index] ?? '') : '';
+}
+
+/**
+ * A graph summary without the model ids. The cell has room for the shape of
+ * the request, not for every civitai id; the tooltip keeps the whole line.
+ */
+function compactGraph(text: string): string {
+  return text.replace(/\s*\(civitai:[^)]*\)/gi, '').replace(/\s+/g, ' ').trim();
 }

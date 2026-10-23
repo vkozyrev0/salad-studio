@@ -58,7 +58,7 @@ import { DialogHost } from './dialog-host';
         </ul>
         <div class="rail-foot">
           <span>{{ pages.length }} pages</span>
-          <span>Ctrl + Tab moves</span>
+          <span>Ctrl+1–9 jumps</span>
         </div>
       </nav>
 
@@ -69,7 +69,10 @@ import { DialogHost } from './dialog-host';
       <footer class="status" [class.warn]="shell().status.level === 'warn'" [class.error]="shell().status.level === 'error'">
         <span class="dot" aria-hidden="true"></span>
         <span class="status-text" [attr.title]="shell().status.text">{{ shell().status.text }}</span>
-        <span class="keys eyebrow">← → walk the strip when focused</span>
+        <span class="keys">
+          <span class="kbd">Ctrl+Tab</span><span>pages</span>
+          <span class="kbd">← →</span><span>plates</span>
+        </span>
       </footer>
 
       <app-history-strip [plates]="shell().plates" />
@@ -124,7 +127,7 @@ import { DialogHost } from './dialog-host';
 
     .meters { margin-left: auto; display: flex; align-items: center; gap: 20px; }
     .meter { display: inline-flex; align-items: center; gap: 7px; }
-    .meter .eyebrow { font-size: 8.5px; letter-spacing: 0.12em; color: var(--fg-muted); }
+    .meter .eyebrow { font-size: 10px; letter-spacing: 0.11em; color: var(--fg-muted); }
     .meter b { font-family: var(--font-mono); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
     .meter .bar {
       position: relative;
@@ -155,7 +158,7 @@ import { DialogHost } from './dialog-host';
     }
     .rail-head { display: grid; gap: 2px; padding: 0 10px 16px; }
     .wordmark { font-family: var(--font-display); font-size: 20px; letter-spacing: -0.01em; color: var(--fg); }
-    .rail-eyebrow { padding: 0 10px 8px; font-size: 8.5px; letter-spacing: 0.16em; }
+    .rail-eyebrow { padding: 0 10px 8px; font-size: 10px; letter-spacing: 0.16em; }
     .rail-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
     .rail-link {
       display: flex;
@@ -168,7 +171,7 @@ import { DialogHost } from './dialog-host';
       transition: background 100ms ease, color 100ms ease;
     }
     .rail-link:hover { background: var(--wash); color: var(--fg); }
-    .rail-num { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.04em; min-width: 2ch; }
+    .rail-num { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.04em; min-width: 2ch; }
     .rail-name { font-size: 13px; line-height: 1.2; }
     .rail-link.active { background: var(--rose-wash); color: var(--fg); border-left-color: var(--accent); }
     .rail-link.active .rail-num { color: var(--accent); }
@@ -180,8 +183,8 @@ import { DialogHost } from './dialog-host';
       padding: 12px 10px 0;
       border-top: 1px solid var(--hairline);
       font-family: var(--font-mono);
-      font-size: 8.5px;
-      letter-spacing: 0.08em;
+      font-size: 10px;
+      letter-spacing: 0.06em;
       text-transform: uppercase;
       color: var(--fg-muted);
     }
@@ -213,7 +216,16 @@ import { DialogHost } from './dialog-host';
     .status.warn .status-text { color: var(--warn); }
     .status.error .status-text { color: var(--invalid); }
     .status-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .status .keys { margin-left: auto; font-size: 8.5px; color: var(--fg-muted); white-space: nowrap; }
+    .status .keys {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10px;
+      color: var(--fg-muted);
+      white-space: nowrap;
+    }
+    .status .keys .kbd { font-size: 10px; }
 
     @media (max-width: 860px) {
       .window {
@@ -222,13 +234,16 @@ import { DialogHost } from './dialog-host';
         grid-template-areas: 'bar' 'rail' 'pane' 'status' 'strip';
       }
       .bar { flex-wrap: wrap; height: auto; padding: 8px 16px; }
-      .meters { margin-left: 0; width: 100%; }
+      .meters { width: auto; margin-left: auto; }
       .rail { flex-direction: row; align-items: center; overflow-x: auto; padding: 6px 10px; border-right: 0; border-bottom: 1px solid var(--rule); }
       .rail-head, .rail-eyebrow, .rail-foot { display: none; }
       .rail-list { flex-direction: row; }
       .rail-link { border-left: 0; border-bottom: 2px solid transparent; white-space: nowrap; }
       .rail-link.active { border-bottom-color: var(--accent); }
       .pane { padding: 14px 16px; }
+      /* The strip's keyboard hint is the first thing to go when the status
+         line needs its width for the sentence itself. */
+      .status .keys { display: none; }
     }
   `,
 })

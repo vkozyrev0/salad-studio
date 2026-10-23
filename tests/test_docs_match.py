@@ -830,42 +830,6 @@ def route_payload_mentions(paths) -> list[str]:
     return found
 
 
-# The seven helpers issue 5 of `docs/issue-records.md` deleted: a
-# repo-wide scan over every `.py` found exactly one occurrence of each name, its
-# own `def`. The rule below reads the module's *source* rather than `hasattr`,
-# because `_draw_grid` was a method: its name lived on `GraphPane`, not on
-# `graph_view`.
-DEAD_HELPER_MODULES = ("theme.py", "json_highlight.py")
-DEAD_HELPERS = (
-    ("theme.py", "palette_snapshot"),
-    ("json_highlight.py", "token_kinds"),
-)
-
-# The seven `def` blocks as they stood before that pass, verbatim. The
-# pre-deletion text is not recoverable from the shipped file once it is deleted,
-# so it is a literal here: it is what lets the rule be driven against the source
-# it was written for, since a check nobody has seen fail is a check that may not
-# work.
-PRE_DELETION_DEFS = (
-    (
-        "theme.py",
-        (
-            "def palette_snapshot() -> Mapping[str, str]:\n"
-            '    """Copy of PALETTE for callers that should not mutate the module dict."""\n'
-            "    return dict(PALETTE)\n"
-        ),
-    ),
-    (
-        "json_highlight.py",
-        (
-            "def token_kinds(text: str) -> set[str]:\n"
-            "    return {kind for kind, _s, _e in tokenize_json(text)}\n"
-        ),
-    ),
-
-)
-
-
 # The graph-view blocks the deleted page carried, as bare functions: the rule
 # reads source text, so a page that is gone can still be shown to trip it.
 GRAPH_VIEW_PRE_DELETION = {
@@ -882,32 +846,6 @@ GRAPH_VIEW_PRE_DELETION = {
         "    return 0\n"
     ),
 }
-
-def shipped_sources() -> dict[str, str]:
-    """The text of each module the seven helpers were deleted from."""
-    out: dict[str, str] = {}
-    for name in DEAD_HELPER_MODULES:
-        path = PKG / name
-        if path.is_file():
-            out[name] = path.read_text(encoding="utf-8")
-    return out
-
-
-def dead_helpers_in(sources: dict[str, str]) -> list[str]:
-    """``module:name`` for every deleted helper still defined in ``sources``.
-
-    Separate from the test so the rule can be driven against a scratch copy of
-    the pre-deletion source. ``sources`` maps a module's file name to its text,
-    so the rule sees a ``def`` wherever it sits — module level or, as with
-    ``_draw_grid``, in a class body.
-    """
-    found: list[str] = []
-    for module, name in DEAD_HELPERS:
-        text = sources.get(module, "")
-        if re.search(rf"^[ \t]*def {re.escape(name)}\(", text, re.M):
-            found.append(f"{module}:{name}")
-    return found
-
 
 class MoreFixedClaimsHoldInTheShippedCode(unittest.TestCase):
     """The rest of the audit's FIXED claims, checked against the code."""
@@ -991,7 +929,6 @@ class MoreFixedClaimsHoldInTheShippedCode(unittest.TestCase):
         import generator
         import model_catalog
         import ref_check
-        import theme
         import tokens as tok
 
         from salad_studio import civitai_verify, graph_model, profiles, salad_status
@@ -1006,13 +943,8 @@ class MoreFixedClaimsHoldInTheShippedCode(unittest.TestCase):
             (ai_helper, ("content_of", "fetch_local_models")),
             (salad_status, ("shown_policy", "color_for_status", "format_status", "start_container_group")),
             (profiles, ("route_payload", "SNOFS_UNET", "SNOFS_MARKER", "_default_selected_loras")),
-            # Issue 5 of docs/issue-records.md: seven helpers nothing
-            # calls. `_draw_grid` was a method, so its name lived on the class.
-            (theme, ("palette_snapshot",)),
-            
             (graph_model, ("node_boxes", "round_polyline", "_wrap", "_rounded_rect")),
             (graph_model.GraphModel, ("_draw_grid",)),
-            
             (
                 face_prompt,
                 (
@@ -1039,34 +971,6 @@ class MoreFixedClaimsHoldInTheShippedCode(unittest.TestCase):
             "a living document still names the deleted routing call: "
             + ", ".join(named),
         )
-        # The same for the seven helpers: the source rule below reads each
-        # module's text, so a name that came back under a different binding is
-        # caught as well.
-        self.assertEqual(
-            dead_helpers_in(shipped_sources()),
-            [],
-            "a helper nothing calls is back in the shipped source",
-        )
-
-    def test_the_dead_helper_rule_reports_the_pre_deletion_source(self) -> None:
-        """The rule, driven against a scratch copy of the source it was written for.
-
-        The scratch copy is the shipped module text with the seven deleted `def`
-        blocks put back, so the check is shown to work rather than assumed to.
-        It is read as text — the rule never parses it — so the method block keeps
-        its own indentation.
-        """
-        scratch = shipped_sources()
-        put_back = []
-        for module, block in PRE_DELETION_DEFS:
-            # A module retired with the UI it drove has no shipped source left
-            # to drive, and its helpers went with it.
-            if module not in scratch:
-                continue
-            scratch[module] = scratch[module] + "\n\n" + block
-            put_back.append(module)
-        self.assertTrue(put_back, "the rule has no shipped module left to drive")
-        self.assertTrue(dead_helpers_in(scratch), "the rule must report a helper put back")
 
     def test_the_deployment_accessor_is_the_one_entries_uses(self) -> None:
         """C16: the module docstring named an accessor nothing called."""
@@ -2178,7 +2082,7 @@ class LivingDocsNameTheShippedArtifacts(unittest.TestCase):
             )
         with self.subTest("D-GRAPH-HTML-GONE"):
             self.assertFalse(VENDOR.exists(), "the vendored graph pages are back")
-            self.assertFalse(GRAPH_VIEW.exists(), "the Tk graph pane is back")
+            self.assertFalse(GRAPH_VIEW.exists(), "the old Python graph pane is back")
         with self.subTest("D-SKILL-MAX"):
             self.assertEqual(
                 skill_max_attempts_problems(

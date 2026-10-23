@@ -103,7 +103,13 @@ class TokensController:
         return self.state()
 
     def check_keys(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:
-        values = {kind: _slot_value(kind) for kind, _label in SLOTS}
+        # The page checks one provider at a time. A request that names kinds
+        # probes only those; no kinds stays the old all-five check.
+        requested = payload.get("kinds")
+        wanted = [kind for kind, _label in SLOTS
+                  if not requested or kind in requested]
+        labels = dict(SLOTS)
+        values = {kind: _slot_value(kind) for kind in wanted}
 
         def work() -> Any:
             out: dict[str, str] = {}
@@ -119,12 +125,18 @@ class TokensController:
                 ctx.note(f"Could not check the keys: {result}", level="error")
                 return
             self.states.update(result)
-            bad = [label for kind, label in SLOTS if result.get(kind) == "invalid"]
+            if len(wanted) == 1:
+                label = labels[wanted[0]]
+                word = {"valid": "accepted", "invalid": "rejected"}.get(
+                    result.get(wanted[0]), "unconfirmed")
+                ctx.note(f"{label} key {word}.", level="warn" if word == "rejected" else "ok")
+                return
+            bad = [labels[kind] for kind in wanted if result.get(kind) == "invalid"]
             ctx.note("Checked the typed keys" if not bad else f"Rejected: {', '.join(bad)}",
                      level="ok" if not bad else "warn")
 
         ctx.background(work, done)
-        ctx.note("Checking the keys…")
+        ctx.note(f"Checking the {labels[wanted[0]]} key…" if len(wanted) == 1 else "Checking the keys…")
         return self.state()
 
 
@@ -246,7 +258,7 @@ class ShellController:
         return {}
 
     def _dispatch_refusal(self, body: dict[str, Any], profile: Any) -> str:
-        """Why this press cannot be queued at all, in the Flet app's words; "" when it can."""
+        """Why this press cannot be queued at all, in the page's words; "" when it can."""
         from salad_studio import profiles, vast
 
         if profile.mode == "vast":

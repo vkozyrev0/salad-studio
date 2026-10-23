@@ -14,6 +14,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 for _p in (ROOT, ROOT / "salad_studio"):
@@ -205,6 +206,27 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(status, 409)
         self.assertEqual(reply["error"]["kind"], "busy")
         self.studio.busy.pop("tokens.check_keys", None)
+
+    def test_a_check_naming_one_key_probes_only_that_key(self) -> None:
+        """The Tokens page checks a row, so one slow provider cannot hold up the rest."""
+        calls: list[str] = []
+
+        def probe(kind: str, key: str | None = None) -> dict[str, str]:
+            calls.append(kind)
+            return {"state": "valid"}
+
+        with mock.patch.object(tokens, "probe_token", side_effect=probe):
+            status, _reply = self.engine.handle(
+                {"page": "tokens", "action": "check_keys", "args": {"kinds": ["salad"]}})
+            self.assertEqual(status, 200)
+            states = self.studio.controllers.get("tokens").states
+            deadline = time.monotonic() + 2
+            while states.get("salad") != "valid" and time.monotonic() < deadline:
+                time.sleep(0.01)
+
+        self.assertEqual(calls, ["salad"], "only the named provider is probed")
+        self.assertEqual(states["salad"], "valid")
+        self.assertEqual(states["deepseek"], "unknown", "the other rows keep their state")
 
 
 if __name__ == "__main__":

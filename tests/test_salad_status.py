@@ -43,11 +43,6 @@ class FormatStatus(unittest.TestCase):
         block = salad_status.generate_block_reason(info)
         self.assertIsNotNone(block)
         self.assertIn("Docker", block or "")
-        self.assertIn(
-            "Downloading",
-            salad_status.WORD_COLORS,
-            "a percent word is coloured by the family it names",
-        )
 
     def test_downloading_fraction_is_percent(self) -> None:
         info = {
@@ -186,12 +181,6 @@ class MatchDns(unittest.TestCase):
         self.assertEqual(info["group"]["name"], "flux2-klein")
         self.assertEqual(info["instances"][0]["state"], "running")
         self.assertEqual(salad_status.short_status(info), "Ready")
-        self.assertNotEqual(
-            salad_status.WORD_COLORS["Ready"], salad_status.WORD_COLORS["Failed"]
-        )
-        self.assertNotEqual(
-            salad_status.WORD_COLORS["Ready"], salad_status.WORD_COLORS["Starting"]
-        )
 
     def test_check_container_skips_ready_while_downloading(self) -> None:
         groups = {
@@ -380,25 +369,6 @@ class ContainerCounts(unittest.TestCase):
             salad_status.strip_counts({"a": ready, "b": stopped, "c": booting}),
             (1, 1, 1),
         )
-
-    def test_the_three_dot_colours_are_distinct_and_are_the_word_colours(self) -> None:
-        """The dots carry what the words carried: Ready green, amber, failed red."""
-        colors = salad_status.STRIP_COLORS
-        self.assertEqual(len(colors), 3)
-        self.assertEqual(len(set(colors)), 3, f"the three dots must differ: {colors}")
-        self.assertEqual(colors[0], salad_status.WORD_COLORS["Ready"])
-        self.assertEqual(colors[1], salad_status.WORD_COLORS["Creating"])
-        self.assertEqual(colors[2], salad_status.WORD_COLORS["Failed"])
-
-        def rgb(hexcolor: str) -> tuple[int, int, int]:
-            h = hexcolor.lstrip("#")
-            return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-
-        green, amber, red = (rgb(c) for c in colors)
-        self.assertTrue(green[1] > green[0] and green[1] > green[2], f"green: {green}")
-        self.assertTrue(amber[0] > amber[1] > amber[2], f"amber: {amber}")
-        self.assertTrue(red[0] > red[1] and red[0] > red[2], f"red: {red}")
-
 
 class SourceButton(unittest.TestCase):
     def test_the_server_has_the_check_action_and_the_strip_counts(self) -> None:

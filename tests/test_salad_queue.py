@@ -993,7 +993,7 @@ class LifecycleIdleTest(unittest.TestCase):
     def test_a_timeout_written_onto_the_queue_is_the_one_it_reads(self) -> None:
         """``idle_timeout_s()`` reads the queue's own ``_idle_stop_s``.
 
-        The window's tests hold the app's queue and set its timeout on the
+        The page's tests hold the app's queue and set its timeout on the
         object. A write to any other name is dead, and the shipped document's
         own hour is the same number the tests wrote, so a dead write looks
         right until the document says otherwise.
@@ -1009,7 +1009,7 @@ class LifecycleIdleTest(unittest.TestCase):
             gate.t += 46
             self.assertEqual(line.idle_check(), [], "an hour has not passed")
 
-        # The name the window's tests used before this pass: read by nothing.
+        # The attribute name an earlier pass used: read by nothing.
         other = _FakeLifecycle({"klein": True})
         with TemporaryDirectory() as td:
             path = Path(td) / "studio-metadata.json"
@@ -1273,7 +1273,7 @@ class OwnershipProvenanceTest(unittest.TestCase):
         self._old_record(clock[0] - 10 * 3600)  # hours old: idle by any clock
         life = _FakeLifecycle({"klein": True})
         line = self._queue(life, clock)
-        # The window's startup: the status probe finds that group running.
+        # At server startup: the status probe finds that group running.
         self.assertFalse(line.refresh("klein", self.GW), "the probe cannot own it")
         self.assertEqual(line.idle_check(), [], "nothing is due for a stop")
         self.assertEqual(line.containers(), {}, "the app owns nothing here")
@@ -1339,7 +1339,7 @@ class OwnershipProvenanceTest(unittest.TestCase):
         self.assertEqual(
             second.idle_check(),
             ["klein"],
-            "the fresh window stops exactly the one the app started",
+            "a fresh server stops exactly the one the app started",
         )
         self.assertEqual(life.actions("stop"), [("stop", "klein", self.GW)])
 
@@ -1908,13 +1908,13 @@ class GeneratorThroughTheQueue(unittest.TestCase):
 
 
 class LockAndOrderDiscipline(unittest.TestCase):
-    """The queue's own locks stay out of Tk, and its order survives a retry."""
+    """The queue logs outside its condition lock, and its order survives a retry."""
 
     def test_the_queue_logs_outside_its_condition_lock(self) -> None:
-        """A log callback may marshal onto Tk, which can wait on this lock.
+        """A log callback can block on the log sink, so it must not run under the lock.
 
-        Calling it while ``_cond`` is held lets the main thread's queue refresh
-        deadlock the worker that holds the lock.
+        Calling it while ``_cond`` is held lets a queue refresh deadlock the
+        worker that holds the lock.
         """
         held: list[bool] = []
         line = q.SaladQueue(

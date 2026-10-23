@@ -61,7 +61,7 @@ const KNOBS: readonly { key: string; label: string }[] = [
         <app-field
           label="Civitai generation data (prompt + Steps / CFG, or Sampler / Seed / Model)"
           kind="textarea"
-          [rows]="6"
+          [rows]="4"
           [value]="boxes().meta"
           (changed)="type('meta', $event)"
         />
@@ -69,7 +69,7 @@ const KNOBS: readonly { key: string; label: string }[] = [
           <app-field
             label="Comfy workflow JSON (a paste is held in memory)"
             kind="textarea"
-            [rows]="6"
+            [rows]="4"
             [value]="boxes().workflow"
             [readonly]="true"
             [hint]="'Clear Import drops the paste.'"
@@ -78,7 +78,7 @@ const KNOBS: readonly { key: string; label: string }[] = [
           <app-field
             label="Comfy workflow JSON (a paste is held in memory)"
             kind="textarea"
-            [rows]="8"
+            [rows]="5"
             [value]="boxes().workflow"
             (changed)="type('workflow', $event)"
           />
@@ -113,7 +113,7 @@ const KNOBS: readonly { key: string; label: string }[] = [
   `,
   styles: `
     :host { display: block; height: 100%; }
-    .scroll { display: flex; flex-direction: column; gap: 10px; height: 100%; min-height: 0; padding-top: 12px; overflow: auto; }
+    .scroll { display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; padding-top: 12px; overflow: auto; }
     /* A field in a column takes the column's width; the shared control is
        sized for a row, where its width is set by the page. */
     .scroll > app-field { display: block; width: 100%; }
@@ -122,7 +122,7 @@ const KNOBS: readonly { key: string; label: string }[] = [
     .knobs { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
     .issues { display: grid; gap: 6px; }
     .issues h2 { margin: 0; }
-    .readout { min-height: 90px; max-height: 260px; }
+    .readout { min-height: 48px; max-height: 260px; }
   `,
 })
 export class ImportPage {

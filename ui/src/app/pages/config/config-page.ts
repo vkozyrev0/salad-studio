@@ -152,7 +152,7 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
                   </div>
                   <div class="btn-row">
                     <button class="btn ghost" type="button" [disabled]="busy('add_profile')" (click)="profileAct('add_profile')">Add profile</button>
-                    <button class="btn key" type="button" [disabled]="busy('save_profile')" (click)="profileAct('save_profile')">
+                    <button class="btn primary" type="button" [disabled]="busy('save_profile')" (click)="profileAct('save_profile')">
                       @if (busy('save_profile')) { <span class="spinner" aria-hidden="true"></span> }
                       Save profile
                     </button>
@@ -221,6 +221,10 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
                 <dl class="stats">
                   <div><dt>Mode</dt><dd>{{ modeLabel() }}</dd></div>
                   <div><dt>Checkpoints</dt><dd>{{ profile().checkpoints?.length ?? 0 }}</dd></div>
+                  <div class="wide">
+                    <dt>Gateway</dt>
+                    <dd class="url" [attr.title]="gateway() || 'No gateway set'">{{ gateway() || 'No gateway set' }}</dd>
+                  </div>
                 </dl>
               </aside>
             </div>
@@ -261,7 +265,7 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
                   <app-field label="value" [value]="envValue()" [w]="320" kind="password" [mono]="true" (changed)="envValue.set($event)" />
                   <button class="btn ghost" type="button" [disabled]="busy('add_env')" (click)="set({ name: envName(), value: envValue() }, 'add_env')">Add env</button>
                   <button class="btn ghost" type="button" [disabled]="busy('remove_env')" (click)="set({ name: envName() }, 'remove_env')">Remove selected</button>
-                  <button class="btn key" type="button" [disabled]="busy('save_env')" (click)="set({}, 'save_env')">Save environment</button>
+                  <button class="btn primary" type="button" [disabled]="busy('save_env')" (click)="set({}, 'save_env')">Save environment</button>
                 </div>
               </div>
 
@@ -331,7 +335,7 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
                   @if (busy('load_policy')) { <span class="spinner" aria-hidden="true"></span> }
                   Load from Salad
                 </button>
-                <button class="btn key" type="button" [disabled]="busy('apply_policy')" (click)="set({}, 'apply_policy')">
+                <button class="btn primary" type="button" [disabled]="busy('apply_policy')" (click)="set({}, 'apply_policy')">
                   @if (busy('apply_policy')) { <span class="spinner" aria-hidden="true"></span> }
                   Apply to Salad
                 </button>
@@ -361,7 +365,7 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
                   <button class="btn ghost" type="button" [disabled]="!instanceKey()" (click)="vastAct('set_vast_image')">Set image</button>
                   <button class="btn ghost" type="button" [disabled]="!instanceKey()" (click)="vastAct('make_profile_for_vast')">New profile for instance</button>
                   <button class="btn danger" type="button" [disabled]="!instanceKey()" (click)="vastAct('remove_vast')">Remove</button>
-                  <button class="btn key" type="button" [disabled]="busy('save_vast')" (click)="vastAct('save_vast')">Save list</button>
+                  <button class="btn primary" type="button" [disabled]="busy('save_vast')" (click)="vastAct('save_vast')">Save list</button>
                 </div>
               </div>
 
@@ -414,11 +418,13 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
     .rows { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
     .rows.url { margin-top: 14px; }
     .push { margin-left: auto; }
-    .aside { padding: 16px; border: 1px solid var(--rule); border-radius: var(--radius-card); background: var(--surface); }
-    .aside .name { margin: 10px 0 0; font-family: var(--font-display); font-size: 20px; overflow-wrap: anywhere; }
+    .aside { position: sticky; top: 0; padding: 16px; border: 1px solid var(--rule); border-radius: var(--radius-card); background: var(--surface); }
+    .aside .name { margin: 10px 0 0; font-family: var(--font-display); font-size: 21px; overflow-wrap: anywhere; }
     .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--hairline); }
-    .stats dt { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--fg-muted); }
+    .stats .wide { grid-column: 1 / -1; min-width: 0; }
+    .stats dt { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.11em; text-transform: uppercase; color: var(--fg-muted); }
     .stats dd { margin: 2px 0 0; font-family: var(--font-mono); font-size: 11.5px; }
+    .stats .url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
     .env-row { display: flex; align-items: baseline; gap: 10px; padding: 6px 8px; border-bottom: 1px solid var(--hairline); }
     .own { margin-top: 14px; }
     .own summary { cursor: pointer; }
@@ -462,7 +468,7 @@ export class ConfigPage {
     return PROBE_WIDTHS[key];
   }
 
-  /** The open tab is the page's, as the Flet switch was; the reply's section is the start. */
+  /** The open tab is the page's; the reply's section is the start. */
   protected readonly section = signal<string>('profile');
 
   /** The Profile section's typed fields, until a reply replaces the form. */

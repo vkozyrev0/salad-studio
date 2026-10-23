@@ -263,11 +263,3 @@ def probe_token(
     if status == 0:
         return {"kind": kind, "state": UNKNOWN, "detail": "no response"}
     return {"kind": kind, "state": UNKNOWN, "detail": f"HTTP {status}"}
-
-def state_color(state: str) -> str:
-    """Palette key for an indicator dot. Kept here so the widget only renders."""
-    if state == VALID:
-        return "valid"
-    if state == INVALID:
-        return "invalid"
-    return "unknown"

@@ -1,9 +1,8 @@
 """What the pages share: the queue, the log, the two timers, the plates.
 
-The Flet app's ``AppServices`` ran on the window's event loop. This one runs on
-the core thread: a worker's result comes back through ``core.background``,
-which hands it to ``done`` on that thread, so a handler never sees a half
-written counter.
+The services run on the core thread: a worker's result comes back through
+``core.background``, which hands it to ``done`` on that thread, so a handler
+never sees a half-written counter.
 
 Every line the studio logs is published as one ``log`` event, already masked,
 and the container's own log is announced by version so the Logs page fetches
@@ -337,7 +336,3 @@ def _status_word(snaps: dict[str, Any]) -> str:
         if any(w.startswith(wanted) for w in words):
             return wanted
     return words[0] if words else ""
-
-
-def level_color(level: str) -> str:
-    return studio_log.LEVEL_COLORS.get(level, studio_log.LEVEL_COLORS["info"])

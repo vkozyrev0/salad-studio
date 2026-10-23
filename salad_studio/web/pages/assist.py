@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import ai_helper  # noqa: E402  top-level, as the Flet page imported it
+import ai_helper  # noqa: E402  top-level: the controller and the tests share one module object
 from salad_studio import generator, ref_check
 
 LOCAL_DEFAULT = ai_helper.LOCAL_BASE_URL

@@ -489,8 +489,8 @@ class WatercolorConvert(unittest.TestCase):
         # Klein-native stack: request_json.wire_clip_encodes puts both CLIP
         # encodes on the LAST Klein-native LoraLoader (the "encode after the
         # last LoRA" half of the rule), not on the CLIPLoader. Basis: the live
-        # Import -> Convert -> Generate run in the audit report §5 reproduced
-        # the Civitai Draw Things image this way.
+        # Import -> Convert -> Generate run reproduced the Civitai Draw Things
+        # image this way.
         self.assertEqual(prompt["74"]["inputs"]["clip"], [str(last_id), 1])
         self.assertEqual(prompt["67"]["inputs"]["clip"], [str(last_id), 1])
         self.assertEqual(prompt["71"]["class_type"], "CLIPLoader")

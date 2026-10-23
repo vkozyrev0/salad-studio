@@ -1,8 +1,8 @@
 """The shell: which page is open, the status line, and the two notes that report.
 
-The window state the Flet app kept on ``Window`` now lives in ``Shell``, on
-the core thread. These tests drive it directly, with the stores pointed at a
-temporary directory, so the suite never reads or writes the user's profiles.
+The shell state lives in ``Shell``, on the core thread. These tests drive it
+directly, with the stores pointed at a temporary directory, so the suite never
+reads or writes the user's profiles.
 """
 from __future__ import annotations
 

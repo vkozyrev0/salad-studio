@@ -1,86 +1,116 @@
-"""The palette, the role maps built from it, and the page's own stylesheet.
+"""The Angular page's palette, read from the stylesheet it ships.
 
-Nothing here starts a window or a browser. The palette is held to the WCAG bar
-on every pair the app draws, the two role maps are held to the same bar, and
-``ui/src/styles.css`` must spend the palette rather than inventing a colour the
-theme cannot change.
+Nothing here starts a browser or imports a UI toolkit. The page owns its
+tokens in ``ui/src/styles.css``; this module reads that block, holds every
+text pair the page draws to the WCAG bar, and checks that the AG Grid theme
+does not invent a colour the page cannot repaint.
 """
 from __future__ import annotations
 
 import re
-import sys
 import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from salad_studio import theme  # noqa: E402
-from salad_studio.theme import (  # noqa: E402
-    CONTRAST_MIN,
-    FONT_HEAD,
-    FONT_MONO,
-    FONT_MONO_SMALL,
-    FONT_TITLE,
-    FONT_UI,
-    FONT_UI_BOLD,
-    PALETTE,
-    SPACE,
-    TEXT_PAIRS,
-    contrast,
-)
+CSS = ROOT / "ui" / "src" / "styles.css"
+GRID_THEME = ROOT / "ui" / "src" / "app" / "core" / "studio-grid-theme.ts"
 
 HEX = re.compile(r"#[0-9A-Fa-f]{6}")
+TOKEN = re.compile(r"--([a-z0-9-]+):\s*(#[0-9A-Fa-f]{6});")
+
+# WCAG AA for normal-size text.
+CONTRAST_MIN = 4.5
+
+# Every pair here is text drawn on that background in the shipped page: body
+# and muted ink on each surface it appears on, the rose as a label and as a
+# fill, the plate caption, and the two state colours on their wells.
+TEXT_PAIRS: tuple[tuple[str, str], ...] = (
+    ("fg", "bg"),
+    ("fg", "surface-hi"),
+    ("fg", "well"),
+    ("fg", "select-bg"),
+    ("fg-muted", "bg"),
+    ("fg-muted", "surface"),
+    ("fg-muted", "surface-hi"),
+    ("fg-muted", "well"),
+    ("fg-muted", "ground"),
+    ("fg", "select-tint"),
+    ("fg-muted", "select-tint"),
+    ("accent", "bg"),
+    ("accent", "surface"),
+    ("accent-hi", "surface-hi"),
+    ("accent-fg", "accent"),
+    ("accent-fg", "accent-hi"),
+    ("button-fg", "button"),
+    ("valid", "well"),
+    ("invalid", "well"),
+)
+
+LOAD_BEARING = (
+    "bg", "surface", "surface-hi", "well", "fg", "fg-muted", "accent",
+    "accent-hi", "accent-fg", "valid", "invalid", "warn", "info", "rule",
+    "hairline", "field",
+)
+
+
+def stylesheet() -> str:
+    return CSS.read_text(encoding="utf-8")
+
+
+def token_block(css: str | None = None) -> str:
+    """The ``:root { … }`` block, which is the only place a colour may live."""
+    text = stylesheet() if css is None else css
+    start = text.index(":root {")
+    return text[start : text.index("}", start) + 1]
+
+
+def tokens(css: str | None = None) -> dict[str, str]:
+    return {name: value.lower() for name, value in TOKEN.findall(token_block(css))}
+
+
+def luminance(hex_color: str) -> float:
+    """WCAG relative luminance of ``#rrggbb``."""
+    h = hex_color.lstrip("#")
+    channels = [int(h[i : i + 2], 16) / 255 for i in (0, 2, 4)]
+    linear = [
+        c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels
+    ]
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+def contrast(a: str, b: str) -> float:
+    """WCAG contrast ratio between two ``#rrggbb`` colours, 1.0 to 21.0."""
+    hi, lo = sorted((luminance(a), luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
 
 
 class Palette(unittest.TestCase):
     def test_every_drawn_text_pair_clears_wcag_aa(self) -> None:
+        colors = tokens()
         for fg, bg in TEXT_PAIRS:
             with self.subTest(text=fg, on=bg):
-                ratio = contrast(PALETTE[fg], PALETTE[bg])
+                ratio = contrast(colors[fg], colors[bg])
                 self.assertGreaterEqual(ratio, CONTRAST_MIN, f"{fg} on {bg} reads at {ratio:.2f}:1")
 
-    def test_the_type_scale_is_segoe_ui_and_consolas(self) -> None:
-        self.assertEqual(FONT_UI, ("Segoe UI", 10))
-        self.assertEqual(FONT_UI_BOLD, ("Segoe UI Semibold", 10))
-        self.assertEqual(FONT_TITLE, ("Segoe UI Semibold", 12))
-        self.assertEqual(FONT_HEAD, ("Segoe UI Semibold", 9))
-        self.assertEqual(FONT_MONO, ("Consolas", 10))
-        self.assertEqual(FONT_MONO_SMALL, ("Consolas", 9))
+    def test_the_page_declares_every_token_it_spends(self) -> None:
+        colors = tokens()
+        for name in LOAD_BEARING:
+            with self.subTest(token=name):
+                self.assertIn(name, colors, f"--{name} is missing from the :root block")
 
-    def test_spacing_scale_has_four_steps(self) -> None:
-        self.assertEqual(SPACE, {"xs": 4, "sm": 8, "md": 12, "lg": 16})
+    def test_no_colour_literal_lives_outside_the_token_block(self) -> None:
+        """A hex outside ``:root`` is a colour the palette cannot repaint."""
+        css = stylesheet()
+        outside = css.replace(token_block(css), "")
+        self.assertEqual(HEX.findall(outside), [])
 
-
-class RoleMaps(unittest.TestCase):
-    def test_no_text_role_falls_below_the_contrast_bar(self) -> None:
-        self.assertEqual(theme.check_contrast(), [])
-
-    def test_both_maps_share_the_palette(self) -> None:
-        self.assertEqual(theme.DARK["surface"], PALETTE["bg"])
-        self.assertEqual(theme.DARK["primary"], PALETTE["accent"])
-        self.assertEqual(theme.DARK["on_surface"], PALETTE["fg"])
-        self.assertNotEqual(theme.LIGHT["surface"], theme.DARK["surface"])
-
-    def test_a_role_map_reads_the_palette_by_name(self) -> None:
-        for dark in (True, False):
-            colors, roles = theme.canvas_colors(dark), theme.DARK if dark else theme.LIGHT
-            with self.subTest(dark=dark):
-                self.assertEqual(colors["on_surface"], roles["on_surface"])
-                self.assertEqual(colors["muted"], roles["on_surface_variant"])
-                self.assertEqual(colors["error"], roles["error"])
-                self.assertEqual(colors["accent"], PALETTE["accent"])
-
-    def test_the_stylesheet_spends_the_palette(self) -> None:
-        """A hex in the page is a colour the theme cannot change."""
-        css = (ROOT / "ui" / "src" / "styles.css").read_text(encoding="utf-8")
-        root_block = css[css.index(":root {"):css.index("}", css.index(":root {"))]
-        declared = set(HEX.findall(root_block))
-        for value in (PALETTE["bg"], PALETTE["accent"], PALETTE["fg"], PALETTE["surface"]):
-            self.assertIn(value.upper(), {v.upper() for v in declared},
-                          f"{value} is not one of the page's own tokens")
+    def test_the_grid_theme_spends_the_page_tokens(self) -> None:
+        """AG Grid's theme is a copy; a copy must not introduce a new colour."""
+        declared = set(tokens().values())
+        for value in HEX.findall(GRID_THEME.read_text(encoding="utf-8")):
+            with self.subTest(value=value):
+                self.assertIn(value.lower(), declared)
 
 
 if __name__ == "__main__":

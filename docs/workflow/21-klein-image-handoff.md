@@ -229,7 +229,6 @@ never committed.
 | --- | --- |
 | `salad_klein/prompt_ledger.json` / `prompt_catalog.json` / `prompt_snofs_distilled_v12.json` / `prompt_snofs_distilled_anatomy*.json` | **canonical** prompt text + human verdicts (append, never overwrite); the catalog of successful prompts (§1), machine-checked against the recipes; the verified recipe; the superseded 4-LoRA research stack |
 | `tests/test_klein_prompt_catalog.py` / `tests/test_klein_recipes.py` | the catalog drift / well-formedness check; the verified operating point |
-| `docs/history/58-salad-studio-audit-2026-09-22.md` | the Studio audit at the time this was written |
 | `~/.config/salad/studio-profiles.json` | profiles (gateways, unet per group), not git |
 | `~/.config/salad/gateway-klein`, `gateway-klein-5090` | gateway URLs, not git |
 | `salad_studio/studio-tokens.json` | provider keys, incl. Civitai, not git (`.gitignore:2`) |

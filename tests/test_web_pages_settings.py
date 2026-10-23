@@ -1,6 +1,6 @@
 """Prompt Settings on the web: the knobs, the graph's LoRAs, and the checkpoint order.
 
-The knobs are text in the window's form until a save turns them into the
+The knobs are text in the server's form until a save turns them into the
 profile; a bad one is refused by name and nothing is written.
 """
 from __future__ import annotations

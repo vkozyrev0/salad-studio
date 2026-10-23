@@ -1,7 +1,7 @@
 """Headless Civitai image URL → Salad Studio import → replica POST, with a journal.
 
 Used by the /civitai-verify skill. Reuses the same list/import/convert/inspect/
-Generate functions Salad Studio uses; does not open the Tk GUI.
+Generate functions Salad Studio uses; does not start the server or open the page.
 """
 from __future__ import annotations
 

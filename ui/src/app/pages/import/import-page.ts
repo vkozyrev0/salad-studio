@@ -61,7 +61,7 @@ const KNOBS: readonly { key: string; label: string }[] = [
         <app-field
           label="Civitai generation data (prompt + Steps / CFG, or Sampler / Seed / Model)"
           kind="textarea"
-          [rows]="6"
+          [rows]="4"
           [value]="boxes().meta"
           (changed)="type('meta', $event)"
         />
@@ -69,7 +69,7 @@ const KNOBS: readonly { key: string; label: string }[] = [
           <app-field
             label="Comfy workflow JSON (a paste is held in memory)"
             kind="textarea"
-            [rows]="6"
+            [rows]="4"
             [value]="boxes().workflow"
             [readonly]="true"
             [hint]="'Clear Import drops the paste.'"
@@ -78,7 +78,7 @@ const KNOBS: readonly { key: string; label: string }[] = [
           <app-field
             label="Comfy workflow JSON (a paste is held in memory)"
             kind="textarea"
-            [rows]="8"
+            [rows]="5"
             [value]="boxes().workflow"
             (changed)="type('workflow', $event)"
           />
@@ -94,7 +94,7 @@ const KNOBS: readonly { key: string; label: string }[] = [
 
         <section class="issues" aria-labelledby="issues-head">
           <h2 class="eyebrow" id="issues-head">Salad replica issues</h2>
-          <pre class="readout" tabindex="0">{{ issuesText() }}</pre>
+          <pre class="readout" tabindex="0">{{ issuesText() || 'No paste checked yet. Paste Civitai data or a Comfy workflow above.' }}</pre>
         </section>
 
         <div class="btn-row">
@@ -113,7 +113,7 @@ const KNOBS: readonly { key: string; label: string }[] = [
   `,
   styles: `
     :host { display: block; height: 100%; }
-    .scroll { display: flex; flex-direction: column; gap: 10px; height: 100%; min-height: 0; padding-top: 12px; overflow: auto; }
+    .scroll { display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; padding-top: 12px; overflow: auto; }
     /* A field in a column takes the column's width; the shared control is
        sized for a row, where its width is set by the page. */
     .scroll > app-field { display: block; width: 100%; }
@@ -122,7 +122,7 @@ const KNOBS: readonly { key: string; label: string }[] = [
     .knobs { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
     .issues { display: grid; gap: 6px; }
     .issues h2 { margin: 0; }
-    .readout { min-height: 90px; max-height: 260px; }
+    .readout { min-height: 48px; max-height: 260px; }
   `,
 })
 export class ImportPage {
@@ -166,8 +166,17 @@ export class ImportPage {
 
   constructor() {
     effect(() => {
-      this.store.page();
-      untracked(() => this.draft.set(null));
+      const state = this.state();
+      untracked(() => {
+        const draft = this.draft();
+        if (!draft) return;
+        const next = { ...draft } as Record<string, unknown>;
+        if (state?.stashed) delete next['workflow'];
+        for (const key of Object.keys(next)) {
+          if (this.serverValue(state, key) === String(next[key] ?? '')) delete next[key];
+        }
+        this.draft.set(Object.keys(next).length ? (next as Partial<ImportState>) : null);
+      });
     });
   }
 
@@ -175,6 +184,14 @@ export class ImportPage {
     const draft = this.draft() as Record<string, string> | null;
     if (draft && key in draft) return String(draft[key]);
     return this.state()?.knobs?.find((k) => k.key === key)?.value ?? '';
+  }
+
+  /** The server's value for one draft key, so a matched draft can be dropped. */
+  private serverValue(state: ImportState | null, key: string): string {
+    if (key === 'url' || key === 'meta' || key === 'workflow' || key === 'scheduler' || key === 'unet') {
+      return String(state?.[key] ?? '');
+    }
+    return String(state?.knobs?.find((k) => k.key === key)?.value ?? '');
   }
 
   protected readonly choices = computed(() => ({

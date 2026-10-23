@@ -5,7 +5,7 @@ prefetched files, then the filename family heuristic. A name the local sources
 miss gets one online Civitai lookup. A name that resolves nowhere is reported
 as ``unresolved`` rather than dropped, so the AI is told what is missing.
 
-Window-free: the Tk page only renders what this returns. The online lookup is
+UI-free: the page only renders what this returns. The online lookup is
 injectable so tests fake the network at the boundary.
 """
 from __future__ import annotations

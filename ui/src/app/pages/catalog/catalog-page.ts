@@ -1,9 +1,10 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, untracked } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { ColDef } from 'ag-grid-community';
 import { StudioStore } from '../../core/studio-store';
 import { PageFrame } from '../../shell/page-frame';
 import { Field } from '../../shared/field';
 import { DataGrid } from '../../shared/data-grid';
+import { graphSummary } from '../../shared/format';
 
 interface CatalogRow {
   id: string;
@@ -41,7 +42,10 @@ interface CatalogState {
           @if (rows().length || store.loading() || store.loadError()) {
             <app-data-grid [rows]="rows()" [columns]="columns" field="id" [selected]="selected()" (picked)="pick($event)" />
           } @else {
-            <p class="empty">{{ state()?.empty || 'No kept prompts yet. Give one a short name and copy it from the Prompt Editor.' }}</p>
+            <div class="empty-sheet">
+              <p class="empty-title">The shelf is empty</p>
+              <p class="empty-hint">{{ state()?.empty || 'No kept prompts yet. Give one a short name and copy it from the Prompt Editor.' }}</p>
+            </div>
           }
         </div>
 
@@ -56,7 +60,8 @@ interface CatalogState {
           <button class="btn ghost" type="button" [disabled]="!selected() || busy('update_json')" (click)="act('update_json')">
             Update JSON
           </button>
-          <button class="btn ghost" type="button" [disabled]="!selected() || busy('load')" (click)="act('load')">
+          <button class="btn primary" type="button" [disabled]="!selected() || busy('load')" (click)="act('load')">
+            @if (busy('load')) { <span class="spinner" aria-hidden="true"></span> }
             Load into Prompt Editor
           </button>
           <button class="btn danger" type="button" [disabled]="!selected()" (click)="act('delete')">Delete</button>
@@ -67,10 +72,9 @@ interface CatalogState {
   `,
   styles: `
     :host { display: block; height: 100%; }
-    .wrap { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; min-height: 0; }
+    .wrap { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; min-height: 0; }
     .meta { display: flex; flex-wrap: wrap; gap: 12px; padding: 12px 0; }
-    .table { min-height: 0; overflow: hidden; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
-    .empty { margin: 0; padding: 16px 2px; font-size: 12.5px; color: var(--fg-muted); }
+    .table { min-width: 0; width: 100%; max-width: 100%; min-height: 0; overflow: hidden; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
     .strip { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; padding-top: 12px; }
     .status { margin: 0 0 0 auto; font-size: 12px; color: var(--fg-muted); }
   `,
@@ -88,26 +92,27 @@ export class CatalogPage {
   protected readonly selected = computed(() => this.chosen());
 
   protected readonly columns: ColDef[] = [
-    { headerName: 'Added', colId: 'added', start: 150, valueGetter: (p) => cell(p.data, 0), valueFormatter: (p) => String(p.value ?? '') },
-    { headerName: 'Short name', colId: 'name', start: 160, valueGetter: (p) => cell(p.data, 1) },
-    { headerName: 'Description', colId: 'description', start: 200, valueGetter: (p) => cell(p.data, 2), tooltipField: 'description' },
-    { headerName: 'Prompt', colId: 'prompt', tooltipValueGetter: (p) => cell(p.data, 3), valueGetter: (p) => cell(p.data, 3) },
-    { headerName: 'Graph', colId: 'graph', start: 200, valueGetter: (p) => cell(p.data, 4) },
+    { headerName: 'Added', colId: 'added', start: 110, valueGetter: (p) => cell(p.data, 0), valueFormatter: (p) => String(p.value ?? '') },
+    { headerName: 'Short name', colId: 'name', start: 120, valueGetter: (p) => cell(p.data, 1), tooltipValueGetter: (p) => cell(p.data, 1) },
+    {
+      headerName: 'Description',
+      colId: 'description',
+      start: 140,
+      valueGetter: (p) => cell(p.data, 2),
+      tooltipValueGetter: (p) => cell(p.data, 2),
+    },
+    { headerName: 'Prompt', colId: 'prompt', flex: 1, minWidth: 160, tooltipValueGetter: (p) => cell(p.data, 3), valueGetter: (p) => cell(p.data, 3) },
+    {
+      headerName: 'Graph',
+      colId: 'graph',
+      start: 210,
+      flex: 0,
+      valueGetter: (p) => cell(p.data, 4),
+      valueFormatter: (p) => graphSummary(p.value),
+      tooltipValueGetter: (p) => cell(p.data, 4),
+      cellStyle: { 'font-family': 'var(--font-mono)', 'font-size': '11.5px', color: 'var(--fg-muted)' },
+    },
   ];
-
-  constructor() {
-    // A new pick, or a row that came back changed, fills the fields. Untouched
-    // fields are never overwritten, so typing survives an event-driven reply.
-    effect(() => {
-      const id = this.selected();
-      const row = this.rows().find((r) => r.id === id);
-      if (!row) return;
-      untracked(() => {
-        this.name.set(row.name ?? '');
-        this.description.set(row.description ?? '');
-      });
-    });
-  }
 
   protected busy(action: string): boolean {
     return this.store.inFlight().has(`catalog.${action}`);

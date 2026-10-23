@@ -3,7 +3,7 @@ import { ColDef } from 'ag-grid-community';
 import { StudioStore } from '../../core/studio-store';
 import { PageFrame } from '../../shell/page-frame';
 import { DataGrid } from '../../shared/data-grid';
-import { clock } from '../../shared/format';
+import { clock, escapeHtml, graphSummary } from '../../shared/format';
 
 interface HistoryRow {
   id: string;
@@ -24,9 +24,10 @@ interface HistoryState {
 /**
  * Prompt History: every request, its prompt, its graph and its rating.
  *
- * The graph cell is the request's stats, cut at 48 characters as the Flet
- * table cut it, with the whole line as its tooltip. A rating is stars, and a
- * rating that is not there reads as a dash rather than as an empty cell.
+ * The graph cell is the request's shape — nodes, LoRAs and size — with the
+ * whole line as its tooltip; the model ids are left to the tooltip because the
+ * column has no room for them. A rating is stars, and a rating that is not
+ * there reads as a dash rather than as an empty cell.
  */
 @Component({
   selector: 'app-history-page',
@@ -44,7 +45,10 @@ interface HistoryState {
           @if (rows().length || store.loading() || store.loadError()) {
             <app-data-grid [rows]="rows()" [columns]="columns" field="id" [selected]="selected()" (picked)="pick($event)" />
           } @else {
-            <p class="empty">{{ state()?.empty_text || 'No prompts yet. Every Generate stores its request here.' }}</p>
+            <div class="empty-sheet">
+              <p class="empty-title">The reel is empty</p>
+              <p class="empty-hint">{{ state()?.empty_text || 'No prompts yet. Every Generate stores its request here.' }}</p>
+            </div>
           }
         </div>
 
@@ -71,7 +75,7 @@ interface HistoryState {
           </div>
 
           <div class="btn-row">
-            <button class="btn ghost" type="button" [disabled]="!chosen() || busy('reuse')" (click)="act('reuse')">
+            <button class="btn primary" type="button" [disabled]="!chosen() || busy('reuse')" (click)="act('reuse')">
               @if (busy('reuse')) { <span class="spinner" aria-hidden="true"></span> }
               Reuse
             </button>
@@ -85,21 +89,20 @@ interface HistoryState {
   `,
   styles: `
     :host { display: block; height: 100%; }
-    .wrap { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; min-height: 0; }
+    .wrap { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; min-height: 0; }
     .meta {
       display: flex;
       align-items: baseline;
       justify-content: space-between;
       padding: 13px 0 8px;
       font-family: var(--font-mono);
-      font-size: 9px;
-      letter-spacing: 0.1em;
+      font-size: 10px;
+      letter-spacing: 0.09em;
       text-transform: uppercase;
       color: var(--fg-muted);
     }
     .meta b { font-weight: 500; color: var(--fg); }
-    .table { min-height: 0; overflow: hidden; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
-    .empty { margin: 0; padding: 16px 2px; font-size: 12.5px; color: var(--fg-muted); }
+    .table { min-width: 0; width: 100%; max-width: 100%; min-height: 0; overflow: hidden; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
     .foot { display: flex; align-items: center; gap: 20px; min-height: 58px; padding-top: 8px; }
     .selection { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex: 1; }
     .selection-meta {
@@ -119,7 +122,7 @@ interface HistoryState {
       border: 0;
       border-radius: 2px;
       background: none;
-      color: var(--rule);
+      color: var(--fg-muted);
       font-family: 'Segoe UI Symbol', var(--font-ui);
       font-size: 15px;
       line-height: 1;
@@ -128,6 +131,7 @@ interface HistoryState {
     .star:hover:not(:disabled) { color: var(--fg); background: var(--wash); }
     .star.on { color: var(--accent); }
     .star:disabled { opacity: 0.35; cursor: default; }
+    :host ::ng-deep .plate-cell { display: flex; align-items: center; justify-content: center; padding: 0; }
     @media (max-width: 900px) {
       .foot { flex-wrap: wrap; gap: 10px; }
       .selection { flex-basis: 100%; }
@@ -151,16 +155,16 @@ export class HistoryPage {
    * ellipsis while the prompt takes all the slack.
    */
   protected readonly columns: ColDef[] = [
-    { headerName: 'When', field: 'ts', start: 78, flex: 0, valueFormatter: (p) => clock(p.value) },
-    { headerName: 'Prompt', field: 'prompt', flex: 3, minWidth: 240, tooltipField: 'prompt', cellStyle: { 'white-space': 'normal', 'line-height': '1.35' } },
+    { headerName: 'When', field: 'ts', start: 82, flex: 0, valueFormatter: (p) => clock(p.value) },
+    { headerName: 'Prompt', field: 'prompt', flex: 3, minWidth: 240, tooltipField: 'prompt' },
     {
       headerName: 'Graph',
       field: 'graph',
       start: 250,
       flex: 0,
       tooltipField: 'graph',
-      valueFormatter: (p) => String(p.value ?? '').replace(/\s+/g, ' ').slice(0, 48),
-      cellStyle: { 'font-size': '11px', color: 'var(--fg-muted)' },
+      valueFormatter: (p) => graphSummary(String(p.value ?? '')),
+      cellStyle: { 'font-family': 'var(--font-mono)', 'font-size': '11.5px', color: 'var(--fg-muted)' },
     },
     {
       headerName: 'Rating',
@@ -173,11 +177,14 @@ export class HistoryPage {
     {
       headerName: 'Plate',
       field: 'image',
-      start: 62,
+      start: 74,
       flex: 0,
+      sortable: false,
+      filter: false,
+      cellClass: 'plate-cell',
       cellRenderer: (p: { value?: string }) =>
         p.value
-          ? `<span class="print small" style="width:36px;height:36px;display:inline-block"><img src="${p.value}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover"></span>`
+          ? `<span class="print small" style="width:36px;height:36px;display:inline-block"><img src="${escapeHtml(p.value)}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover"></span>`
           : '',
     },
   ];

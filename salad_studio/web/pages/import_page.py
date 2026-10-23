@@ -25,8 +25,8 @@ EMPTY_REFUSAL = ("Nothing to fill. Paste a Comfy workflow JSON and/or Civitai ge
                  "(prompt + Steps/CFG, or Sampler/Seed/Model).")
 NOTHING_TO_CONVERT = ("Nothing to convert. Paste a Comfy workflow JSON and/or Civitai generation "
                       "data (prompt + Steps/CFG, or Sampler/Seed/Model).")
-# Past this, the box shows a summary and the controller keeps the text, as the
-# Flet page did, so a multi-megabyte graph does not crawl the field.
+# Past this, the box shows a summary and the controller keeps the text, so a
+# multi-megabyte graph does not crawl the field.
 STASH_CHARS = 20000
 STASH_SUMMARY = "[Comfy workflow JSON in memory, {n:,} characters]\n{scheduler}"
 STASH_NOTE = "Not shown in this box so the UI stays fast. Convert uses this paste.\nClear Import to drop it."
@@ -208,7 +208,7 @@ class ImportController:
                 "unet": unet, "only_empty": only_empty}
 
     def _take_fill(self, filled: dict[str, Any]) -> None:
-        """A refused fill keeps the issues it found, as the Flet page did."""
+        """A refused fill keeps the issues it found, rather than clearing them."""
         if "error" in filled:
             self.issues, self.notes, self.inspected = [f"Could not parse paste: {filled['error']}"], [], True
             return

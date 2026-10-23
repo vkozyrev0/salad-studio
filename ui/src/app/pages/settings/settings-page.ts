@@ -24,17 +24,17 @@ interface SettingsState {
 }
 
 const KNOBS: readonly { key: Knob; label: string; w: number }[] = [
-  { key: 'width', label: 'Width', w: 120 },
-  { key: 'height', label: 'Height', w: 120 },
-  { key: 'steps', label: 'Steps', w: 120 },
-  { key: 'cfg', label: 'CFG', w: 120 },
-  { key: 'seed', label: 'Seed', w: 160 },
+  { key: 'width', label: 'Width', w: 0 },
+  { key: 'height', label: 'Height', w: 0 },
+  { key: 'steps', label: 'Steps', w: 0 },
+  { key: 'cfg', label: 'CFG', w: 0 },
+  { key: 'seed', label: 'Seed', w: 0 },
 ];
 
 /**
  * Prompt Settings: the knobs a request carries, and the LoRAs it selects.
  *
- * Every change writes the window's form at once, so the editor and Generate
+ * Every change writes the server's form at once, so the editor and Generate
  * read what is on screen. A box keeps what was typed while the next reply is
  * in flight and takes the reply's value once it lands.
  */
@@ -48,6 +48,7 @@ const KNOBS: readonly { key: Knob; label: string; w: number }[] = [
         <div class="knobs">
           @for (knob of knobs; track knob.key) {
             <app-field
+              [class.wide]="knob.key === 'seed'"
               [label]="knob.label"
               [value]="knobValue(knob.key)"
               [w]="knob.w"
@@ -55,9 +56,9 @@ const KNOBS: readonly { key: Knob; label: string; w: number }[] = [
               (changed)="setKnob(knob.key, $event)"
             />
           }
-          <app-field label="Graph" kind="select" [value]="state()?.graph ?? ''" [options]="graphs()" [w]="220" (changed)="set({ graph: $event })" />
-          <app-field label="Scheduler" [id]="'settings-scheduler'" kind="select" [value]="state()?.scheduler ?? 'Flux2 (Klein)'" [options]="schedulers()" [w]="220" (changed)="set({ scheduler: $event })" />
-          <app-field label="Checkpoint" [id]="'settings-checkpoint'" kind="select" [value]="state()?.checkpoint ?? ''" [options]="checkpoints()" [w]="220" (changed)="set({ checkpoint: $event }, 'select_checkpoint')" />
+          <app-field class="wide" label="Graph" kind="select" [value]="state()?.graph ?? ''" [options]="graphs()" [w]="0" (changed)="set({ graph: $event })" />
+          <app-field class="wide" label="Scheduler" [id]="'settings-scheduler'" kind="select" [value]="state()?.scheduler ?? 'Flux2 (Klein)'" [options]="schedulers()" [w]="0" (changed)="set({ scheduler: $event })" />
+          <app-field class="wide" label="Checkpoint" [id]="'settings-checkpoint'" kind="select" [value]="state()?.checkpoint ?? ''" [options]="checkpoints()" [w]="0" (changed)="set({ checkpoint: $event }, 'select_checkpoint')" />
 
           <div class="save">
             <button class="btn primary" type="button" [disabled]="busy('save')" (click)="set({}, 'save')">
@@ -68,16 +69,23 @@ const KNOBS: readonly { key: Knob; label: string; w: number }[] = [
         </div>
 
         <section class="loras" aria-labelledby="loras-head">
-          <h2 class="eyebrow" id="loras-head">LoRAs</h2>
+          <div class="lora-head">
+            <h2 class="eyebrow" id="loras-head">LoRAs</h2>
+            <span class="section-meta">{{ onCount() }} of {{ loras().length }} on</span>
+          </div>
           @if (loras().length) {
+            <app-field class="filter" label="Find a LoRA" [value]="query()" [w]="380" placeholder="part of a name" (changed)="query.set($event)" />
             <div class="choices">
-              @for (lora of loras(); track lora.id) {
+              @for (lora of shownLoras(); track lora.id) {
                 <label class="check">
                   <input type="checkbox" [checked]="lora.selected" (change)="toggle(lora, $event)" />
                   <span>{{ lora.label }}</span>
                 </label>
               }
             </div>
+            @if (!shownLoras().length) {
+              <p class="hint">No LoRA matches “{{ query() }}”.</p>
+            }
           } @else {
             <p class="hint">No LoRAs for this graph.</p>
           }
@@ -87,19 +95,34 @@ const KNOBS: readonly { key: Knob; label: string; w: number }[] = [
   `,
   styles: `
     :host { display: block; height: 100%; }
-    .split { display: grid; grid-template-columns: 248px minmax(0, 1fr); gap: 32px; height: 100%; min-height: 0; padding-top: 14px; }
-    /* Only the knobs column scrolls, and its own scrollbar sits outside the
-       fields so a 220px field is not narrowed by it. */
-    .knobs { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow-y: auto; overflow-x: hidden; padding-right: 12px; }
-    .save { margin-top: 6px; }
+    /* Knobs are a two-column sheet so Save stays above the fold; the selects
+       and the seed take the full width, which is what their values need. */
+    .split { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 32px; height: 100%; min-height: 0; padding-top: 14px; }
+    .knobs {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      align-content: start;
+      gap: 10px 12px;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding-right: 12px;
+    }
+    .knobs .wide { grid-column: 1 / -1; }
+    .save { grid-column: 1 / -1; margin-top: 6px; }
     .loras { min-height: 0; overflow-y: auto; overflow-x: hidden; padding-right: 12px; border-left: 1px solid var(--hairline); }
-    .loras h2 { margin: 0 0 12px; }
-    .choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 6px 20px; align-content: start; }
+    .lora-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .lora-head h2 { margin: 0; }
+    .filter { margin-bottom: 12px; }
+    .choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 2px 24px; align-content: start; }
+    .choices .check { align-items: flex-start; gap: 8px; padding: 5px 0; line-height: 1.3; }
+    .choices .check input { flex: none; margin-top: 1px; }
     /* Below this width the LoRA list would end up narrower than a name, so the
        two columns stack and each scrolls inside the pane. */
     @media (max-width: 1040px) {
       .split { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 16px; overflow-y: auto; }
-      .knobs { overflow: visible; flex-direction: row; flex-wrap: wrap; align-items: flex-end; }
+      .knobs { overflow: visible; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+      .knobs .wide { grid-column: auto; }
       .loras { border-left: 0; padding-left: 0; }
     }
   `,
@@ -110,6 +133,15 @@ export class SettingsPage {
   protected readonly state = computed(() => this.store.page() as SettingsState | null);
   protected readonly loras = computed(() => this.state()?.loras ?? []);
   protected readonly knobs = KNOBS;
+
+  /** The find box narrows the list on this page; it is not a server query. */
+  protected readonly query = signal('');
+  protected readonly shownLoras = computed(() => {
+    const needle = this.query().trim().toLowerCase();
+    const all = this.loras();
+    return needle ? all.filter((lora) => lora.label.toLowerCase().includes(needle)) : all;
+  });
+  protected readonly onCount = computed(() => this.loras().filter((lora) => lora.selected).length);
 
   /** The typed knob values, kept until the reply to them lands. */
   private readonly draft = signal<Partial<Record<Knob, string>>>({});
@@ -129,12 +161,21 @@ export class SettingsPage {
   );
 
   constructor() {
-    // Every reply is the form, so once it lands the boxes take its values.
-    // The effect watches the reply's identity, so a background progress reply
-    // that did not change this page does not wipe a half-typed number.
+    // A reply may carry a value older than the last keystroke. Drop a draft
+    // only once the server's value is the one that was typed, so an unrelated
+    // reply cannot pull the field back.
     effect(() => {
-      this.store.page();
-      untracked(() => this.draft.set({}));
+      const state = this.state();
+      untracked(() => {
+        const draft = this.draft();
+        const keys = Object.keys(draft) as Knob[];
+        if (!keys.length) return;
+        const next = { ...draft };
+        for (const key of keys) {
+          if (String(state?.knobs?.[key] ?? '') === next[key]) delete next[key];
+        }
+        this.draft.set(next);
+      });
     });
   }
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -25,6 +26,7 @@ from salad_studio.web.actions import Registry
 
 HOST = "127.0.0.1"
 MAX_BODY = 8 * 1024 * 1024
+BODY_TIMEOUT_S = 15.0
 EVENT_WAIT_S = 15.0
 
 MISSING_BUILD = """<!doctype html><meta charset="utf-8">
@@ -73,8 +75,12 @@ class StudioServer(ThreadingHTTPServer):
         self.requested_port = int(port)
         return int(self.server_address[1])
 
-    def origin(self) -> str:
-        return f"http://{HOST}:{self.server_address[1]}"
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        """A closed tab is not a server error; keep the terminal for real ones."""
+        error = sys.exc_info()[1]
+        if isinstance(error, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
 
 
 class StudioHandler(BaseHTTPRequestHandler):
@@ -88,6 +94,9 @@ class StudioHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urlsplit(self.path).path
+        if path.startswith("/api/") and not self._same_origin():
+            return self._json(403, {"error": {"kind": "cross_origin",
+                                              "message": "this server answers its own page only"}})
         if path == "/api/events":
             return self._events()
         if path == "/api/health":
@@ -124,9 +133,19 @@ class StudioHandler(BaseHTTPRequestHandler):
         if not isinstance(request, dict) or not isinstance(request.get("action"), str):
             return self._json(400, {"error": {"kind": "bad_payload", "message": "action is required"}})
         if self.server.engine is not None:
-            status, payload = self.server.engine.handle(request)
+            try:
+                status, payload = self.server.engine.handle(request)
+            except Exception:  # noqa: BLE001 - a dying handler thread would hang the page
+                self.server.log("error", "the action handler failed before it could answer")
+                return self._json(500, {"error": {"kind": "failed",
+                                                  "message": "the action failed; see the Studio log"}})
             return self._json(status, payload)
-        result = self.server.registry.call(request["action"], request.get("payload", {}))
+        try:
+            result = self.server.registry.call(request["action"], request.get("payload", {}))
+        except Exception:  # noqa: BLE001 - same guard for the registry-only path
+            self.server.log("error", "the action table failed before it could answer")
+            return self._json(500, {"error": {"kind": "failed",
+                                              "message": "the action failed; see the Studio log"}})
         if result.error is not None:
             status = 400 if result.error.kind in ("unknown_action", "bad_payload") else 200
             return self._json(status, {"ok": False, "error": result.error.as_dict()})
@@ -144,7 +163,12 @@ class StudioHandler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if origin is None:
             return True
-        return origin == self.server.origin()
+        parsed = urlsplit(origin)
+        if parsed.scheme != "http" or parsed.port != self.server.server_address[1]:
+            return False
+        # A page opened at localhost is the same page; the bind is loopback
+        # either way, and a bookmark should not make every action a 403.
+        return (parsed.hostname or "").lower() in ("127.0.0.1", "localhost", "::1")
 
     def _body(self) -> bytes | None:
         try:
@@ -155,7 +179,26 @@ class StudioHandler(BaseHTTPRequestHandler):
         if length > MAX_BODY:
             self._json(413, {"error": {"kind": "too_large", "message": "body is too large"}})
             return None
-        return self.rfile.read(length)
+        if length == 0:
+            return b""
+        try:
+            self.connection.settimeout(BODY_TIMEOUT_S)
+            data = self.rfile.read(length)
+        except (TimeoutError, OSError):
+            data = None
+        finally:
+            self.connection.settimeout(None)
+        if data is None:
+            self.close_connection = True
+            self._json(408, {"error": {"kind": "timeout",
+                                       "message": "the body was not received in time"}})
+            return None
+        if len(data) < length:
+            self.close_connection = True
+            self._json(400, {"error": {"kind": "bad_payload",
+                                       "message": "the body ended before Content-Length"}})
+            return None
+        return data
 
     def _json(self, status: int, payload: Any) -> None:
         data = json.dumps(payload, default=str).encode()

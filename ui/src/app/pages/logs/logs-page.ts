@@ -23,7 +23,7 @@ interface LogsState {
       <div class="panes">
         <section class="pane" aria-labelledby="salad-logs-head">
           <h2 class="eyebrow" id="salad-logs-head">Salad container logs (active gateway)</h2>
-          <div class="log-view" #saladView tabindex="0" role="log" aria-labelledby="salad-logs-head" aria-live="off">
+          <div class="log-view" #saladView tabindex="0" role="log" aria-labelledby="salad-logs-head" aria-live="off" (scroll)="trackPin('salad', $event)">
             @for (line of saladLines(); track $index) {
               <span class="log-line">{{ line }}</span>
             } @empty {
@@ -45,8 +45,11 @@ interface LogsState {
         </div>
 
         <section class="pane" aria-labelledby="studio-logs-head">
-          <h2 class="eyebrow" id="studio-logs-head">Studio / HTTP</h2>
-          <div class="log-view" #studio tabindex="0" role="log" aria-labelledby="studio-logs-head" aria-live="polite">
+          <div class="pane-head">
+            <h2 class="eyebrow" id="studio-logs-head">Studio / HTTP</h2>
+            <button class="btn quiet sm" type="button" [disabled]="busy('clear')" (click)="act('clear')">Clear logs</button>
+          </div>
+          <div class="log-view" #studio tabindex="0" role="log" aria-labelledby="studio-logs-head" aria-live="polite" (scroll)="trackPin('studio', $event)">
             @for (line of lines(); track $index) {
               <span class="log-line" [class]="line.level">
                 <span class="lvl">{{ levelWord(line.level) }}</span>{{ line.text }}
@@ -54,9 +57,6 @@ interface LogsState {
             } @empty {
               <span class="empty">No Studio lines yet.</span>
             }
-          </div>
-          <div class="pane-foot">
-            <button class="btn quiet sm" type="button" [disabled]="busy('clear')" (click)="act('clear')">Clear Studio logs</button>
           </div>
         </section>
       </div>
@@ -66,12 +66,13 @@ interface LogsState {
     :host { display: block; height: 100%; }
     .panes { display: grid; grid-template-rows: minmax(0, 1fr) auto minmax(0, 1fr); gap: 8px; height: 100%; min-height: 0; padding-top: 12px; }
     .pane { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
-    .pane:last-child { grid-template-rows: auto minmax(0, 1fr) auto; }
+    .pane:last-child { grid-template-rows: auto minmax(0, 1fr); }
     .pane h2 { margin: 0 0 6px; }
+    .pane-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+    .pane-head h2 { margin: 0; }
     .empty { color: var(--fg-muted); }
     .bar { display: flex; align-items: center; gap: 9px; }
     .status { margin: 0 0 0 auto; font-size: 12px; color: var(--fg-muted); }
-    .pane-foot { display: flex; justify-content: flex-end; padding-top: 6px; }
   `,
 })
 export class LogsPage {
@@ -85,6 +86,8 @@ export class LogsPage {
   private readonly saladView = viewChild<ElementRef<HTMLDivElement>>('saladView');
   private readonly studioView = viewChild<ElementRef<HTMLDivElement>>('studio');
   private saladVersion: number | undefined;
+  /** Whether the reader is at the foot of each log, where a new line is welcome. */
+  private readonly pinned = { salad: true, studio: true };
 
   constructor() {
     effect(() => {
@@ -93,14 +96,20 @@ export class LogsPage {
       if (!view) return;
       if (version !== this.saladVersion) {
         this.saladVersion = version;
-        queueMicrotask(() => (view.scrollTop = view.scrollHeight));
+        if (this.pinned.salad) queueMicrotask(() => (view.scrollTop = view.scrollHeight));
       }
     });
     effect(() => {
       this.lines();
       const view = this.studioView()?.nativeElement;
-      if (view) queueMicrotask(() => (view.scrollTop = view.scrollHeight));
+      if (view && this.pinned.studio) queueMicrotask(() => (view.scrollTop = view.scrollHeight));
     });
+  }
+
+  /** Autoscroll only while the reader is already at the foot. */
+  protected trackPin(which: 'salad' | 'studio', event: Event): void {
+    const view = event.target as HTMLElement;
+    this.pinned[which] = view.scrollHeight - view.scrollTop - view.clientHeight < 24;
   }
 
   protected busy(action: string): boolean {

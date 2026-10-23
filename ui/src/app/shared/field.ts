@@ -4,9 +4,6 @@ import {
   computed,
   input,
   output,
-  viewChild,
-  ElementRef,
-  afterNextRender,
 } from '@angular/core';
 
 /**
@@ -44,7 +41,6 @@ import {
         }
         @case ('textarea') {
           <textarea
-            #input
             [id]="fieldId()"
             class="textarea"
             [class.mono]="mono()"
@@ -75,7 +71,6 @@ import {
         }
         @default {
           <input
-            #input
             [id]="fieldId()"
             class="input"
             [class.mono]="mono()"
@@ -122,13 +117,6 @@ export class Field {
   readonly submitted = output<void>();
 
   protected readonly fieldId = computed(() => this.id() || `f-${slug(this.label())}`);
-
-  private readonly input = viewChild<ElementRef<HTMLInputElement | HTMLTextAreaElement>>('input');
-
-  /** Let the page put the caret back after it accepted Enter. */
-  focus(): void {
-    afterNextRender(() => this.input()?.nativeElement.focus());
-  }
 
   protected read(event: Event): void {
     this.changed.emit(read(event));

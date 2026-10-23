@@ -43,7 +43,7 @@ import { PAGES, pageIdFromUrl } from '../core/models';
     }
     .address {
       font-family: var(--font-mono);
-      font-size: 9.5px;
+      font-size: 10px;
       letter-spacing: 0.1em;
       color: var(--accent-fg);
       background: var(--accent);
@@ -65,7 +65,7 @@ import { PAGES, pageIdFromUrl } from '../core/models';
       margin-left: auto;
       display: inline-flex; align-items: center; gap: 6px;
       font-family: var(--font-mono);
-      font-size: 9px;
+      font-size: 10px;
       letter-spacing: 0.14em;
       text-transform: uppercase;
       color: var(--accent);
@@ -85,7 +85,9 @@ import { PAGES, pageIdFromUrl } from '../core/models';
     .note.ok { color: var(--valid); } .note.ok::before { background: var(--valid); }
     .note.warn { color: var(--warn); } .note.warn::before { background: var(--warn); }
     .note.error { color: var(--invalid); } .note.error::before { background: var(--invalid); }
-    .body { min-height: 0; padding-top: 4px; overflow: hidden; }
+    /* A page that grows past the window scrolls here, under its own heading,
+       so the title and the note line stay in place while the sheet moves. */
+    .body { min-height: 0; padding-top: 4px; overflow: auto; }
   `,
 })
 export class PageFrame {

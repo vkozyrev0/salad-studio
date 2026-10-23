@@ -36,8 +36,6 @@ declare module 'ag-grid-community' {
  * actions that need a selection.
  *
  * The theme is `studioGridTheme` with the visual prototype's 48px row on top.
- * A page also passes `order`, the grid's displayed order once a sort has
- * happened, so the page's arrows step through what is on screen.
  */
 @Component({
   selector: 'app-data-grid',
@@ -56,17 +54,33 @@ declare module 'ag-grid-community' {
       [overlayNoRowsTemplate]="emptyText()"
       (gridReady)="ready($event)"
       (selectionChanged)="pick($event)"
-      (sortChanged)="orderChanged()"
-      (filterChanged)="orderChanged()"
     />
   `,
   styles: `
-    :host { display: block; min-height: 0; height: 100%; }
+    :host { display: block; min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
     /* AG Grid lays itself out from its container's height. Without this the
-       grid computes a zero-height body and draws no rows at all. */
-    .grid { display: block; width: 100%; height: 100%; min-height: 180px; }
+       grid computes a zero-height body and draws no rows at all. A page's grid
+       track may size to the columns' min-content; the host must not grow with
+       it, or the last columns sit off the right edge of the window. */
+    .grid { display: block; width: 100%; max-width: 100%; height: 100%; min-height: 180px; }
     :host ::ng-deep .ag-root-wrapper,
     :host ::ng-deep .ag-body-viewport { scrollbar-color: var(--fg-muted) var(--well); scrollbar-width: thin; }
+    /* A header is a mono ledger label, matching the page's eyebrows. The sort
+       and filter marks stay quiet until the header is hovered. */
+    :host ::ng-deep .ag-header-cell-text {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+    :host ::ng-deep .ag-header-cell:hover .ag-header-cell-text,
+    :host ::ng-deep .ag-header-cell.ag-header-active .ag-header-cell-text { color: var(--fg); }
+    :host ::ng-deep .ag-header-cell-filter-button,
+    :host ::ng-deep .ag-header-cell-menu-button { opacity: 0.3; }
+    :host ::ng-deep .ag-header-cell:hover .ag-header-cell-filter-button,
+    :host ::ng-deep .ag-header-cell:hover .ag-header-cell-menu-button { opacity: 1; }
+    :host ::ng-deep .ag-header-cell-resize::after { background-color: var(--hairline); }
   `,
 })
 export class DataGrid {
@@ -79,8 +93,6 @@ export class DataGrid {
   readonly empty = input('No rows.');
 
   readonly picked = output<string>();
-  /** The displayed keys, in the grid's order, after every sort, filter or data change. */
-  readonly order = output<string[]>();
 
   /** `studioGridTheme` keeps its palette and takes the prototype's 48px row; the page draws the frame. */
   protected readonly theme = studioGridTheme.withParams({
@@ -146,19 +158,11 @@ export class DataGrid {
   protected ready(event: GridReadyEvent): void {
     this.api = event.api;
     this.readyRev.update((n) => n + 1);
-    this.orderChanged();
   }
 
   protected pick(event: SelectionChangedEvent): void {
     const [row] = event.api.getSelectedRows();
     this.picked.emit(this.key(row ?? null));
-  }
-
-  protected orderChanged(): void {
-    if (!this.api || this.api.isDestroyed()) return;
-    const rows: unknown[] = [];
-    this.api.forEachNodeAfterFilterAndSort((node) => rows.push(this.key(node.data)));
-    this.order.emit(rows.map(String));
   }
 
   private select(api: GridApi, key: string | null): void {

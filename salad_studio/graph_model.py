@@ -1,4 +1,4 @@
-"""The prompt graph as data. No Flet, no Tk, no drawing.
+"""The prompt graph as data. No UI toolkit and no drawing.
 
 ``GraphModel`` is the single source of truth for the graph pane: nodes with
 their ports and widget rows, edges between ports, the two-id selection, and
@@ -6,7 +6,7 @@ the view transform. Every gesture is a function from one model to the next,
 and ``render`` and ``hit_test`` are pure functions of a model, so a drag is a
 model change and a repaint, nothing else.
 
-The layout keeps the Tk pane's look: one column per class, cards sized to
+The layout keeps the editor's look: one column per class, cards sized to
 their rows, widget rows below link rows, a title header, and wires that leave
 an output port on the right edge and enter an input port on the left edge.
 """
@@ -485,7 +485,7 @@ def _column_of(class_type: str) -> int:
 
 
 def _column_order(nid: str, node: dict[str, Any]) -> tuple[int, int]:
-    """Sort inside a column the way the Tk pane does: loaders first, then ids."""
+    """Sort inside a column the way the graph pane does: loaders first, then ids."""
     cls = str(node.get("class_type") or "")
     order = {
         "UNETLoader": 0,

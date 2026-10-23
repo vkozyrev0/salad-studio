@@ -71,6 +71,10 @@ import { StudioStore } from '../core/studio-store';
     h2 { margin: 0; font-family: var(--font-display); font-size: 15px; font-weight: 600; }
     .body { margin: 0; color: var(--fg); font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
     .foot { display: flex; justify-content: flex-end; gap: var(--space-sm); }
+    /* The choice focused when the box opens is the one a key press acts on;
+       programmatic focus after a mouse click does not always match
+       :focus-visible, so the box draws its own ring. */
+    .box button:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
   `,
 })
 export class DialogHost {

@@ -116,9 +116,10 @@ keys move through its cells, and a click selects the row.
   store is empty, and the Config Vast.ai section reads the store. Generate sends
   the Salad key as `Salad-Api-Key` and appends Civitai `?token=` to LoRA URLs at
   POST time. Dots: **green** only on an accepted provider call, **red** on
-  rejection, **grey** when unconfirmed. **Check keys** re-probes every slot; the
-  page probes on open, a fresh key on save. **Save keys** writes the fields,
-  then **Check keys** confirms them.
+  rejection, **grey** when unconfirmed, each with its word under the name. The
+  **Check** beside a slot asks that provider alone, so one hanging provider does
+  not hold up the others; the page probes nothing on open. **Save keys** writes
+  the fields, then **Check** confirms the saved key.
 - **Logs**. Salad container logs for the active gateway; Studio/HTTP events
   redacted.
 - **LoRAs**. Catalog LoRAs plus extras from a Civitai page or
@@ -293,14 +294,14 @@ switch),
 The page is an Angular app in `ui/`, built to `ui/dist/`. The server in `web/`
 is the only thing it talks to: `server.py` serves the page and three routes,
 `engine.py` turns one request into one reply, `core.py` runs every handler on
-one thread, `shell.py` holds what the window used to own, and `pages/` holds one
+one thread, `shell.py` holds the shell state, and `pages/` holds one
 controller per page. No module in this package imports a UI toolkit, and
 `tests/test_layers.py` is the tripwire if one creeps back.
 
 | Layer | Modules |
 |---|---|
 | Server | `server.py`, `engine.py`, `core.py`, `actions.py`, `events.py`, `shell.py`, `services.py`, `form.py`, `registry.py`, `app.py`, `controllers.py`, `__main__.py`; one controller per page in `web/pages/` |
-| Page | `ui/src/app/` (Angular), `theme.py` (the palette and the role maps) |
+| Page | `ui/src/app/` (Angular); `ui/src/styles.css` owns the palette and type tokens |
 | Import | `comfy_import.py`, `civitai_verify.py`, `request_json.py`, `graph_model.py` |
 | Persistence | `atomic.py`, `tokens.py`, `prompt_history.py`, `prompt_catalog.py`, `lora_store.py`, `profiles.py`, `hostings.py`, `studio_meta.py` |
 | Logging | `studio_log.py` |
@@ -343,7 +344,7 @@ the root [`README.md`](../README.md) (Configuration, Known limitations).
 Run the commands separately:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1090 tests, ~35 s
+python -m unittest discover -s tests -p "test_*.py"    # 1082 tests, ~35 s
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```
@@ -366,7 +367,6 @@ container are in
 `graph_model.py` lays the request out as data: one column per class, cards sized
 to their rows, a right-angled wire from each output port to its input port. The
 editor controller returns that model in the page state and
-`ui/src/app/pages/editor/graph.ts` draws it. A drag moves a card on the page and
-sends the final position, so the request JSON is never rewritten by a gesture.
+`ui/src/app/pages/editor/graph.ts` draws it. A wheel or the zoom control scales
+the view and a drag pans it, so the request JSON is never rewritten by a gesture.
 Tests: `test_graph_model.py`.
-[Decision record](../docs/history/65-salad-studio-prompt-graph-decision-2026-10-17.md).

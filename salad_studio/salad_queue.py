@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import studio_meta
+import studio_log
 
 OK = "ok"
 BUSY = "busy"
@@ -296,9 +297,14 @@ def request_checksum(request: Any) -> str:
 
 
 def reason_of(attempt: Attempt) -> str:
-    """Why a failed attempt failed, in the server's own words when it sent any."""
+    """Why a failed attempt failed, in the server's own words when it sent any.
+
+    The reason is stored in the ledger and shown on the Queue page, so it is
+    redacted here: a Comfy error may quote the LoRA URL it was given, token and
+    all, and neither the file nor the page is a place for a secret.
+    """
     if attempt.error:
-        return attempt.error
+        return studio_log.redact(attempt.error)
     raw = attempt.body
     text = (
         raw.decode("utf-8", "replace")
@@ -316,8 +322,8 @@ def reason_of(attempt: Attempt) -> str:
                 if isinstance(value, dict):
                     value = value.get("message") or value.get("detail") or value.get("type")
                 if isinstance(value, str) and value.strip():
-                    return f"HTTP {attempt.status}: {value.strip()[:200]}"
-        return f"HTTP {attempt.status}: {text[:200]}"
+                    return studio_log.redact(f"HTTP {attempt.status}: {value.strip()[:200]}")
+        return studio_log.redact(f"HTTP {attempt.status}: {text[:200]}")
     return f"HTTP {attempt.status}"
 
 
@@ -532,8 +538,8 @@ class SaladQueue:
                 self._gateways[job.line] = gateway
             self._cond.notify_all()
             ahead = len(waiting) - 1
-        # Outside the lock: the log callback marshals onto Tk, and the main
-        # thread may be waiting on this same lock inside a queue refresh.
+        # Outside the lock: the log callback can block on the log sink, and the
+        # refresh path may be waiting on this same lock.
         self._log(
             "info",
             f"queue: request {job.id} queued on {job.line or 'the default line'}"

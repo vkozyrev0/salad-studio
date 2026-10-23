@@ -3,8 +3,7 @@
 The script has no helper functions; its testable surface is the module data it
 renders from. These drive ``BANDS``, ``HOUSE``, ``NEGATIVE`` and ``ART`` as the
 reader of the module sees them, so a band that loses its house wording, gains a
-placeholder, or repeats a stage name fails here. (T3 in
-docs/history/62-salad-studio-audit-2026-10-14.md.)
+placeholder, or repeats a stage name fails here.
 """
 from __future__ import annotations
 

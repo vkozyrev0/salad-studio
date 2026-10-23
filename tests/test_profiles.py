@@ -16,7 +16,7 @@ for _p in (PKG, HERE.parent):
 
 
 def setUpModule() -> None:
-    """This module builds a window, so its queue must not touch the real ledger."""
+    """This module builds a studio, so its queue must not touch the real ledger."""
     from tests import _stores
 
     _stores.keep_queue_ledger_off_the_user_store()
@@ -310,7 +310,7 @@ class ProfilesTest(unittest.TestCase):
         self.assertNotEqual(self.path, PROFILES_PATH)
 
     def test_non_numeric_fields_fall_back_to_defaults(self) -> None:
-        """A hand-edited field must not abort load_all (audit L5)."""
+        """A hand-edited field must not abort load_all."""
         doc = {
             "profiles": {
                 "klein": {

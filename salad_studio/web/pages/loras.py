@@ -2,11 +2,11 @@
 
 The page keeps the form in its own fields, so ``state()`` shows exactly what a
 Save would write. Ids come from the row, never from the form: ``save_edits``
-acts on the selected row and ``remove_selected`` asks first, which is the pair
-of buttons the Flet page was missing.
+acts on the selected row and ``remove_selected`` asks first, so a stale form
+cannot write or delete another row.
 
 A LoRA's ``base`` is stored as the catalog's name ("Flux.2 Klein 9B"); the list
-is shown the short label the Flet dropdown used ("Flux.2 Klein").
+is shown the short label its family choice uses ("Flux.2 Klein").
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def _row(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _cells(item: dict[str, Any]) -> dict[str, str]:
-    """The sortable text of each column, as the Flet table spelled it."""
+    """The sortable text of each column, as the table shows it."""
     row = _row(item)
     return {
         "Verified": "● yes" if row["verified"] else "● no",

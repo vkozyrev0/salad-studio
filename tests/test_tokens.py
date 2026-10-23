@@ -24,7 +24,7 @@ GITIGNORE = HERE.parent / ".gitignore"
 
 
 def setUpModule() -> None:
-    """A window built here builds a queue, and the queue writes its ledger."""
+    """A studio built here builds a queue, and the queue writes its ledger."""
     _stores.keep_queue_ledger_off_the_user_store()
 
 
@@ -168,19 +168,6 @@ class KeyValidity(unittest.TestCase):
             with self.subTest(kind=kind):
                 result = tok.probe_token(kind, send=_FakeSend(200), timeout=1)
                 self.assertIn(result["state"], (tok.UNKNOWN, tok.VALID))
-
-    def test_state_color_maps_each_state_to_its_own_palette_key(self) -> None:
-        keys = {
-            tok.state_color(tok.VALID),
-            tok.state_color(tok.INVALID),
-            tok.state_color(tok.UNKNOWN),
-        }
-        self.assertEqual(keys, {"valid", "invalid", "unknown"})
-        self.assertEqual(tok.state_color("checking"), "unknown")
-        from salad_studio.theme import PALETTE
-
-        for key in keys:
-            self.assertIn(key, PALETTE)
 
 
 class TokenFiles(unittest.TestCase):

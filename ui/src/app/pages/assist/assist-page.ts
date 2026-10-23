@@ -40,9 +40,9 @@ interface AssistState {
         </div>
         <p class="hint">{{ state()?.imageNote || 'off, no image is sent' }}</p>
 
-        <app-field label="Image issue / problem" kind="textarea" [rows]="3" [value]="edited().issue" (changed)="edit({ issue: $event })" />
-        <app-field label="Adjusted positive prompt" kind="textarea" [rows]="3" [value]="edited().positive" (changed)="edit({ positive: $event })" />
-        <app-field label="Adjusted negative prompt" kind="textarea" [rows]="3" [value]="edited().negative" (changed)="edit({ negative: $event })" />
+        <app-field label="Image issue / problem" kind="textarea" [rows]="2" [value]="edited().issue" (changed)="edit({ issue: $event })" />
+        <app-field label="Adjusted positive prompt" kind="textarea" [rows]="2" [value]="edited().positive" (changed)="edit({ positive: $event })" />
+        <app-field label="Adjusted negative prompt" kind="textarea" [rows]="2" [value]="edited().negative" (changed)="edit({ negative: $event })" />
 
         <div class="btn-row">
           <button class="btn ghost" type="button" [disabled]="helping()" (click)="help('deepseek')">
@@ -59,7 +59,7 @@ interface AssistState {
 
         <section class="reply" aria-labelledby="reply-head">
           <h2 class="eyebrow" id="reply-head">Reply</h2>
-          <pre class="readout prose" tabindex="0">{{ state()?.reply || '' }}</pre>
+          <pre class="readout prose" tabindex="0">{{ state()?.reply || 'No reply yet. Ask DeepSeek or the local model.' }}</pre>
         </section>
       </div>
     </app-page-frame>

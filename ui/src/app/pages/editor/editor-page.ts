@@ -49,12 +49,12 @@ const PROMPT_DEBOUNCE_MS = 200;
             Rebuild from Config
           </button>
           <button class="btn ghost" type="button" [disabled]="busy('rebuild_from_json')" (click)="act('rebuild_from_json')">Rebuild from JSON</button>
-          <button class="btn ghost" type="button" [disabled]="busy('validate')" (click)="act('validate')">Validate</button>
+          <button class="btn key" type="button" [disabled]="busy('validate')" (click)="act('validate')">Validate</button>
           <p class="status" [class.ok]="status().level === 'ok'" [class.error]="status().level === 'error'" [class.warn]="status().level === 'warn'" role="status">
             {{ status().text }}
           </p>
           <button class="btn quiet" type="button" [disabled]="!selection().length" (click)="selection.set([])">Clear selection</button>
-          <button class="btn primary" type="button" [disabled]="selection().length !== 2 || busy('swap_selected')" (click)="swap()">
+          <button class="btn ghost" type="button" [disabled]="selection().length !== 2 || busy('swap_selected')" (click)="swap()">
             @if (busy('swap_selected')) { <span class="spinner" aria-hidden="true"></span> }
             Swap selected
           </button>

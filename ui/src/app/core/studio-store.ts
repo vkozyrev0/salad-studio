@@ -7,6 +7,15 @@ const LOG_CAP = 2000;
 
 /** The server's or the browser's own words for a failed request. */
 function messageOf(err: unknown): string {
+  if (typeof err === 'object' && err !== null) {
+    const body = Reflect.get(err, 'error');
+    if (typeof body === 'object' && body !== null) {
+      const detail = Reflect.get(body, 'error');
+      const message =
+        detail && typeof detail === 'object' ? Reflect.get(detail, 'message') : Reflect.get(body, 'message');
+      if (typeof message === 'string' && message) return message;
+    }
+  }
   if (err instanceof Error) return err.message;
   if (typeof err === 'object' && err !== null) {
     const value = Reflect.get(err, 'message');
@@ -34,7 +43,6 @@ export class StudioStore {
   readonly pageId = signal<string>('config');
   /** Bumped after every completed navigation, so the page's frame re-reads the URL. */
   readonly routeRev = signal(0);
-  readonly busy = signal<Record<string, boolean>>({});
   readonly logLines = signal<{ level: Level; text: string }[]>([]);
   readonly dialog = signal<Extract<Effect, { kind: 'dialog' }> | null>(null);
   readonly confirm = signal<Extract<Effect, { kind: 'confirm' }> | null>(null);
@@ -102,7 +110,6 @@ export class StudioStore {
       if (seq !== this.loadSeq) return;
       this.page.set(reply.state);
       this.shell.set(reply.shell);
-      this.busy.set(reply.busy);
     } catch (err) {
       if (seq !== this.loadSeq) return;
       this.loadError.set(messageOf(err));
@@ -125,6 +132,12 @@ export class StudioStore {
           this.apply(reply);
           if (!reply.pending) this.clearFlight(page, action);
           return reply;
+        } catch (err) {
+          // A refused or dropped request must not leave the button spinning
+          // forever; say what happened and let the same action be tried again.
+          this.clearFlight(page, action);
+          this.dialog.set({ kind: 'dialog', title: 'The action failed', body: messageOf(err), level: 'error' });
+          return null;
         } finally {
           if (this.chains.get(page) === next) this.chains.delete(page);
         }
@@ -137,8 +150,12 @@ export class StudioStore {
     const pending = this.confirm();
     this.confirm.set(null);
     if (!pending) return;
-    const reply = await this.api.confirm(pending.token);
-    this.apply(reply);
+    try {
+      const reply = await this.api.confirm(pending.token);
+      this.apply(reply);
+    } catch (err) {
+      this.dialog.set({ kind: 'dialog', title: 'The action failed', body: messageOf(err), level: 'error' });
+    }
   }
 
   dismissDialog(): void {
@@ -151,8 +168,9 @@ export class StudioStore {
 
   private apply(reply: ActionReply | PageReply): void {
     this.shell.set(reply.shell);
-    if ('state' in reply) this.page.set(reply.state);
-    if ('busy' in reply) this.busy.set(reply.busy);
+    // A slow reply from a page the user has left must not replace the page
+    // they are reading now. Its shell, busy map and effects still apply.
+    if ('state' in reply && reply.page === this.pageId()) this.page.set(reply.state);
     if (!('effects' in reply) || !reply.effects) return;
     for (const effect of reply.effects) {
       if (effect.kind === 'dialog') this.dialog.set(effect);

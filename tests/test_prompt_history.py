@@ -20,7 +20,7 @@ from tests._paths import _TempPaths  # noqa: E402
 
 
 def setUpModule() -> None:
-    """A window built here builds a queue, and the queue writes its ledger."""
+    """A studio built here builds a queue, and the queue writes its ledger."""
     _stores.keep_queue_ledger_off_the_user_store()
 
 

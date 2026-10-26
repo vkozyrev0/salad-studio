@@ -65,6 +65,8 @@ const PROMPT_DEBOUNCE_MS = 200;
   styles: `
     :host { display: block; height: 100%; }
     .wrap { display: grid; grid-template-rows: minmax(0, 3fr) auto auto; gap: 8px; height: 100%; min-height: 0; padding-top: 12px; }
+    /* The graph is the wide read, so it takes the room the JSON box does not
+       need; the prompts stay one line each. */
     .split { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 8px; min-height: 0; }
     /* The JSON box fills its column; its row count is a floor, not a height. */
     .json { height: 100%; min-height: 0; }

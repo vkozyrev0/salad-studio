@@ -64,7 +64,6 @@ class QueueController:
 
     def register(self, table: Any) -> None:
         table.action("queue.view")(self.view)
-        table.action("queue.refresh")(self.view)
         table.action("queue.select", need={"key": str})(self.select)
         table.action("queue.cancel")(self.cancel)
         table.action("queue.retry")(self.retry)

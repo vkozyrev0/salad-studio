@@ -34,25 +34,9 @@ def _row(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _cells(item: dict[str, Any]) -> dict[str, str]:
-    """The sortable text of each column, as the table shows it."""
-    row = _row(item)
-    return {
-        "Verified": "● yes" if row["verified"] else "● no",
-        "Id": row["id"],
-        "Name": str(item.get("name") or ""),
-        "Version": row["version"],
-        "Model": row["model"],
-        "Source": row["id"],
-    }
-
-
-def _filtered(items: list[dict[str, Any]], find: str, sort_by: str, reverse: bool) -> list[dict[str, Any]]:
+def _filtered(items: list[dict[str, Any]], find: str) -> list[dict[str, Any]]:
     text = find.strip().lower()
-    shown = [item for item in items if not text or text in str(item.get("name") or "").lower()]
-    if sort_by in COLUMNS:
-        shown.sort(key=lambda item: _cells(item)[sort_by].lower(), reverse=reverse)
-    return shown
+    return [item for item in items if not text or text in str(item.get("name") or "").lower()]
 
 
 class LorasController:
@@ -61,8 +45,6 @@ class LorasController:
     def __init__(self, studio: Any) -> None:
         self.studio = studio
         self.find = ""
-        self.sort_by = ""
-        self.reverse = False
         self.selected: str | None = None
         self.form: dict[str, Any] = self._blank_form()
 
@@ -73,7 +55,6 @@ class LorasController:
     def register(self, table: Any) -> None:
         table.action("loras.view")(self.view)
         table.action("loras.find", need={"text": str})(self.find_changed)
-        table.action("loras.sort", need={"column": str})(self.sort_by_column)
         table.action("loras.select", need={"id": str})(self.select)
         table.action("loras.edit_form", need={"field": str, "value": str})(self.edit_form)
         table.action("loras.add_lora", need={"ref": str})(self.add_lora)
@@ -95,7 +76,6 @@ class LorasController:
             "count": len(items),
             "empty_text": "" if items else EMPTY_TEXT,
             "find": self.find,
-            "sort": {"column": self.sort_by, "reverse": self.reverse},
             "selected": selected,
             "can_save": selected is not None,
             "families": list(FAMILIES),
@@ -104,7 +84,7 @@ class LorasController:
         }
 
     def _shown(self) -> list[dict[str, Any]]:
-        return _filtered(lora_store.list_loras(), self.find, self.sort_by, self.reverse)
+        return _filtered(lora_store.list_loras(), self.find)
 
     def _selected_item(self) -> dict[str, Any] | None:
         """The selected row as the store holds it, by id rather than by list position."""
@@ -117,15 +97,6 @@ class LorasController:
 
     def find_changed(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:
         self.find = payload["text"]
-        return self.state()
-
-    def sort_by_column(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:
-        name = payload["column"]
-        if name not in COLUMNS:
-            ctx.note(f"LoRAs: no column named {name}", level="warn")
-            return self.state()
-        self.reverse = not self.reverse if self.sort_by == name else False
-        self.sort_by = name
         return self.state()
 
     def select(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:

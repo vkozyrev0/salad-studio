@@ -21,7 +21,13 @@ import { StudioStore } from '../core/studio-store';
     'aria-label': 'Recent plates',
   },
   template: `
-    @if (plates().length === 0) {
+    @if (store.loadError()) {
+      <div class="empty-bar">
+        <span class="eyebrow">Recent plates</span>
+        <span class="blank-print" aria-hidden="true"></span>
+        <p>Could not load the gallery: {{ store.loadError() }}</p>
+      </div>
+    } @else if (plates().length === 0) {
       <div class="empty-bar">
         <span class="eyebrow">Recent plates</span>
         <span class="blank-print" aria-hidden="true"></span>

@@ -1,8 +1,9 @@
 """The Prompt History page: a row per request, its rating, and the one-row body.
 
-The list must stay small, so the state never carries a row's request JSON and
-fetches it only through ``history.body``. A row is addressed by its timestamp,
-which is what keeps a delete safe while a render adds a row above it.
+The list must stay small, so the state never carries a row's request JSON;
+Reuse is the one action that opens it, and it hands the row to the editor. A
+row is addressed by its timestamp, which is what keeps a delete safe while a
+render adds a row above it.
 """
 from __future__ import annotations
 
@@ -125,8 +126,9 @@ class HistoryPageTest(unittest.TestCase):
         self.assertEqual(state["rows"], [])
         self.assertTrue(state["empty_text"])
 
-    def test_body_returns_the_one_request_the_editor_asks_for(self) -> None:
-        state, ctx = self.call("body", {"id": str(self.newer["ts"])})
+    def test_reuse_loads_the_selected_rows_request_into_the_editor(self) -> None:
+        self.call("select", {"id": str(self.newer["ts"])})
+        state, ctx = self.call("reuse", {})
         self.assertEqual(ctx.note_text[1], "ok")
         self.assertEqual(self.editor.calls, [(request("a newer prompt"), "a newer prompt")])
         self.assertEqual(state["count"], 2)

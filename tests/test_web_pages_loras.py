@@ -171,25 +171,18 @@ class LorasPageTest(unittest.TestCase):
         finally:
             lora_store.add_lora = saved
 
-    def test_find_narrows_by_name_and_sort_orders_the_rows(self) -> None:
+    def test_find_narrows_by_name(self) -> None:
         state, _ctx = self.call("find", {"text": "water"})
         self.assertIn(EXTRA["id"], [r["id"] for r in state["rows"]])
         state, _ctx = self.call("find", {"text": ""})
-        self.call("edit_form", {"field": "name", "value": ""})
-        self.call("select", {"id": EXTRA["id"]})
-        self.call("edit_form", {"field": "name", "value": "AAA first"})
-        self.call("save_edits")
-        state, _ctx = self.call("sort", {"column": "Name"})
-        names = [r["name"] for r in state["rows"]]
-        self.assertEqual(names[0], "AAA first")
-        self.assertEqual(names, sorted(names, key=str.lower))
-        self.assertEqual(state["sort"], {"column": "Name", "reverse": False})
-        state, _ctx = self.call("sort", {"column": "Name"})
-        self.assertTrue(state["sort"]["reverse"])
-        self.assertEqual(state["rows"][-1]["name"], "AAA first")
-        state, ctx = self.call("sort", {"column": "Nope"})
-        self.assertEqual(ctx.note_text[1], "warn")
+        self.assertIn(EXTRA["id"], [r["id"] for r in state["rows"]])
+        state, _ctx = self.call("find", {"text": "no lora is called this"})
+        self.assertEqual(state["rows"], [])
 
+    def test_the_table_offers_no_server_side_sort(self) -> None:
+        """AG Grid sorts and filters what it was sent; a second sort here would disagree with it."""
+        removed = self.studio.controllers.table.call("loras.sort", {"column": "Name"})
+        self.assertEqual(removed.error.kind, "unknown_action")
 
 if __name__ == "__main__":
     unittest.main()

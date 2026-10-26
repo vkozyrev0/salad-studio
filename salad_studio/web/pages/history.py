@@ -1,8 +1,8 @@
 """Prompt History: every request, its prompt, its graph and its rating.
 
 A row's request JSON is about 6.7 KB and the list holds up to 100, so the
-state carries only what the table draws. The editor asks ``history.body`` for
-the one row it opens.
+state carries only what the table draws. Reuse hands the one row it opens to
+the editor through the action table.
 
 A row is addressed by its ``ts``, not by its position: the store keeps its rows
 newest first, and a new render during a delete would move every index under the
@@ -81,7 +81,6 @@ class HistoryController:
         table.action("history.select", need={"id": str})(self.select)
         table.action("history.rate", need={"stars": int})(self.rate)
         table.action("history.reuse")(self.reuse)
-        table.action("history.body", need={"id": str})(self.body)
         table.action("history.delete")(self.delete)
 
     def view(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:
@@ -123,15 +122,6 @@ class HistoryController:
             return self.state()
         prompt_history.rate(index, stars)
         ctx.note(f"Render #{index} {'rated ' + str(stars) + ' star' + ('s' if stars != 1 else '') if stars else 'rating cleared'}")
-        return self.state()
-
-    def body(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:
-        index = self._index_of(payload["id"])
-        if index is None:
-            ctx.note("History: that entry is gone; refresh the list", level="warn")
-            return self.state()
-        entry = prompt_history.list_prompts()[index]
-        self._recall(ctx, entry, "Loaded the request into the editor")
         return self.state()
 
     def reuse(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:

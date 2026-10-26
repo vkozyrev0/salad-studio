@@ -128,7 +128,17 @@ import { DialogHost } from './dialog-host';
     .meters { margin-left: auto; display: flex; align-items: center; gap: 20px; }
     .meter { display: inline-flex; align-items: center; gap: 7px; }
     .meter .eyebrow { font-size: 10px; letter-spacing: 0.11em; color: var(--fg-muted); }
-    .meter b { font-family: var(--font-mono); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
+    /* The count sits at a fixed place in the bar, so a load that changes it
+       redraws the digit where it was rather than sliding the labels apart. */
+    .meter b {
+      min-width: 1.6ch;
+      margin-left: auto;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
     .meter .bar {
       position: relative;
       width: 22px; height: 3px;

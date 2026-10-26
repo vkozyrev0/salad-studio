@@ -27,6 +27,26 @@ def _scheduler_id(raw: str | None) -> str:
     return "simple" if "simple" in str(raw or "").lower() else "flux2"
 
 
+def _choice(item: dict[str, Any], selected: bool) -> dict[str, Any]:
+    """One LoRA as the page draws it: a name, a model family, a version.
+
+    The family already sits beside every name, so the version drops it when its
+    own text opens with it; the cell then says what the name and the family do
+    not. A row imported with no name of its own shows its Civitai version id,
+    not the label that would repeat it.
+    """
+    name = str(item.get("name") or "")
+    if not name:
+        source = item.get("source") or {}
+        name = str(source.get("version_id") or item.get("id") or "")
+    family = lora_store.family_label(item)
+    version = lora_store.version_label(item)
+    if version.lower().startswith(family.lower()):
+        version = ""
+    return {"id": str(item.get("id")), "name": name, "family": family,
+            "version": version, "selected": selected}
+
+
 class SettingsController:
     page = "settings"
 
@@ -53,15 +73,13 @@ class SettingsController:
             "knobs": {name: str(getattr(form, name)) for name in KNOBS},
             "graphs": list(lora_store.GRAPH_CHOICES),
             "graph": lora_store.graph_label(graph),
-            "schedulers": [label for _id, label in SCHEDULER_LABELS],
-            "scheduler": dict(SCHEDULER_LABELS).get(_scheduler_id(form.scheduler)),
+            # Each choice as the id the select stores and the label it shows,
+            # so a reply that does not change the scheduler leaves it alone.
+            "schedulers": [{"id": key, "label": label} for key, label in SCHEDULER_LABELS],
+            "scheduler": _scheduler_id(form.scheduler),
             "checkpoints": list(request_json.UNET_LABELS),
             "checkpoint": request_json.unet_label(profile.primary_checkpoint),
-            "loras": [
-                {"id": str(item.get("id")), "label": lora_store.config_label(item),
-                 "selected": str(item.get("id")) in selected}
-                for item in rows
-            ],
+            "loras": [_choice(item, str(item.get("id")) in selected) for item in rows],
         }
 
     # -- actions

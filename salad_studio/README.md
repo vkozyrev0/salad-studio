@@ -344,16 +344,19 @@ the root [`README.md`](../README.md) (Configuration, Known limitations).
 Run the commands separately:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1082 tests, ~35 s
+python -m unittest discover -s tests -p "test_*.py"    # 1113 tests, ~35 s
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```
 
 Run from the repo root; the third command runs in `salad_klein/`.
 
-The page is built once and committed: `cd ui && npx ng build` writes
-`ui/dist/ui/browser`, and `tests/test_web_app.py` fails if a page the rail names
-does not answer.
+The page is built, not committed. `python -m salad_studio` runs
+`ui/dist/`'s build when it is missing or its source changed
+(`salad_studio/web/app.py: build_page`), which stamps a digest of `ui/src`,
+`ui/public` and the Angular settings beside `index.html`; `cd ui && npx ng build`
+makes the same build by hand. `tests/test_web_app.py` fails if a page the rail
+names does not answer, and `tests/test_web_build.py` holds the build decision.
 
 ## Container groups
 

@@ -33,7 +33,7 @@ import {
               [attr.aria-describedby]="hint() ? fieldId() + '-hint' : null"
               (change)="read($event)"
             >
-              @for (option of options(); track option.value) {
+              @for (option of choicesOf(); track option.value) {
                 <option [value]="option.value">{{ option.label }}</option>
               }
             </select>
@@ -111,12 +111,22 @@ export class Field {
   /** The width in pixels the prototype gives this control; 0 means fill the row. */
   readonly w = input(0);
   readonly options = input<readonly { value: string; label: string }[]>([]);
+  /**
+   * A select whose choices are the words themselves, as a server list of labels
+   * is: the server both shows and accepts the label, so there is no id to pair
+   * with it. `options` wins when a page has both, so a labelled id is never
+   * lost to this.
+   */
+  readonly choices = input<readonly string[]>([]);
   readonly enter = input(false);
 
   readonly changed = output<string>();
   readonly submitted = output<void>();
 
   protected readonly fieldId = computed(() => this.id() || `f-${slug(this.label())}`);
+  protected readonly choicesOf = computed<readonly { value: string; label: string }[]>(() =>
+    this.options().length ? this.options() : this.choices().map((word) => ({ value: word, label: word })),
+  );
 
   protected read(event: Event): void {
     this.changed.emit(read(event));

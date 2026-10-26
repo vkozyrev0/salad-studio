@@ -8,7 +8,9 @@ type Knob = 'width' | 'height' | 'steps' | 'cfg' | 'seed';
 
 interface LoraChoice {
   id: string;
-  label: string;
+  name: string;
+  family: string;
+  version?: string;
   selected: boolean;
 }
 
@@ -16,7 +18,7 @@ interface SettingsState {
   knobs?: Partial<Record<Knob, string>>;
   graphs?: string[];
   graph?: string;
-  schedulers?: string[];
+  schedulers?: { id: string; label: string }[];
   scheduler?: string;
   checkpoints?: string[];
   checkpoint?: string;
@@ -57,11 +59,11 @@ const KNOBS: readonly { key: Knob; label: string; w: number }[] = [
             />
           }
           <app-field class="wide" label="Graph" kind="select" [value]="state()?.graph ?? ''" [options]="graphs()" [w]="0" (changed)="set({ graph: $event })" />
-          <app-field class="wide" label="Scheduler" [id]="'settings-scheduler'" kind="select" [value]="state()?.scheduler ?? 'Flux2 (Klein)'" [options]="schedulers()" [w]="0" (changed)="set({ scheduler: $event })" />
-          <app-field class="wide" label="Checkpoint" [id]="'settings-checkpoint'" kind="select" [value]="state()?.checkpoint ?? ''" [options]="checkpoints()" [w]="0" (changed)="set({ checkpoint: $event }, 'select_checkpoint')" />
+          <app-field class="wide" label="Scheduler" [id]="'settings-scheduler'" kind="select" [value]="schedulerValue()" [options]="schedulers()" [w]="0" (changed)="set({ scheduler: $event })" />
+          <app-field class="wide" label="Checkpoint" [id]="'settings-checkpoint'" kind="select" [value]="state()?.checkpoint ?? ''" [choices]="checkpoints()" [w]="0" (changed)="set({ checkpoint: $event }, 'select_checkpoint')" />
 
           <div class="save">
-            <button class="btn primary" type="button" [disabled]="busy('save')" (click)="set({}, 'save')">
+            <button class="btn primary" type="button" [disabled]="busy('save')" (click)="save()">
               @if (busy('save')) { <span class="spinner" aria-hidden="true"></span> }
               {{ busy('save') ? 'Saving' : 'Save to profile' }}
             </button>
@@ -77,9 +79,13 @@ const KNOBS: readonly { key: Knob; label: string; w: number }[] = [
             <app-field class="filter" label="Find a LoRA" [value]="query()" [w]="380" placeholder="part of a name" (changed)="query.set($event)" />
             <div class="choices">
               @for (lora of shownLoras(); track lora.id) {
-                <label class="check">
+                <label class="lora" [class.on]="lora.selected" [attr.title]="lora.name + ' [ ' + lora.family + ' ]' + (lora.version ? ' ' + lora.version : '')">
                   <input type="checkbox" [checked]="lora.selected" (change)="toggle(lora, $event)" />
-                  <span>{{ lora.label }}</span>
+                  <span class="name">{{ lora.name }}</span>
+                  <span class="meta">
+                    <span class="family">{{ lora.family }}</span>
+                    @if (lora.version) { <span class="version">{{ lora.version }}</span> }
+                  </span>
                 </label>
               }
             </div>
@@ -114,9 +120,44 @@ const KNOBS: readonly { key: Knob; label: string; w: number }[] = [
     .lora-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
     .lora-head h2 { margin: 0; }
     .filter { margin-bottom: 12px; }
-    .choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 2px 24px; align-content: start; }
-    .choices .check { align-items: flex-start; gap: 8px; padding: 5px 0; line-height: 1.3; }
-    .choices .check input { flex: none; margin-top: 1px; }
+    /* One card to a cell, each the same size, so a long name wraps inside its
+       card instead of pushing the column and the row out of step. The card is
+       the whole click target; the box, the name and the tags share one line. */
+    .choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 6px; align-content: start; }
+    .lora {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      grid-template-areas: 'box name' '. tags';
+      column-gap: 8px;
+      row-gap: 3px;
+      align-content: start;
+      min-height: 62px;
+      padding: 8px 10px;
+      border: 1px solid var(--hairline);
+      border-radius: var(--radius-card);
+      background: var(--well);
+      line-height: 1.3;
+      cursor: pointer;
+      transition: border-color 120ms ease, background 120ms ease;
+    }
+    .lora:hover { border-color: var(--rule); background: var(--wash); }
+    .lora.on { border-color: color-mix(in srgb, var(--accent) 55%, transparent); background: var(--rose-wash); }
+    .lora input { grid-area: box; width: 15px; height: 15px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+    .lora .name { grid-area: name; font-size: 12.5px; color: var(--fg); overflow-wrap: anywhere; }
+    /* The list always leaves room for the family and a two-line version, so a
+       row of cards stays one height whether its versions are long or absent. */
+    .lora .meta { grid-area: tags; display: flex; flex-wrap: wrap; gap: 3px 6px; min-height: 17px; }
+    .lora .family, .lora .version {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.04em;
+      color: var(--fg-muted);
+      border: 1px solid var(--rule);
+      border-radius: 2px;
+      padding: 0 4px;
+      overflow-wrap: anywhere;
+    }
+    .lora .version { border-color: transparent; padding: 0; }
     /* Below this width the LoRA list would end up narrower than a name, so the
        two columns stack and each scrolls inside the pane. */
     @media (max-width: 1040px) {
@@ -139,7 +180,8 @@ export class SettingsPage {
   protected readonly shownLoras = computed(() => {
     const needle = this.query().trim().toLowerCase();
     const all = this.loras();
-    return needle ? all.filter((lora) => lora.label.toLowerCase().includes(needle)) : all;
+    const text = (lora: LoraChoice) => [lora.name, lora.family, lora.version].join(' ').toLowerCase();
+    return needle ? all.filter((lora) => text(lora).includes(needle)) : all;
   });
   protected readonly onCount = computed(() => this.loras().filter((lora) => lora.selected).length);
 
@@ -152,12 +194,18 @@ export class SettingsPage {
       label: g,
     })),
   );
+  /** The ids the server stores, paired with the labels it shows. */
   protected readonly schedulers = computed(() => {
-    const labels = this.state()?.schedulers ?? [];
-    return (labels.length ? labels : SCHEDULERS.map((s) => s.label)).map((label) => ({ value: label, label }));
+    const pairs = this.state()?.schedulers ?? [];
+    const rows = pairs.length ? pairs.map((p) => [p.id, p.label] as const) : SCHEDULERS.map((s) => [s.value, s.label] as const);
+    return rows.map(([value, label]) => ({ value, label }));
   });
-  protected readonly checkpoints = computed(() =>
-    (this.state()?.checkpoints ?? ['Base 9B', 'Distilled 9B', 'SNOFS 9B']).map((label) => ({ value: label, label })),
+  /** The scheduler the server stores, as an id the select can match. */
+  protected readonly schedulerValue = computed(() => this.state()?.scheduler ?? SCHEDULERS[0].value);
+
+  /** The server's labels, which is also what it accepts back; the value is the word itself. */
+  protected readonly checkpoints = computed<readonly string[]>(
+    () => this.state()?.checkpoints ?? ['Base 9B', 'Distilled 9B', 'SNOFS 9B'],
   );
 
   constructor() {
@@ -188,11 +236,13 @@ export class SettingsPage {
     void this.store.act('settings', 'set_knobs', { [key]: value });
   }
 
-  protected set(
-    args: Record<string, unknown>,
-    action: 'set_knobs' | 'select_checkpoint' | 'save' = 'set_knobs',
-  ): void {
+  protected set(args: Record<string, unknown>, action: 'set_knobs' | 'select_checkpoint' = 'set_knobs'): void {
     void this.store.act('settings', action, args);
+  }
+
+  /** Every field was already written by its own change; Save reads the server's form. */
+  protected save(): void {
+    void this.store.act('settings', 'save');
   }
 
   protected toggle(lora: LoraChoice, event: Event): void {

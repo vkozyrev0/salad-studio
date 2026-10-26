@@ -55,15 +55,23 @@ interface TokensState {
             <div class="control">
               <input
                 [id]="'key-' + slot.id"
-                [type]="revealed().has(slot.id) ? 'text' : 'password'"
-                [value]="draft()[slot.id] ?? ''"
-                [placeholder]="slot.present ? slot.hint : 'not set'"
+                [type]="revealOf(slot.id) || draft()[slot.id] ? 'text' : 'password'"
+                [value]="draft()[slot.id] ?? revealOf(slot.id)"
+                [placeholder]="revealOf(slot.id) ? '' : slot.present ? slot.hint : 'not set'"
                 (input)="edit(slot.id, $event)"
                 autocomplete="off"
                 spellcheck="false"
+                [attr.aria-label]="slot.label + ' key'"
               />
-              <button type="button" class="reveal" (click)="toggle(slot.id)" [attr.aria-pressed]="revealed().has(slot.id)">
-                {{ revealed().has(slot.id) ? 'Hide' : 'Show' }}
+              <button
+                type="button"
+                class="reveal"
+                [disabled]="!slot.present && !revealOf(slot.id)"
+                [attr.aria-pressed]="revealOf(slot.id)"
+                [attr.title]="slot.present ? 'Read the saved ' + slot.label + ' key into this box' : 'No saved key to read'"
+                (click)="toggle(slot.id)"
+              >
+                {{ revealOf(slot.id) ? 'Hide' : 'Show' }}
               </button>
             </div>
             <button
@@ -162,8 +170,7 @@ export class TokensPage {
   /** The five labels to draw while the first reply is in flight. */
   protected readonly slotLabels = ['Salad', 'Hugging Face', 'Civitai', 'DeepSeek', 'Vast.ai'];
 
-  /** Revealed slots and typed values live here only: the server never learns a reveal. */
-  protected readonly revealed = signal(new Set<string>());
+  /** What the person typed. Never a saved key: a reveal is drawn beside it. */
   protected readonly draft = signal<Record<string, string>>({});
   /** The slot whose check is in flight, so only its own row shows the spinner. */
   protected readonly checking = signal<string | null>(null);
@@ -173,11 +180,24 @@ export class TokensPage {
     this.draft.set({ ...this.draft(), [id]: value });
   }
 
+  /**
+   * Show asks the server for this one saved key and puts it in the box; Hide
+   * takes it away. The key is drawn from the reveal, never from a draft, so a
+   * box typed in is always the person's own text.
+   */
   protected toggle(id: string): void {
-    const next = new Set(this.revealed());
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    this.revealed.set(next);
+    if (this.store.revealed()?.id === id) {
+      this.store.revealed.set(null);
+      return;
+    }
+    this.store.revealed.set(null);
+    void this.store.act('tokens', 'reveal', { id });
+  }
+
+  /** The key this row's Show was answered with, while that row is the shown one. */
+  protected revealOf(id: string): string {
+    const reveal = this.store.revealed();
+    return reveal?.id === id ? reveal.value : '';
   }
 
   protected busy(action: string): boolean {
@@ -192,6 +212,6 @@ export class TokensPage {
   /** Check one provider's saved key, not all five. */
   protected checkOne(id: string): void {
     this.checking.set(id);
-    void this.store.act('tokens', 'check_keys', { kinds: [id] });
+    void this.store.act('tokens', 'check_keys', { kinds: [id] }).finally(() => this.checking.set(null));
   }
 }

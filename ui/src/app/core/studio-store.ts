@@ -46,6 +46,10 @@ export class StudioStore {
   readonly logLines = signal<{ level: Level; text: string }[]>([]);
   readonly dialog = signal<Extract<Effect, { kind: 'dialog' }> | null>(null);
   readonly confirm = signal<Extract<Effect, { kind: 'confirm' }> | null>(null);
+  /** The one key a row's Show asked for. It lives here, not in the page state. */
+  readonly revealed = signal<Extract<Effect, { kind: 'reveal' }> | null>(null);
+  /** What each provider last answered, laid over the slots a page was loaded with. */
+  readonly tokenStates = signal<Record<string, string>>({});
   readonly inFlight = signal<ReadonlySet<string>>(new Set());
   /** A page GET is running; a grid shows its spinner, not its empty copy. */
   readonly loading = signal(false);
@@ -176,6 +180,8 @@ export class StudioStore {
       if (effect.kind === 'dialog') this.dialog.set(effect);
       else if (effect.kind === 'confirm') this.confirm.set(effect);
       else if (effect.kind === 'navigate') void this.router.navigateByUrl('/' + effect.page);
+      else if (effect.kind === 'reveal') this.revealed.set(effect);
+      else if (effect.kind === 'token_state') this.tokenStates.update((states) => ({ ...states, ...effect.states }));
     }
   }
 

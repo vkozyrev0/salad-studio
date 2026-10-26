@@ -16,7 +16,11 @@ export interface ShellState {
 export type Effect =
   | { kind: 'dialog'; title: string; body: string; level: Level }
   | { kind: 'confirm'; token: string; title: string; body: string }
-  | { kind: 'navigate'; page: string };
+  | { kind: 'navigate'; page: string }
+  /** One row's saved key, handed to the page that pressed Show. Never broadcast. */
+  | { kind: 'reveal'; id: string; value: string }
+  /** One provider's last answer, so a Check turns its own dot. */
+  | { kind: 'token_state'; states: Record<string, string> };
 
 export interface ActionReply {
   ok: boolean;

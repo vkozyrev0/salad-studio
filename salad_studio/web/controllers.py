@@ -14,10 +14,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-# The top-level module, which is the one the page's token code and the dev
-# server's isolation both configure. ``salad_studio.tokens`` is a second copy
-# with its own path constant; a controller that used it would read a different
-# store from the one the rest of the studio writes.
+# Both spellings are one module: the package binds the short name to the same
+# object when it loads, so importing either reads the same store file.
+import profiles
 import tokens
 from salad_studio.web.shell import GenWord
 
@@ -52,6 +51,7 @@ class TokensController:
     def register(self, table: Any) -> None:
         table.action("tokens.view")(self.view)
         table.action("tokens.save_key", need={"values": dict})(self.save_key)
+        table.action("tokens.reveal", need={"id": str})(self.reveal)
         table.action("tokens.check_keys")(self.check_keys)
 
     def view(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:
@@ -81,6 +81,8 @@ class TokensController:
 
     def save_key(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:
         values = payload["values"]
+        if not isinstance(values, dict) or set(values) - dict(SLOTS).keys():
+            raise ValueError("values must name known token kinds")
         saved: list[str] = []
         for kind, label in SLOTS:
             if kind not in values:
@@ -100,6 +102,26 @@ class TokensController:
             f"Saved {', '.join(saved)}. Check keys confirms each one." if saved
             else "Nothing to save: every field was empty.",
             level="ok" if saved else "warn")
+        return self.state()
+
+    def reveal(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:
+        """One row's Show: hand that row's saved key to the page that asked.
+
+        The key travels in this reply only. ``state`` still carries no key, and
+        a reveal is not published to the event stream, so no other tab and no
+        later page read ever sees it. It writes nothing: reading a key back is
+        not saving it.
+        """
+        kind = payload["id"]
+        if kind not in dict(SLOTS):
+            ctx.note(f"Refused: {kind!r} is not a provider key", level="warn")
+            return self.state()
+        raw = _slot_value(kind)
+        if not raw:
+            ctx.note(f"No {dict(SLOTS)[kind]} key is saved to show.", level="warn")
+            return self.state()
+        ctx.effects.append({"kind": "reveal", "id": kind, "value": raw})
+        ctx.note(f"Showing the {dict(SLOTS)[kind]} key. Hide puts it away.", level="ok")
         return self.state()
 
     def check_keys(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:
@@ -135,6 +157,9 @@ class TokensController:
                 ctx.note(f"Could not check the keys: {result}", level="error")
                 return
             self.states.update(result)
+            # The answer belongs to this row, so it rides the reply: the page
+            # turns its own dot without waiting for a reload.
+            ctx.effects.append({"kind": "token_state", "states": dict(result)})
             if len(wanted) == 1:
                 label = labels[wanted[0]]
                 word = {"valid": "accepted", "invalid": "rejected"}.get(
@@ -269,7 +294,8 @@ class ShellController:
 
     def _dispatch_refusal(self, body: dict[str, Any], profile: Any) -> str:
         """Why this press cannot be queued at all, in the page's words; "" when it can."""
-        from salad_studio import profiles, vast
+        import profiles
+        import vast
 
         if profile.mode == "vast":
             gateway = profile.gateway.strip()

@@ -4,6 +4,10 @@ The server's tests need the same few lines in every module: a core thread, a
 shell, the controllers, and every store path pointed away from the user's own
 files. This builds that and puts the paths back, so a test that drives the
 studio never reads or writes ``~/.config/salad``.
+
+Each store is one module object. The package binds its short name and its
+package name to the same object when it loads, so moving the object the app
+holds moves every spelling of it.
 """
 from __future__ import annotations
 
@@ -26,6 +30,7 @@ class Studio:
         # Imported here so a module that patches a store at import time still
         # gets the object this fixture moves.
         import image_deploy
+        import lora_store
         import profiles
         import prompt_catalog
         import prompt_history
@@ -34,72 +39,32 @@ class Studio:
         import tokens
         import vast
 
-        from salad_studio import salad_queue as pkg_queue
-
-        # Both spellings of the stores the studio reads: the salting of
-        # ``salad_studio`` alongside the package makes a second copy of each.
-        from salad_studio import image_deploy as pkg_image_deploy
-        from salad_studio import profiles as pkg_profiles
-        from salad_studio import prompt_catalog as pkg_catalog
-        from salad_studio import prompt_history as pkg_history
-        from salad_studio import tokens as pkg_tokens
-        from salad_studio import studio_meta as pkg_meta
-        from salad_studio import vast as pkg_vast
-
-        self._modules = (image_deploy, profiles, prompt_catalog, prompt_history,
-                         salad_queue, pkg_queue, tokens, vast, studio_meta,
-                         pkg_image_deploy, pkg_profiles, pkg_catalog, pkg_history,
-                         pkg_tokens, pkg_meta, pkg_vast)
+        self._modules = (image_deploy, lora_store, profiles, prompt_catalog, prompt_history,
+                         salad_queue, studio_meta, tokens, vast)
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self._saved: list[tuple[object, str, object]] = [
-            (profiles, "PROFILES_PATH", profiles.PROFILES_PATH),
-            (image_deploy, "SETTINGS_PATH", image_deploy.SETTINGS_PATH),
-            (prompt_catalog, "CATALOG_PATH", prompt_catalog.CATALOG_PATH),
-            (prompt_history, "HISTORY_PATH", prompt_history.HISTORY_PATH),
-            (prompt_history, "THUMBS_DIR", prompt_history.THUMBS_DIR),
-            (vast, "INSTANCES_PATH", vast.INSTANCES_PATH),
-            (salad_queue, "LEDGER_PATH", salad_queue.LEDGER_PATH),
-            (pkg_queue, "LEDGER_PATH", pkg_queue.LEDGER_PATH),
-            (tokens, "LOCAL_PATH", tokens.LOCAL_PATH),
-            (tokens, "default_path", tokens.default_path),
-            (tokens, "read_env_token", tokens.read_env_token),
-            (tokens, "seed_from_defaults", tokens.seed_from_defaults),
-        ]
-        for module in (pkg_image_deploy, pkg_profiles, pkg_catalog, pkg_history, pkg_tokens, pkg_meta, pkg_vast):
-            for name in ("PROFILES_PATH", "SETTINGS_PATH", "CATALOG_PATH", "HISTORY_PATH",
-                         "THUMBS_DIR", "INSTANCES_PATH", "LOCAL_PATH", "default_path",
-                         "read_env_token", "seed_from_defaults"):
+        moves = {
+            "PROFILES_PATH": root / "studio-profiles.json",
+            "SETTINGS_PATH": root / "studio-images.json",
+            "CATALOG_PATH": root / "studio-prompt-catalog.json",
+            "HISTORY_PATH": root / "studio-prompt-history.json",
+            "THUMBS_DIR": root / "studio-prompt-thumbs",
+            "INSTANCES_PATH": root / "studio-vast.json",
+            "LEDGER_PATH": root / "studio-queue.json",
+            "LOCAL_PATH": root / "studio-tokens.json",
+            "EXTRAS_PATH": root / "studio-loras.json",
+        }
+        self._saved: list[tuple[object, str, object]] = []
+        for module in self._modules:
+            for name, value in moves.items():
                 if hasattr(module, name):
                     self._saved.append((module, name, getattr(module, name)))
-        profiles.PROFILES_PATH = root / "studio-profiles.json"
-        image_deploy.SETTINGS_PATH = root / "studio-images.json"
-        prompt_catalog.CATALOG_PATH = root / "studio-prompt-catalog.json"
-        prompt_history.HISTORY_PATH = root / "studio-prompt-history.json"
-        prompt_history.THUMBS_DIR = root / "studio-prompt-thumbs"
-        vast.INSTANCES_PATH = root / "studio-vast.json"
-        salad_queue.LEDGER_PATH = root / "studio-queue.json"
-        pkg_queue.LEDGER_PATH = root / "studio-queue.json"
-        tokens.LOCAL_PATH = root / "studio-tokens.json"
+                    setattr(module, name, value)
+        for name in ("default_path", "read_env_token", "seed_from_defaults"):
+            self._saved.append((tokens, name, getattr(tokens, name)))
         tokens.default_path = lambda _kind: root / "no-default"
         tokens.read_env_token = lambda _kind: ""
         tokens.seed_from_defaults = lambda: []
-        for module in (pkg_image_deploy, pkg_profiles, pkg_catalog, pkg_history, pkg_tokens, pkg_meta, pkg_vast):
-            for name, value in (("PROFILES_PATH", root / "studio-profiles.json"),
-                                ("SETTINGS_PATH", root / "studio-images.json"),
-                                ("CATALOG_PATH", root / "studio-prompt-catalog.json"),
-                                ("HISTORY_PATH", root / "studio-prompt-history.json"),
-                                ("THUMBS_DIR", root / "studio-prompt-thumbs"),
-                                ("INSTANCES_PATH", root / "studio-vast.json"),
-                                ("LOCAL_PATH", root / "studio-tokens.json"),
-                                ("USER_PATH", root / "studio-metadata.json"),
-                                ("INSTANCES_PATH", root / "studio-vast.json")):
-                if hasattr(module, name):
-                    setattr(module, name, value)
-            if hasattr(module, "default_path"):
-                module.default_path = lambda _kind, _root=root: _root / "no-default"
-                module.read_env_token = lambda _kind: ""
-                module.seed_from_defaults = lambda: []
 
         from salad_studio.web import app
 

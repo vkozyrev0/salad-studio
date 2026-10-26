@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from salad_studio import lora_store, profiles
+import lora_store
+import profiles
 
 
 @dataclass

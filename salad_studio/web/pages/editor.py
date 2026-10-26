@@ -39,6 +39,9 @@ class EditorController:
 
     def register(self, table: Any) -> None:
         table.action("editor.view")(self.view)
+        # Registered for the table's own checks; the page never posts it.
+        # History reaches this method through the table, and registering the
+        # method is what makes that call legal.
         table.action("editor.recall")(self.recall)
         table.action("editor.set_json", need={"text": str, "base": int})(self.set_json)
         table.action("editor.set_prompt", need={"positive": str, "negative": str})(self.set_prompt)
@@ -397,7 +400,7 @@ def _from_form(form: Any, stored: Any) -> dict[str, Any]:
 
 
 def _profile(studio: Any) -> Any:
-    from salad_studio import profiles
+    import profiles
 
     return profiles.SaladProfile(name=studio.form.name)
 

@@ -4,10 +4,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-for _p in (Path(__file__).resolve().parent, Path(__file__).resolve().parent.parent):
+for _p in (Path(__file__).resolve().parents[1], Path(__file__).resolve().parent):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
+import run_salad_studio  # noqa: E402; F401  the loader binds the stores first
 from salad_studio.web import app  # noqa: E402
 
 

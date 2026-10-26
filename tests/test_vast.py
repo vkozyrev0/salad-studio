@@ -24,7 +24,8 @@ for _p in (PKG, HERE.parent):
         sys.path.insert(0, str(_p))
 
 from salad_studio import generator, profiles, tokens as tok  # noqa: E402
-import salad_studio.vast as vast  # noqa: E402  the copy the page controller writes through
+import salad_studio  # noqa: E402
+vast = salad_studio.vast  # the object the page controller writes through
 from tests._paths import _TempPaths  # noqa: E402
 
 # The store ``vast.py`` ships, read by executing the file rather than by reading

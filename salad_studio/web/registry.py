@@ -12,7 +12,7 @@ server.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from salad_studio.web.actions import Registry, to_error, ActionError
 

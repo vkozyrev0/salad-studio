@@ -9,14 +9,17 @@ having asked.
 from __future__ import annotations
 
 import secrets
+from pathlib import Path
 from dataclasses import dataclass, field, replace
 from typing import Any
 
 import hostings  # noqa: E402  the top-level module the profile's mode is read from
-from salad_studio import profiles, salad_status
+import profiles
+from salad_studio import salad_status
 from salad_studio.web.form import Form
 
 REST_TEXT = "Start on Config: pick a profile and its target.   Ctrl+Tab moves between pages."
+PLATE_LIMIT = 60
 LEVELS = ("info", "ok", "warn", "error")
 
 
@@ -102,6 +105,7 @@ class Shell:
         self.publish()
 
     def stored_profile(self) -> profiles.SaladProfile | None:
+        """The saved profile the form edits."""
         return profiles.load_all().get(self.form.name)
 
     # -- pages

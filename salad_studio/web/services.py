@@ -22,7 +22,9 @@ import hostings  # noqa: E402  the top-level module the queue and the generator 
 import salad_queue as queue_mod
 from PIL import Image
 
-from salad_studio import generator, profiles, salad_status, studio_log, tokens
+import profiles
+from salad_studio import generator, salad_status, studio_log
+import tokens
 from salad_studio.web.shell import GenWord
 
 ART = Path(os.environ.get("ELDERMARK_ART", r"C:\Users\vkozy\repos\lifesim-design\art"))
@@ -130,13 +132,13 @@ class WebServices:
 
     # -- timers
 
-    def start(self, *, timers: bool = True) -> None:
+    def start(self, *, timers: bool = True, probe_after_ms: int = 500) -> None:
         """Bind the queue, and start the probe and generation timers unless a test asks not to."""
         self.bind()
         if not timers:
             return
         self._timers = [
-            self.core.call_later(500, lambda: self.check_salad(silent=True)),
+            self.core.call_later(probe_after_ms, lambda: self.check_salad(silent=True)),
             self.core.every(SALAD_POLL_MS, self._salad_tick),
             self.core.every(GEN_TICK_MS, self._gen_tick),
         ]

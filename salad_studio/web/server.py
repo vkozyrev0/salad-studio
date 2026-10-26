@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import re
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,6 +29,9 @@ HOST = "127.0.0.1"
 MAX_BODY = 8 * 1024 * 1024
 BODY_TIMEOUT_S = 15.0
 EVENT_WAIT_S = 15.0
+# A build names each script and stylesheet by its content hash; anything else
+# is the document or a public file, which keeps `no-cache`.
+HASHED = "private, max-age=31536000, immutable"
 
 MISSING_BUILD = """<!doctype html><meta charset="utf-8">
 <title>Salad Studio</title>
@@ -86,6 +90,10 @@ class StudioServer(ThreadingHTTPServer):
 class StudioHandler(BaseHTTPRequestHandler):
     server: StudioServer
     protocol_version = "HTTP/1.1"
+    # The body read has its own timeout; a peer that stops reading a response
+    # needs the same bound, and neither that read's reset nor this one should
+    # leak back to a request the client already answered.
+    timeout = BODY_TIMEOUT_S
 
     def log_message(self, _fmt: str, *_args: Any) -> None:
         pass
@@ -99,9 +107,6 @@ class StudioHandler(BaseHTTPRequestHandler):
                                               "message": "this server answers its own page only"}})
         if path == "/api/events":
             return self._events()
-        if path == "/api/health":
-            names = list(self.server.registry.names()) if self.server.registry is not None else []
-            return self._json(200, {"ok": True, "actions": names})
         if path == "/api/action":
             return self._json(405, {"error": {"kind": "method", "message": "POST an action"}})
         if path.startswith("/api/page/"):
@@ -114,7 +119,12 @@ class StudioHandler(BaseHTTPRequestHandler):
             return self._thumb(path[len("/api/thumbs/"):])
         if path.startswith("/api/"):
             return self._json(404, {"error": {"kind": "not_found", "message": path}})
-        return self._static(path)
+        # A route it cannot serve is a 404, the same answer `/api` gives for a
+        # name it does not know, rather than a 500 and a traceback on stderr.
+        try:
+            return self._static(path)
+        except Exception:  # noqa: BLE001 - an unknown route is a 404, not a broken server
+            return self._json(404, {"error": {"kind": "not_found", "message": path}})
 
     def do_POST(self) -> None:
         path = urlsplit(self.path).path
@@ -140,16 +150,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                 return self._json(500, {"error": {"kind": "failed",
                                                   "message": "the action failed; see the Studio log"}})
             return self._json(status, payload)
-        try:
-            result = self.server.registry.call(request["action"], request.get("payload", {}))
-        except Exception:  # noqa: BLE001 - same guard for the registry-only path
-            self.server.log("error", "the action table failed before it could answer")
-            return self._json(500, {"error": {"kind": "failed",
-                                              "message": "the action failed; see the Studio log"}})
-        if result.error is not None:
-            status = 400 if result.error.kind in ("unknown_action", "bad_payload") else 200
-            return self._json(status, {"ok": False, "error": result.error.as_dict()})
-        self._json(200, {"ok": True, "data": result.data})
+        return self._json(503, {"error": {"kind": "not_ready",
+                                          "message": "the studio is not accepting actions yet"}})
 
     def do_OPTIONS(self) -> None:
         self.send_response(204)
@@ -311,9 +313,20 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-cache")
+        # Angular names a hashed script or stylesheet after its own bytes, so a
+        # new build gives it a new name and the old one can never change. The
+        # document keeps `no-cache`, because it is the file that names them.
+        self.send_header("Cache-Control", HASHED if _hashed(target.name) else "no-cache")
         self.end_headers()
         self.wfile.write(data)
+
+
+def _hashed(name: str) -> bool:
+    """Whether Angular gave this file its content hash, as in ``main-ABCDEFGH.js``."""
+    return bool(_HASHED_NAME.match(name))
+
+
+_HASHED_NAME = re.compile(r"^.+-[A-Za-z0-9_]{8,}\.(?:m?js|css)$")
 
 
 def serve(registry: Registry, *, dist: Path | None, port: int,

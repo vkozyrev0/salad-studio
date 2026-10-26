@@ -256,15 +256,17 @@ class WebServices:
         return GenOutcome("done", out=Path(out))
 
     def clean_gallery(self) -> int:
-        """Delete every plate in the output folder and return how many went."""
-        removed = 0
-        for path in self.plates(limit=10_000):
-            try:
-                path.unlink()
-                removed += 1
-            except OSError:
-                continue
+        """Empty the gallery: every history row loses its picture, and those thumbnails go.
+
+        The rows stay, so Prompt History still lists the renders and their
+        metadata; only the gallery is cleared.
+        """
+        from salad_studio import prompt_history
+
+        keys = {str(entry.get("key") or "") for entry in prompt_history.list_prompts() if entry.get("image")}
+        _changed, removed = prompt_history.forget_images(keys)
         self._thumb_cache.clear()
+        self.shell.refresh_plates()
         return removed
 
     # -- the plates

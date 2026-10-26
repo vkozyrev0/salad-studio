@@ -340,6 +340,42 @@ def write_thumb(src: Path, *, ts: int | None = None, key: str = "") -> Path | No
         return None
 
 
+def image_of(key: str) -> Path | None:
+    """The image file recorded on the row ``key`` names, when it is still there."""
+    for row in _load():
+        if str(row.get("key") or "") != str(key):
+            continue
+        image = Path(str(row.get("image") or ""))
+        return image if image.is_file() else None
+    return None
+
+
+def forget_images(keys: set[str]) -> tuple[int, int]:
+    """Drop the image from each named row and delete that row's thumbnail.
+
+    Returns ``(rows changed, thumbnails removed)``. The rows stay: the render is
+    still history, and hidden only by its thumbnail going.
+    """
+    rows = _load()
+    changed = 0
+    removed = 0
+    for row in rows:
+        if str(row.get("key") or "") not in keys or not row.get("image"):
+            continue
+        image = Path(str(row.get("image") or ""))
+        try:
+            if image.is_file() and THUMBS_DIR.resolve() in image.resolve().parents:
+                image.unlink()
+                removed += 1
+        except OSError:
+            pass
+        row["image"] = ""
+        changed += 1
+    if changed:
+        _save(rows)
+    return changed, removed
+
+
 def attach_image(src: Path, *, ts: int | None = None, key: str = "") -> Path | None:
     """Attach a generated plate to the row ``key`` or ``ts`` names.
 

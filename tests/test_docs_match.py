@@ -228,17 +228,10 @@ class RootReadmeTestCount(unittest.TestCase):
                 )
 
     def _whole_count(self) -> int:
-<<<<<<< HEAD
-        """Every test here: a module this process has not imported yet is loaded to count it."""
-        loader = unittest.defaultTestLoader
-        per_module = sum(loader.loadTestsFromName(path.stem).countTestCases()
-                         for path in HERE.glob("test_*.py"))
-=======
         """Every test here: a module this run has not imported is loaded to count it."""
         loader = unittest.defaultTestLoader
         per_module = sum(loader.loadTestsFromName(p.stem).countTestCases()
                          for p in HERE.glob("test_*.py"))
->>>>>>> a179106 (fixup! Let the Tokens page show and check one key at a time)
         return max(per_module, self._real_count())
 
 

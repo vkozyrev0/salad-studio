@@ -195,9 +195,13 @@ class AssistController:
         return args.get(name, default) if isinstance(args, dict) else default
 
     def _latest_image(self) -> Path | None:
-        # The plate cache the shell already fills, rather than a second scan of the folder.
+        """The newest render's picture, from the gallery the shell already filled."""
         plates = self.studio.plates
-        return self.studio.services.plate_path(plates[0][0]) if plates else None
+        if not plates:
+            return None
+        from salad_studio import prompt_history
+
+        return prompt_history.image_of(plates[0][0])
 
 
 def _boxes_from(controller: Any, payload: dict[str, Any], ctx: Any) -> dict[str, Any]:

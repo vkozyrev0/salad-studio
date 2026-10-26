@@ -148,8 +148,24 @@ class Shell:
     # -- the strip and the counters
 
     def refresh_plates(self) -> None:
-        plates = tuple((p.name, f"/api/plates/{p.name}") for p in self.services.plates())
-        self.plates = plates
+        """The gallery: the newest history entries that have an image.
+
+        A plate used to be a file in one output folder. The history is where a
+        render is recorded, image and metadata together, so the gallery reads
+        it there and a finished render appears without anything being moved.
+        """
+        from salad_studio import prompt_history
+
+        plates: list[tuple[str, str]] = []
+        for entry in prompt_history.list_prompts():
+            image = Path(str(entry.get("image") or ""))
+            key = str(entry.get("key") or "")
+            if not key or image.suffix.lower() not in (".jpg", ".jpeg", ".png") or not image.is_file():
+                continue
+            plates.append((key, f"/api/thumbs/{image.name}"))
+            if len(plates) >= PLATE_LIMIT:
+                break
+        self.plates = tuple(plates)
 
     def refresh_counts(self) -> None:
         self.counts = salad_status.strip_counts(self.services.snaps)

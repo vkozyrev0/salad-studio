@@ -147,15 +147,23 @@ class RenderPathTest(unittest.TestCase):
             self.assertTrue(rows[older["key"]].get("image"))
             self.assertFalse(rows[newer["key"]].get("image"))
 
-    def test_assist_finds_the_latest_plate_in_the_output_folder(self) -> None:
+    def test_assist_finds_the_latest_render_in_the_history(self) -> None:
+        """The gallery is the history, so the picture Assist can attach is that row's image."""
+        import base64
+
+        import prompt_history
+
         with studio() as made:
-            out = Path(made.studio.services.out_dir)
-            out.mkdir(parents=True, exist_ok=True)
-            plate = out / "studio_assist.png"
-            plate.write_bytes(b"\x89PNG\r\n\x1a\n")
+            # A 1x1 PNG, written here so the test needs no fixture on disk.
+            src = Path(made.tmp.name) / "seed.png"
+            src.write_bytes(base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="))
+            entry = prompt_history.add_request(
+                {"prompt": {"1": {"class_type": "CLIPTextEncode", "inputs": {"text": "assist"}}}})
+            thumb = prompt_history.attach_image(src, key=entry["key"])
             made.studio.refresh_plates()
             assist = made.studio.controllers.get("assist")
-            self.assertEqual(assist._latest_image(), plate)
+            self.assertEqual(assist._latest_image(), thumb)
 
     def test_a_png_plate_is_listed(self) -> None:
         with studio() as made:

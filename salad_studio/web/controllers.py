@@ -14,8 +14,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-# Both spellings are one module: the package binds the short name to the same
-# object when it loads, so importing either reads the same store file.
+# The top-level module, which is the one the page's token code and the dev
+# server's isolation both configure. ``salad_studio.tokens`` is a second copy
+# with its own path constant; a controller that used it would read a different
+# store from the one the rest of the studio writes.
 import profiles
 import tokens
 from salad_studio.web.shell import GenWord
@@ -254,7 +256,8 @@ class ShellController:
                 "kind": "confirm",
                 "token": self.studio.issue_confirm("shell", "clean_gallery", {}),
                 "title": "Clean the gallery",
-                "body": "This deletes every plate in the output folder. It cannot be undone.",
+                "body": ("This removes the picture from every render in the gallery. "
+                         "The renders stay in Prompt History; it cannot be undone."),
             })
             return {}
         removed = self.studio.services.clean_gallery()
@@ -263,12 +266,15 @@ class ShellController:
         return {}
 
     def open_plate(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:
-        path = self.studio.services.plate_path(payload["name"])
+        """A plate is a history row's image, named by that row's key."""
+        from salad_studio import prompt_history
+
+        path = prompt_history.image_of(payload["name"])
         if path is None:
-            ctx.note(f"No plate named {payload['name']}.", level="warn")
+            ctx.note("That render's picture is gone from the history.", level="warn")
             return {}
         self.studio.services.open_path(path)
-        ctx.note(f"Opened {path.name}", level="info")
+        ctx.note(f"Opened the render from {path.name}", level="info")
         return {}
 
     # -- helpers

@@ -7,8 +7,10 @@ Angular dev server, so `/api` answers:
 python -m salad_studio
 ```
 
-The server serves `ui/dist/ui/browser`, which is committed. After changing
-anything under `ui/src`, rebuild and commit the output:
+The server serves `ui/dist/`, which is not committed. It builds the page itself
+when the build is missing or its source changed, so a change under `ui/src`
+needs no separate step: restart `python -m salad_studio`. To make the build by
+hand:
 
 ```powershell
 cd ui

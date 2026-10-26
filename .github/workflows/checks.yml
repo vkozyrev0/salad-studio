@@ -52,10 +52,18 @@ jobs:
         run: npm ci
       - name: Build
         run: npx ng build
-      - name: The committed page matches its source
+      # `ui/dist` is not committed. With no build on disk the server must make
+      # one and serve it, which is what a fresh clone asks of it.
+      - name: The server builds its page when none is present
+        working-directory: .
         run: |
-          git add -A dist
-          git diff --cached --exit-code
+          python -c "import sys; sys.path.insert(0, 'salad_studio')
+from salad_studio.web import app
+assert not (app.DIST / 'index.html').exists(), 'a build is already on disk'
+assert app.build_page(), 'build_page did not build'
+assert (app.DIST / 'index.html').is_file()
+assert app.build_page() is False, 'an unchanged source was built twice'"
+
       - name: Unit tests
         run: npx ng test --watch=false
       - name: Template bindings

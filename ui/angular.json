@@ -26,7 +26,11 @@
             ],
             "styles": [
               "src/styles.css"
-            ]
+            ],
+            "outputPath": {
+              "base": "dist",
+              "browser": "ui"
+            }
           },
           "configurations": {
             "production": {

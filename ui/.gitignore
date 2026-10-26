@@ -1,8 +1,12 @@
 # See https://docs.github.com/get-started/getting-started-with-git/ignoring-files for more about ignoring files.
 
-# Compiled output is committed on purpose: `python -m salad_studio` serves the
-# page with no Node toolchain. Rebuild with `cd ui && npx ng build`; a stale
-# build shows as a missing asset rather than a wrong page.
+# Compiled output is not source: a build stamps its own name into `dist/` (a
+# hash on every chunk, a name per style sheet), so a committed copy differs on
+# every rebuild even when the page did not change. `python -m salad_studio`
+# builds `dist/ui` (the builder writes its cache there too) when its content
+# differs from `src`, so a clone runs the page
+# without anyone remembering to rebuild first.
+/dist
 /tmp
 /out-tsc
 /bazel-out

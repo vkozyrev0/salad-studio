@@ -16,3 +16,20 @@ salad_klein/weights/
 
 # Session scratch: spike scripts, logs, screenshots. Never committed.
 .audit/
+
+# Build caches and machine-local state.
+ui/.angular/
+.claude/settings.local.json
+
+# Temporary files: editor swap files, browser downloads, logs, the studio's
+# own run output. Anything a run drops here is not part of the program.
+tmp/
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+*.log
+*.crdownload
+*.part
+*.png.tmp

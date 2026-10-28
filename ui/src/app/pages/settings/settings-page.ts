@@ -22,6 +22,7 @@ interface SettingsState {
   scheduler?: string;
   checkpoints?: string[];
   checkpoint?: string;
+  removeBg?: boolean;
   loras?: LoraChoice[];
 }
 
@@ -61,6 +62,10 @@ const KNOBS: readonly { key: Knob; label: string; w: number }[] = [
           <app-field class="wide" label="Graph" kind="select" [value]="state()?.graph ?? ''" [options]="graphs()" [w]="0" (changed)="set({ graph: $event })" />
           <app-field class="wide" label="Scheduler" [id]="'settings-scheduler'" kind="select" [value]="schedulerValue()" [options]="schedulers()" [w]="0" (changed)="set({ scheduler: $event })" />
           <app-field class="wide" label="Checkpoint" [id]="'settings-checkpoint'" kind="select" [value]="state()?.checkpoint ?? ''" [choices]="checkpoints()" [w]="0" (changed)="set({ checkpoint: $event }, 'select_checkpoint')" />
+          <label class="remove-bg">
+            <input type="checkbox" [checked]="state()?.removeBg ?? false" (change)="setRemoveBg($event)" />
+            <span>Remove background</span>
+          </label>
 
           <div class="save">
             <button class="btn primary" type="button" [disabled]="busy('save')" (click)="save()">
@@ -114,7 +119,9 @@ const KNOBS: readonly { key: Knob; label: string; w: number }[] = [
       overflow-x: hidden;
       padding-right: 12px;
     }
-    .knobs .wide { grid-column: 1 / -1; }
+    .knobs .wide, .knobs .remove-bg { grid-column: 1 / -1; }
+    .remove-bg { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--fg); cursor: pointer; }
+    .remove-bg input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); cursor: pointer; }
     .save { grid-column: 1 / -1; margin-top: 6px; }
     .loras { min-height: 0; overflow-y: auto; overflow-x: hidden; padding-right: 12px; border-left: 1px solid var(--hairline); }
     .lora-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
@@ -243,6 +250,12 @@ export class SettingsPage {
   /** Every field was already written by its own change; Save reads the server's form. */
   protected save(): void {
     void this.store.act('settings', 'save');
+  }
+
+  /** The server keeps "on" or ""; the box shows the reply's value like every other control. */
+  protected setRemoveBg(event: Event): void {
+    const on = (event.target as HTMLInputElement).checked;
+    void this.store.act('settings', 'set_knobs', { remove_bg: on ? 'on' : '' });
   }
 
   protected toggle(lora: LoraChoice, event: Event): void {

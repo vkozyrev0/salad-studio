@@ -92,8 +92,8 @@ def remove_background(plate: Path, *, model: str = DEFAULT_MODEL,
         source = img.convert("RGBA")
     if session is None:
         session = _session(model)
-    # rembg's own remove() also clears low-alpha specks and softens the edge;
-    # the mask itself is what makes the rest of the plate transparent.
+    # rembg's remove() would also clear faint specks and soften the edge; the
+    # mask is the part that decides what is subject.
     source.putalpha(session.predict(source)[0])
     fd, tmp = tempfile.mkstemp(prefix=out.name + ".", suffix=".tmp", dir=str(out.parent))
     os.close(fd)

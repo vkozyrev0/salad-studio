@@ -107,8 +107,10 @@ keys move through its cells, and a click selects the row.
 - **Prompt Settings**. **Width**, **Height**, **Steps**, **CFG**, **Seed**,
   **Graph** (Flux.2 Klein / Flux.1 Dev), **Scheduler** (Flux2 (Klein) / Simple
   (Civitai)), the **Checkpoint** (Base 9B / Distilled 9B / SNOFS 9B) and the
-  **LoRA** checkboxes. **Save to profile** writes the form. The Prompt Editor's
-  JSON is rebuilt from these values.
+  **LoRA** checkboxes, and **Remove background**, which cuts every new plate
+  through rembg and writes `<plate>-cutout.png` beside it. **Save to profile**
+  writes the form; the cutout box is not a profile field, because the cut runs
+  after the plate exists. The Prompt Editor's JSON is rebuilt from these values.
 - **Tokens**. Salad, Hugging Face, Civitai, DeepSeek and Vast.ai keys in
   `studio-tokens.json` (gitignored). Empty slots copy from `~/.config`; DeepSeek
   also reads `DEEPSEEK_API_KEY` when no file has one (never copied in). Vast.ai
@@ -344,12 +346,16 @@ the root [`README.md`](../README.md) (Configuration, Known limitations).
 Run the commands separately:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1113 tests, ~35 s
+python -m unittest discover -s tests -p "test_*.py"    # 1129 tests, ~35 s
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```
 
 Run from the repo root; the third command runs in `salad_klein/`.
+
+`python -m salad_studio --prefetch-cutout` downloads rembg's `u2net` model
+into `~/.rembg/models/` and exits without serving. Generate's first cut does
+the same download on its worker thread; the flag only moves it ahead of time.
 
 The page is built, not committed. `python -m salad_studio` runs
 `ui/dist/`'s build when it is missing or its source changed

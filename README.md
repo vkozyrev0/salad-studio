@@ -22,19 +22,23 @@ python -m salad_studio
 Run from the repo root. It serves on a free loopback port and opens the page
 there; `python -m salad_studio 8765` pins the port and `--no-open` keeps the
 browser closed. The page opens on Config; paste provider keys on Tokens before
-the first render.
+the first render. Background removal downloads its model when Generate first
+asks for it, so run `python -m salad_studio --prefetch-cutout` once ahead of
+time; it prints where the model landed and exits.
 
 Tests are `unittest`. Run the commands separately:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1113 tests, ~35 s
+python -m unittest discover -s tests -p "test_*.py"    # 1129 tests, ~35 s
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```
 
 ## Requirements
 
-Tested on Python 3.14.7 with `pillow==12.3.0` (see `requirements.txt`), and the standard library's `http.server`.
+Tested on Python 3.14.7 with `pillow==12.3.0` and `rembg==2.0.86` (see `requirements.txt`), and the standard library's `http.server`.
+rembg's `u2net` model (168 MB) is not in the repo; it lands in `~/.rembg/models/`
+when first downloaded, and Generate cuts nothing until it is there.
 The page is built with Angular 22 and AG Grid Community into `ui/dist/`, which
 is not committed: `python -m salad_studio` builds it when it is missing or its
 source changed, and keeps it when it is current. A build needs Node once; the
@@ -44,6 +48,11 @@ server rebuilds only when the page's source differs from the build on disk. Wind
 Generation needs a SaladCloud ComfyUI container group and a Salad API key, or a
 vast.ai instance selected on the Config page and a Vast.ai key. Building the
 container needs Docker.
+
+Post-processing: **Remove background** on Prompt Settings cuts the subject out
+of every plate Generate or Retry writes, through rembg, and writes a
+`-cutout.png` beside the plate. The original stays, and a render whose cut
+cannot run still finishes with the original plate and a note saying why.
 
 ## Layout
 

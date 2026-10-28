@@ -14,6 +14,11 @@ from salad_studio.web import app  # noqa: E402
 
 def main(argv: list[str] | None = None) -> None:
     args = list(sys.argv[1:] if argv is None else argv)
+    if "--prefetch-cutout" in args:
+        from salad_studio import cutout
+
+        print(f"Background-removal model {cutout.DEFAULT_MODEL} is in {cutout.prefetch()}")
+        return
     port = next((int(arg) for arg in args if arg.isdigit()), 0)
     app.run(port=port, open_browser="--no-open" not in args)
 

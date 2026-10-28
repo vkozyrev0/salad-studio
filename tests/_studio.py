@@ -39,8 +39,8 @@ class Studio:
         import tokens
         import vast
 
-        self._modules = (image_deploy, lora_store, profiles, prompt_catalog, prompt_history,
-                         salad_queue, studio_meta, tokens, vast)
+        self._modules = [image_deploy, lora_store, profiles, prompt_catalog, prompt_history,
+                         salad_queue, studio_meta, tokens, vast]
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
         moves = {
@@ -55,7 +55,22 @@ class Studio:
             "EXTRAS_PATH": root / "studio-loras.json",
         }
         self._saved: list[tuple[object, str, object]] = []
+
+        from salad_studio.web import app
+
+        self.app = app.build(dist=None, timers=False)
+        # A page's controller is built on the core thread on first open, and its import
+        # names the package's own modules. A second copy would read the real history and
+        # put a render's picture in the user's own store. The build installs every page,
+        # so by now each page module is loaded and can move with the ones listed above.
+        for key, module in list(sys.modules.items()):
+            if key == "salad_studio.web.pages" or key.startswith("salad_studio.web.pages."):
+                self._modules.append(module)
+        moved: set[int] = set()
         for module in self._modules:
+            if id(module) in moved:
+                continue
+            moved.add(id(module))
             for name, value in moves.items():
                 if hasattr(module, name):
                     self._saved.append((module, name, getattr(module, name)))
@@ -66,9 +81,6 @@ class Studio:
         tokens.read_env_token = lambda _kind: ""
         tokens.seed_from_defaults = lambda: []
 
-        from salad_studio.web import app
-
-        self.app = app.build(dist=None, timers=False)
         # The gallery delete and a render's plate both write here, never to the
         # art folder the user renders into.
         self.app.shell.services.out_dir = root / "art"

@@ -307,7 +307,7 @@ controller per page. No module in this package imports a UI toolkit, and
 | Logging | `studio_log.py` |
 | Salad communication | `generator.py`, `salad_status.py`, `salad_queue.py`, `salad_gen.py` (repo root) |
 | Vast.ai communication | `vast.py` |
-| Image deployment | `image_deploy.py` |
+| Image deployment | `image_deploy.py`, `cutout.py` |
 | AI communication | `ai_helper.py`, `ref_check.py` |
 
 ### Metadata document

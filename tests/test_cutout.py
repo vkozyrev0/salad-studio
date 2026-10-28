@@ -50,11 +50,14 @@ class FakeSession:
 class RemoveBackground(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
         self.folder = Path(self.tmp.name)
         self.session = FakeSession()
 
-    def tearDown(self) -> None:
-        self.tmp.cleanup()
+    def _moved(self, name: str, value: object) -> None:
+        """Point ``cutout``'s module-level name at ``value`` for this test only."""
+        self.addCleanup(setattr, cutout, name, getattr(cutout, name))
+        setattr(cutout, name, value)
 
     def test_writes_an_rgba_cutout_beside_the_plate(self) -> None:
         plate = _plate(self.folder)
@@ -98,52 +101,35 @@ class RemoveBackground(unittest.TestCase):
 
     def test_a_missing_model_refuses_without_rembg(self) -> None:
         plate = _plate(self.folder)
-        saved = cutout.MODEL_PATH
-        cutout.MODEL_PATH = self.folder / "no-model"
-        try:
-            with self.assertRaises(cutout.RemovalUnavailable) as caught:
-                cutout.remove_background(plate)
-        finally:
-            cutout.MODEL_PATH = saved
+        self._moved("MODEL_PATH", self.folder / "no-model")
+        with self.assertRaises(cutout.RemovalUnavailable) as caught:
+            cutout.remove_background(plate)
 
         self.assertIn("--prefetch-cutout", str(caught.exception))
         self.assertNotIn("rembg", sys.modules, "a missing model never imports rembg")
         self.assertEqual(sorted(p.name for p in self.folder.iterdir()), ["studio_1.jpg"])
 
     def test_model_ready_reads_the_models_folder(self) -> None:
-        saved = cutout.MODEL_PATH
-        cutout.MODEL_PATH = self.folder / cutout.DEFAULT_MODEL
-        try:
-            self.assertFalse(cutout.model_ready())
-            cutout.MODEL_PATH.mkdir()
-            self.assertFalse(cutout.model_ready(), "an empty folder is not a model")
-            (cutout.MODEL_PATH / "model.onnx").write_bytes(b"x")
-            self.assertTrue(cutout.model_ready())
-        finally:
-            cutout.MODEL_PATH = saved
+        self._moved("MODEL_PATH", self.folder / cutout.DEFAULT_MODEL)
+        self.assertFalse(cutout.model_ready())
+        cutout.MODEL_PATH.mkdir()
+        self.assertFalse(cutout.model_ready(), "an empty folder is not a model")
+        (cutout.MODEL_PATH / "model.onnx").write_bytes(b"x")
+        self.assertTrue(cutout.model_ready())
 
     def test_the_session_is_built_once_per_model(self) -> None:
         built: list[str] = []
-        saved_model, saved_sessions = cutout.MODEL_PATH, dict(cutout._SESSIONS)
-        cutout.MODEL_PATH = self.folder / cutout.DEFAULT_MODEL
+        self._moved("MODEL_PATH", self.folder / cutout.DEFAULT_MODEL)
         cutout.MODEL_PATH.mkdir()
         (cutout.MODEL_PATH / "model.onnx").write_bytes(b"x")
-        fake = FakeSession()
-        try:
-            import rembg
+        self.addCleanup(cutout._SESSIONS.clear)
+        import rembg
 
-            saved_new = rembg.new_session
-            rembg.new_session = lambda model: built.append(model) or fake
-            try:
-                plate = _plate(self.folder)
-                cutout.remove_background(plate)
-                cutout.remove_background(plate)
-            finally:
-                rembg.new_session = saved_new
-        finally:
-            cutout.MODEL_PATH = saved_model
-            cutout._SESSIONS.clear()
-            cutout._SESSIONS.update(saved_sessions)
+        self.addCleanup(setattr, rembg, "new_session", rembg.new_session)
+        rembg.new_session = lambda model: built.append(model) or self.session
+        plate = _plate(self.folder)
+        cutout.remove_background(plate)
+        cutout.remove_background(plate)
         self.assertEqual(built, [cutout.DEFAULT_MODEL], "one session serves every plate")
 
 

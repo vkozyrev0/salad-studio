@@ -28,6 +28,9 @@ class Form:
     seed: str = "1"
     scheduler: str = "flux2"
     selected_loras: list[str] = field(default_factory=list)
+    # "on" or "". Not a profile field: the profile describes the request, and
+    # the cutout runs after the plate is already on disk.
+    remove_bg: str = ""
 
     def from_profile(self, p: profiles.SaladProfile) -> "Form":
         return Form(

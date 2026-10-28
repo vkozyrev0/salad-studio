@@ -15,7 +15,7 @@ from typing import Any
 
 import salad_queue
 import studio_log
-from salad_studio import generator, prompt_history
+from salad_studio import cutout, generator, prompt_history
 
 COLUMNS = ("#", "Profile", "State", "Attempts", "Last status", "Reason", "Request", "Finished")
 EMPTY_TEXT = "The queue is empty. Press Generate to submit a render."
@@ -23,21 +23,29 @@ CANCEL_NOTE = ("Cancel drops a request that has not been submitted yet. A reques
                "container has already accepted keeps rendering.")
 
 
-def _retried(queue: Any, job: Any, out_dir: Path) -> dict[str, Any]:
+def _retried(queue: Any, job: Any, out_dir: Path, remove_bg: bool = False) -> dict[str, Any]:
     """Retry one failed job through the queue, then save a plate it accepted.
 
     ``SaladQueue.retry`` re-appends the job to its line, waits for its turn, and
     records the outcome, so a retry cannot POST beside a Generate on the same
     line. The plate is written here because the job's work only POSTs; the
-    caller that owns the output folder is this page.
+    caller that owns the output folder is this page. The cutout runs here too,
+    under the same form option, and a failure keeps the plate.
     """
     job = queue.retry(job)
     attempt = job.result if isinstance(job.result, salad_queue.Attempt) else None
     out = ""
+    warning = ""
     if job.state == salad_queue.ACCEPTED and attempt is not None and isinstance(attempt.result, str):
-        out = str(generator.write_plate(attempt.result, Path(out_dir)))
+        plate = generator.write_plate(attempt.result, Path(out_dir))
+        out = str(plate)
+        if remove_bg:
+            try:
+                out = str(cutout.remove_background(plate))
+            except Exception as exc:  # noqa: BLE001 - the retry itself succeeded
+                warning = str(exc) if isinstance(exc, cutout.RemovalUnavailable) else f"{type(exc).__name__}: {exc}"
     return {"state": job.state, "status": job.status, "reason": studio_log.redact(str(job.reason or "")),
-            "attempts": job.attempts, "out": out}
+            "attempts": job.attempts, "out": out, "warning": warning}
 
 
 def _finished_label(stamp: Any) -> str:
@@ -169,7 +177,8 @@ class QueueController:
         jid = int(job.id)
 
         def work() -> Any:
-            return _retried(queue, job, self.studio.services.out_dir)
+            return _retried(queue, job, self.studio.services.out_dir,
+                            self.studio.form.remove_bg == "on")
 
         def done(result: Any) -> None:
             if isinstance(result, Exception):
@@ -180,7 +189,11 @@ class QueueController:
             state = str((result or {}).get("state") or "")
             word = salad_queue.status_word(state)
             reason = studio_log.redact(str((result or {}).get("reason") or ""))
-            self.note = f"Request {jid} was retried: {word}." + (f" {reason}" if reason else "")
+            warning = studio_log.redact(str((result or {}).get("warning") or ""))
+            if warning:
+                ctx.log("warn", f"No background removal: {warning}")
+            self.note = (f"Request {jid} was retried: {word}." + (f" {reason}" if reason else "")
+                         + (f" No background removal: {warning}" if warning else ""))
             if state == salad_queue.ACCEPTED:
                 out = str((result or {}).get("out") or "")
                 if out:
@@ -194,7 +207,7 @@ class QueueController:
                         ctx.log("warn", f"history thumb skipped: {exc}")
                 self.studio.refresh_plates()
                 self.studio.publish()
-            ctx.note(self.note, level="ok" if state == salad_queue.ACCEPTED else "warn")
+            ctx.note(self.note, level="ok" if state == salad_queue.ACCEPTED and not warning else "warn")
 
         self.note = f"Retrying request {jid}…"
         ctx.note(self.note)

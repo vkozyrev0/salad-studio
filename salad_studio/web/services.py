@@ -23,7 +23,7 @@ import salad_queue as queue_mod
 from PIL import Image
 
 import profiles
-from salad_studio import generator, salad_status, studio_log
+from salad_studio import cutout, generator, salad_status, studio_log
 import tokens
 from salad_studio.web.shell import GenWord
 
@@ -45,6 +45,7 @@ class GenOutcome:
     out: Path | None = None
     message: str = ""
     elapsed_s: int = 0
+    warning: str = ""  # why the requested cutout is missing; the plate is still the render
 
 
 class WebServices:
@@ -253,7 +254,18 @@ class WebServices:
             return GenOutcome("refused", message=str(exc))
         except Exception as exc:  # noqa: BLE001 - the render's own failure is shown
             return GenOutcome("failed", message=str(exc))
-        return GenOutcome("done", out=Path(out))
+        plate = Path(out)
+        if self.shell.form.remove_bg != "on":
+            return GenOutcome("done", out=plate)
+        # A cutout is an extra over a render that already succeeded, so every
+        # way it can fail keeps the plate and says why.
+        try:
+            cut = cutout.remove_background(plate)
+        except Exception as exc:  # noqa: BLE001
+            reason = str(exc) if isinstance(exc, cutout.RemovalUnavailable) else f"{type(exc).__name__}: {exc}"
+            self.log("warn", f"Background removal skipped: {reason}")
+            return GenOutcome("done", out=plate, warning=reason)
+        return GenOutcome("done", out=cut)
 
     def clean_gallery(self) -> int:
         """Empty the gallery: every history row loses its picture, and those thumbnails go.
@@ -313,7 +325,7 @@ class WebServices:
             with Image.open(path) as img:
                 img.thumbnail((size, size))
                 out = io.BytesIO()
-                img.convert("RGB").save(out, "PNG")
+                _on_white(img).save(out, "PNG")
                 png = out.getvalue()
         except (OSError, ValueError):
             png = None
@@ -322,6 +334,16 @@ class WebServices:
 
     def open_path(self, path: Path) -> None:
         os.startfile(str(path))  # type: ignore[attr-defined]
+
+
+def _on_white(img: Image.Image) -> Image.Image:
+    """``img`` as RGB. A cutout's transparent pixels would otherwise turn black."""
+    if img.mode in ("RGBA", "LA", "PA") or "transparency" in img.info:
+        rgba = img.convert("RGBA")
+        white = Image.new("RGB", rgba.size, (255, 255, 255))
+        white.paste(rgba, mask=rgba.getchannel("A"))
+        return white
+    return img.convert("RGB")
 
 
 def _stamp(path: Path) -> tuple[int, int] | None:

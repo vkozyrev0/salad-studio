@@ -1,6 +1,6 @@
 ---
 name: queue-submission-safety
-description: Formally check the Salad queue's promise that an accepted request is never POSTed twice and never retried. Use when changing salad_queue's attempt, retry, accept, or terminal-state logic, the Retry button, or the duplicate-press guard, or when a change could make the app send a plate to a container that already took it.
+description: Formally check the Salad queue's promise that an accepted request is never POSTed twice and never retried. Use when changing salad_queue's attempt, retry, accept, or terminal-state logic, `SaladQueue.deliver` or `ensure_container`, the Retry button, or the duplicate-press guard, or when a change could make the app send a plate to a container that already took it.
 ---
 
 # Queue submission safety
@@ -24,13 +24,15 @@ Takes under a second. Exit 0 means every bounded sequence held. Exit 1 prints th
 | No POST after an accepted POST | `salad_studio/salad_queue.py` | `Attempt`, `classify`, `next_action`, `SaladQueue._run` |
 | An accepted job is never retryable | `salad_studio/salad_queue.py` | `Job.retryable`, `SaladQueue.retry`, `SaladQueue.deliver` |
 
-**Sync commit:** `d300b9e0fe374ebc473988952efffcd5df1edd1c`. The check was last confirmed against the code at that commit.
+**Sync commit:** `dd793737c8894af39739d89a1044e2e239c2fc15`. The check was last confirmed against the code at that commit.
 
-To tell whether a change touches the covered code:
+Rerun it when a change touches `SaladQueue.deliver` (the submit path the check drives), `ensure_container` (the refusal before a submit, which `deliver` calls) or `_forget` (it drops a line's container record after an idle stop or a gone gateway). `check.py` exercises `deliver`, so it covers the first two and only reads the third.
+
+To tell whether a change touches the queue:
 
 ```powershell
-git diff --stat d300b9e -- salad_studio/salad_queue.py
-git diff d300b9e -- salad_studio/salad_queue.py
+git diff --stat dd79373 -- salad_studio/salad_queue.py
+git diff dd79373 -- salad_studio/salad_queue.py
 ```
 
 Any edit to the symbols in the table above means rerun the check. Edits elsewhere in `salad_queue.py` (the ledger, idle stop, finished history) do not invalidate this check; they need their own target.

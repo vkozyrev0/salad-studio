@@ -298,12 +298,11 @@ drop the distilled unet and roughly a third of the download.
 
 ### 5.4 Replacing a destroyed instance
 
-The app can rent a replacement when the profile's instance is gone. It is
-opt-in, because it spends money: the Config page's **Vast.ai** sub-tab carries
-**Create a replacement automatically when Generate finds it gone**. The same
-**Rent a machine** criteria drive the automatic check, **Find offers**, and
-**Create instance on selected offer**, so the manual and automatic paths cannot
-disagree.
+The Config page's **Vast.ai** sub-tab carries **Replace if destroyed** next to
+**Create instance**. The same **Rent a machine** criteria drive the check,
+**Find offers** and **Create instance**, so the paths cannot disagree. The
+replacement check reports that automatic replacement is off, and nothing in the
+app turns it on. Generate never rents a replacement on its own.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
@@ -325,9 +324,15 @@ The search is `POST /api/v0/bundles/` with those filters, ordered by
 GPU preference order, then price. The cheapest offer is therefore not the pick.
 A manual rent issues exactly one `PUT /api/v0/asks/{offer}/` (with `disk: 100`, `runtype: "args"`,
 the selected row's image, and the `-p 3000:3000 -p 8188:8188` flags plus the saved tokens) and
-never falls through to another; the automatic path keeps a short fallback queue.
+never falls through to another.
 
-When Generate runs in vast mode with the option on, the app lists the account. A listed instance is used as-is; a missing one is replaced, and the press reports the new instance instead of POSTing because the first boot still has to pull and prefetch, so Generate again when `/ready` is green. **Replace if destroyed now** runs the same check without waiting for a press; it acts on the row selected in the Instances table, so a destroyed row can be replaced too.
+**Replace if destroyed** lists the account and acts on the row selected in the
+Instances table, so a destroyed row can be replaced too. A live instance with a
+mapped port reports that it is alive. A live instance without one reports that
+it is not destroyed, with its state. A missing instance returns "the instance is
+gone and automatic replacement is off", because the criteria start with
+`enabled: False` and no action sets it. Code has to set the flag before the
+rent path can run.
 
 A row is an instance, not an endpoint. **Fetch instances** reads
 the unfiltered `/api/v1/instances/` records and reconciles the stored list:

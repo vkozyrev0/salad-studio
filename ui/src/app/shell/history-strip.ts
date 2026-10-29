@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, ElementRef, effect, inject, input, signal } from '@angular/core';
+import { withToken } from '../core/api';
 import { StudioStore } from '../core/studio-store';
 
 /**
@@ -55,7 +56,7 @@ import { StudioStore } from '../core/studio-store';
               [attr.title]="'Double-click to open ' + plate.name"
             >
               <span class="print small">
-                <img [src]="plate.url" [alt]="" loading="lazy" />
+                <img [src]="withToken(plate.url)" [alt]="" loading="lazy" />
               </span>
               <span class="cap"><b>{{ i + 1 }}</b> · {{ caption(plate.name) }}</span>
             </button>
@@ -123,6 +124,7 @@ export class HistoryStrip {
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   readonly plates = input<readonly { name: string; url: string }[]>([]);
   protected readonly ring = signal(0);
+  protected readonly withToken = withToken;
 
   constructor() {
     // Clean gallery can shrink the reel under the ring; keep the ring on a plate.

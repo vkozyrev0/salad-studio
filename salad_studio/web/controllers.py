@@ -246,8 +246,12 @@ class ShellController:
         return {}
 
     def check_salad(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:
-        self.studio.services.check_salad()
-        ctx.note("Checking the Salad gateways")
+        started = self.studio.services.check_salad()
+        if started:
+            ctx.note("Checking the Salad gateways")
+        else:
+            ctx.note("A Salad check is already running. Its result lands in the toolbar counts.",
+                     level="warn")
         return {}
 
     def clean_gallery(self, payload: dict[str, Any], *, ctx: Any) -> dict[str, Any]:

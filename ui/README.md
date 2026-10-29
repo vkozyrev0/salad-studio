@@ -17,5 +17,6 @@ cd ui
 npx ng build
 ```
 
-`npx ng test` runs the Vitest specs. `ui/audit.cjs` checks template bindings
+`npx ng test` runs the Vitest specs. CI runs `npx ng build` first, so a build
+error fails before the specs run. `node audit.cjs` checks template bindings
 against the components; it is a static check, not a test.

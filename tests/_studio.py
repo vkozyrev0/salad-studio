@@ -59,6 +59,12 @@ class Studio:
         from salad_studio.web import app
 
         self.app = app.build(dist=None, timers=False)
+        # The server refuses every request without its token, so a test that
+        # speaks HTTP to this studio starts it and sends the token back.
+        self.app.serve(port=0)
+        self.port = self.app.port
+        self.base = f"http://127.0.0.1:{self.port}"
+        self.token = self.app.server.run_token or ""
         # A page's controller is built on the core thread on first open, and its import
         # names the package's own modules. A second copy would read the real history and
         # put a render's picture in the user's own store. The build installs every page,

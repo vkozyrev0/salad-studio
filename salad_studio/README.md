@@ -6,10 +6,12 @@ from `eldermark`. Run `python -m salad_studio`: it starts a local server on
 `ui/dist/`; the Python side is the server and the stores.
 
 Every action is one `POST /api/action` naming a page and an action; the reply
-carries that page's whole state. The 15 s probe, the 2 s generation tick, log
-lines and finished background actions arrive on `GET /api/events` as
-server-sent events. The server binds loopback and refuses a request whose
-`Origin` is another site.
+carries that page's whole state. The 15 s status probe, the 2 s generation tick,
+log lines, action results, dialogs and the shell state arrive on `GET /api/events`
+as server-sent events. The server binds loopback and refuses a request whose
+`Origin` is another site; it also prints a token in its URL and refuses a
+request that does not carry it, so a local program cannot drive it either. Open
+the URL the server prints.
 
 **Top action bar**: a rose **Generate**, **Clean gallery**, **Check Salad
 status**, live status every 2 s, and ready
@@ -146,9 +148,9 @@ keys move through its cells, and a click selects the row.
   Convert **routes** on graph presence first (Comfy nodes or none), then tooling
   (Draw Things / A1111 metadata). A Comfy paste with **no sampling path** builds
   from the generation data instead; a paste with neither converts as a graph.
-  UUID subgraph flatten assigns unique link ids and skips muted (mode 4) copies;
-  off-path nodes are dropped as orphans. Local LoRA filenames are searched on
-  Civitai (including `_CE_` trainer names and sibling versions); a miss is
+  UUID subgraph flatten assigns unique link ids and skips muted copies (mode 2
+  never and mode 4 bypass); off-path nodes are dropped as orphans. Local LoRA
+  filenames are searched on Civitai (including `_CE_` trainer names and sibling versions); a miss is
   omitted. Convert rewrites Salad-missing nodes: `ReferenceLatent` dropped,
   `ConditioningZeroOut` becomes an empty CLIP encode,
   `full_encoder_small_decoder` becomes `flux2-vae`, `Color Correct GPU (mtb)`
@@ -173,8 +175,10 @@ keys move through its cells, and a click selects the row.
   A1111 samplers and LoRA tags, or **Sampler / Seed / Model only** (no
   `Steps:`). Distilled Klein graphs keep CFG **1** and 4 steps; CFG 5 only when
   the paste says so. **Graph knobs** empty means from the paste; a filled value
-  overrides. **Fill knobs from paste** reads CFG, seed and size; Convert must
-  not be followed by Rebuild from Config. **Clear Import** drops both pastes and
+  overrides. **Fill knobs from paste** reads CFG, seed and size. A paste into the
+  metadata box fills the empty knobs 400 ms later. A **Rebuild from Config** in
+  the Prompt Editor replaces the request with one built from the profile, so it
+  drops the converted graph's LoRA chain. **Clear Import** drops both pastes and
   knobs. Workflow JSON is stashed in memory; Convert drops the stash. Distilled
   Klein graphs with `flux-2-klein-9b-fp8`, a small-decoder VAE, `ReferenceLatent`
   or local LoRA filenames are **not blocked**: Convert succeeds, the **Salad
@@ -346,7 +350,7 @@ the root [`README.md`](../README.md) (Configuration, Known limitations).
 Run the commands separately:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1129 tests, ~35 s
+python -m unittest discover -s tests -p "test_*.py"    # 1177 tests, ~35 s
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```

@@ -127,6 +127,15 @@ class LogsPageTest(unittest.TestCase):
         self.assertEqual(state["salad"]["empty_text"], "")
         self.assertEqual(self.asked["group"], "klein")
 
+    def test_refresh_without_a_gateway_says_so_in_the_state_not_the_log(self) -> None:
+        _state, ctx = self.call("refresh_salad_logs")
+        self.settle(ctx)
+        state, _ctx = self.call("view")
+        self.assertEqual(state["salad"]["text"], "", "the notice is not the container's log")
+        self.assertEqual(state["salad"]["version"], 0, "nothing was fetched, so no new version")
+        self.assertEqual(state["salad_state"], "No profile has a gateway, so there is no container log to read.")
+        self.assertEqual(ctx.note_text[1], "warn")
+
     def test_check_salad_reports_each_profile_with_a_gateway(self) -> None:
         self.set_gateway()
         _state, ctx = self.call("check_salad")

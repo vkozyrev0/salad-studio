@@ -70,7 +70,13 @@ Civitai's website generator is **not** Comfy. Copying "Sampler: Euler, CFG 5, 40
 
 **What actually closes most of the oil-vs-ink gap** is the LoRA sitting in the unet (Logs: HTTP **200**
 on the Civitai download URL, not 401), not Euler/CFG/steps. Aged Art **1449678 @ 2795018** author range
-**0.4–0.6**. Do not **Rebuild from Config** before Generate (it can swap in Detail Slider). A pixel
+**0.4–0.6**. **Rebuild from Config** in the Prompt Editor
+(`salad_studio/web/pages/editor.py` `rebuild_from_config`) replaces the editor's
+request with `request_json.build_request` built from the profile's graph, size,
+steps, seed, CFG and selected LoRAs, and keeps the current prompt text. The old
+warning that it can swap in Detail Slider was checked against the retired Tk
+button and has not been re-checked against this one, so treat it as the current
+behaviour only after you see it. A pixel
 clone of Civitai requires **their** engine (Orchestration API or the website); Studio **Import** still
 runs **our** sampler stack ([`salad_studio/README.md`](../../salad_studio/README.md)).
 
@@ -91,7 +97,7 @@ Tokens tab's `?token=` is appended at POST; all four resolve HTTP **200**) is De
 `civitai:2335408@2627022` (`1A_Back_Pose_Enhancer.safetensors`, splice at **~1.0** for sitting or back-facing poses)
 are catalog-only. The weight sweep and the redundant SNOFS LoKr: [doc 22 §9](22-two-body-correctness-research.md#9-anatomy-research), [doc 21 §4](21-klein-image-handoff.md).
 
-`WOMAN:` / `MAN:` / `INTIMACY:` are one block: the pose; name another position in SNOFS's own vocabulary (**missionary / doggystyle / cowgirl**) rather than as geometry ([doc 21 §3](21-klein-image-handoff.md)). **Never leave a placeholder token in the text**: `REPLACE_THIS_POSE` mid-sentence produced the plaster render, and `test_klein_recipes.py` fails on `REPLACE_THIS`, `TODO`, `TBD`, `XXX`, `FIXME`. The Studio adds a `_meta.title` / `_meta.base` block when it **writes** a recipe; the shipped recipes carry none, so keep the block **if** the node has one. A hand-built node with a bare Civitai URL and no `_meta` is classified **foreign**: [doc 21 §5](21-klein-image-handoff.md). `ReferenceLatent` is dropped/rewired by Generate and local `LoadImage` files are omitted; there is no OpenPose / DWPose / ControlNet in the image, so pose comes from the prompt block above and a new seed, not a pose graph. Hard insertion plates are still Lustify/SDXL work, not Klein ([`salad_studio/README.md`](../../salad_studio/README.md)).
+`WOMAN:` / `MAN:` / `INTIMACY:` are one block: the pose; name another position in SNOFS's own vocabulary (**missionary / doggystyle / cowgirl**) rather than as geometry ([doc 21 §3](21-klein-image-handoff.md)). **Never leave a placeholder token in the text**: `REPLACE_THIS_POSE` mid-sentence produced the plaster render, and `test_klein_recipes.py` fails on `REPLACE_THIS`, `TODO`, `TBD`, `XXX`, `FIXME`. No code writes a recipe file. `request_json.build_request` stamps `_meta` on the request it builds, in the Studio and in the POST copy; the shipped recipes carry none, so keep the block **if** the node has one. A hand-built node with a bare Civitai URL and no `_meta` is classified **foreign**: [doc 21 §5](21-klein-image-handoff.md). `ReferenceLatent` is dropped/rewired by Generate and local `LoadImage` files are omitted; there is no OpenPose / DWPose / ControlNet in the image, so pose comes from the prompt block above and a new seed, not a pose graph. Hard insertion plates are still Lustify/SDXL work, not Klein ([`salad_studio/README.md`](../../salad_studio/README.md)).
 
 `python -m unittest discover -s tests -p "test_klein_recipes.py"` from the repo root drives both files through the Studio Validate gate and the POST copy (20 tests).
 

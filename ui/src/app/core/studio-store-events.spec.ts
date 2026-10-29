@@ -3,6 +3,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { runToken } from './api';
 import { ActionReply, EMPTY_SHELL } from './models';
 import { StudioStore } from './studio-store';
 
@@ -42,6 +43,35 @@ describe('StudioStore events', () => {
     store = TestBed.inject(StudioStore);
     http = TestBed.inject(HttpTestingController);
     store.connect();
+  });
+
+  it('opens the stream with the run token the page URL carries', () => {
+    expect(FakeEventSource.last?.url).toBe(`/api/events?token=${encodeURIComponent(runToken)}`);
+  });
+
+  it('frees every in-flight key when the stream reconnects', async () => {
+    const pending: ActionReply = {
+      ok: true,
+      id: 'r9',
+      page: 'tokens',
+      action: 'save_key',
+      pending: false,
+      error: '',
+      state: {},
+      shell: EMPTY_SHELL,
+      busy: {},
+      effects: [],
+    };
+    const running = store.act('tokens', 'save_key', { values: {} });
+    await new Promise((r) => setTimeout(r, 0));
+    FakeEventSource.last?.emit('open', {});
+    http.expectOne('/api/action').flush(pending);
+    await running;
+    expect(store.inFlight().has('tokens.save_key')).toBe(false);
+    const again = store.act('tokens', 'save_key', { values: {} });
+    await new Promise((r) => setTimeout(r, 0));
+    http.expectOne('/api/action').flush(pending);
+    await again;
   });
 
   it('clears the in-flight key the action_done reply names', async () => {

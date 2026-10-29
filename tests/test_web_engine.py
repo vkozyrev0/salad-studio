@@ -157,6 +157,21 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(done["ok"], "the token survived the busy refusal")
 
+    def test_check_salad_says_one_is_already_running(self) -> None:
+        # A probe in flight is what services.check_salad answers to, and the
+        # press must not claim it started a check.
+        self.studio.busy["probe"] = True
+        status, reply = self.engine.handle({"page": "shell", "action": "check_salad", "args": {}})
+        self.assertEqual(status, 200)
+        note = reply["shell"]["note"]
+        self.assertIn("already running", note["text"])
+        self.assertEqual(note["level"], "warn")
+
+        self.studio.busy.pop("probe", None)
+        _status, reply = self.engine.handle({"page": "shell", "action": "check_salad", "args": {}})
+        self.assertEqual(reply["shell"]["note"]["text"], "Checking the Salad gateways")
+        self.assertEqual(reply["shell"]["note"]["level"], "info")
+
     def test_generate_reaches_the_services_and_clears_the_header(self) -> None:
         """The press must reach the queue, and the header must show it running."""
         from salad_studio.web.services import GenOutcome

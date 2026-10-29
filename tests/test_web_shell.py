@@ -62,6 +62,15 @@ class ShellTest(unittest.TestCase):
         self.shell.message("Kept the profile", level="info")
         self.assertEqual(seen, [("info", "Kept the profile")])
 
+    def test_confirms_are_capped_and_the_oldest_goes_first(self) -> None:
+        tokens = [self.shell.issue_confirm("shell", "clean_gallery", {"n": n})
+                  for n in range(shell_mod.CONFIRM_CAP + 5)]
+        self.assertEqual(len(self.shell.confirms), shell_mod.CONFIRM_CAP)
+        self.assertIsNone(self.shell.take_confirm(tokens[0]), "the oldest was evicted")
+        self.assertIsNone(self.shell.take_confirm(tokens[4]), "the oldest was evicted")
+        self.assertEqual(self.shell.take_confirm(tokens[5]), ("shell", "clean_gallery", {"n": 5}))
+        self.assertIsNone(self.shell.take_confirm(tokens[5]), "still single use")
+
     def test_state_serializes_to_the_shape_the_page_reads(self) -> None:
         row = self.shell.state_dict()
         for key in ("current", "status", "note", "gen", "saladWord", "counts", "plates", "busy"):

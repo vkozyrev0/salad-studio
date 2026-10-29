@@ -61,6 +61,10 @@ class LogsController:
                 self.salad_state = f"The container log could not be read: {result}"
                 ctx.note(self.salad_state, level="error")
                 return
+            if result is None:
+                self.salad_state = "No profile has a gateway, so there is no container log to read."
+                ctx.note(self.salad_state, level="warn")
+                return
             services.set_salad_logs(str(result))
             self.salad_state = "" if str(result).strip() else "The container has logged nothing in the last 20 minutes."
             ctx.note("Refreshed the Salad container log")
@@ -92,10 +96,11 @@ class LogsController:
         return self.state()
 
 
-def _recent_salad_log(services: Any) -> str:
+def _recent_salad_log(services: Any) -> str | None:
+    """The gateway's recent lines, or None when no profile has a gateway."""
     profile = next((p for p in profiles.load_all().values() if p.gateway), None)
     if profile is None:
-        return "no gateway configured"
+        return None
     try:
         return salad_status.recent_log_lines(
             services.salad_key(), group_name=getattr(profile, "name", ""))

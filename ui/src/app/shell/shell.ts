@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { NO_TOKEN } from '../core/api';
 import { StudioStore } from '../core/studio-store';
 import { PAGES } from '../core/models';
 import { HistoryStrip } from './history-strip';
@@ -18,6 +19,9 @@ import { DialogHost } from './dialog-host';
   template: `
     <a class="skip" href="#page" (click)="skipToPage($event)">Skip to page</a>
     <div class="window" [attr.inert]="store.dialog() || store.confirm() ? '' : null">
+      @if (store.locked()) {
+        <p class="locked" role="alert">{{ locked }}</p>
+      }
       <header class="bar">
         <button class="btn primary" type="button" (click)="generate()" [disabled]="shell().gen.busy">
           @if (shell().gen.busy) { <span class="spinner" aria-hidden="true"></span> }
@@ -104,6 +108,20 @@ import { DialogHost } from './dialog-host';
         'rail status'
         'strip strip';
       background: var(--bg);
+    }
+    .window:has(.locked) {
+      grid-template-rows: auto 58px minmax(0, 1fr) auto auto;
+      grid-template-areas: 'locked locked' 'bar bar' 'rail pane' 'rail status' 'strip strip';
+    }
+    .locked {
+      grid-area: locked;
+      margin: 0;
+      padding: 10px 20px;
+      background: var(--well);
+      border-bottom: 2px solid var(--invalid);
+      color: var(--invalid);
+      font-size: 13px;
+      line-height: 1.4;
     }
 
     .bar {
@@ -244,6 +262,7 @@ import { DialogHost } from './dialog-host';
         grid-template-rows: auto auto minmax(0, 1fr) auto auto;
         grid-template-areas: 'bar' 'rail' 'pane' 'status' 'strip';
       }
+      .window:has(.locked) { grid-template-areas: 'locked' 'bar' 'rail' 'pane' 'status' 'strip'; }
       .bar { flex-wrap: wrap; height: auto; padding: 8px 16px; }
       .meters { width: auto; margin-left: auto; }
       .rail { flex-direction: row; flex-wrap: wrap; align-items: center; overflow-x: auto; padding: 6px 10px; border-right: 0; border-bottom: 1px solid var(--rule); }
@@ -264,6 +283,7 @@ export class Shell {
   protected readonly pages = PAGES;
   protected readonly shell = this.store.shell;
   protected readonly counts = () => this.shell().counts;
+  protected readonly locked = NO_TOKEN;
 
   /** The page the URL names, which is why the rail and the shortcuts agree. */
   /** The meter's bar, capped so one replica fills it and ten do not overflow. */

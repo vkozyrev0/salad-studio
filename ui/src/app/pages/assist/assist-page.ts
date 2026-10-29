@@ -4,6 +4,8 @@ import { PageFrame } from '../../shell/page-frame';
 import { Field, checked } from '../../shared/field';
 import { DEFAULT_LOCAL_URL } from '../../shared/catalogs';
 
+type Edited = { localUrl: string; sendImage: boolean; issue: string; positive: string; negative: string };
+
 interface AssistState {
   localUrl?: string;
   local_url?: string;
@@ -83,21 +85,55 @@ export class AssistPage {
   protected readonly state = computed(() => this.store.page() as AssistState | null);
   protected readonly status = computed(() => this.state()?.status ?? {});
 
-  /** The boxes as typed, until the next reply replaces them. */
+  /** The boxes as typed under the current opening, until the server's copy takes each one back. */
   private readonly draft = signal<Partial<AssistState> | null>(null);
-  protected readonly edited = computed(() => ({
-    localUrl: this.draft()?.localUrl ?? this.state()?.localUrl ?? this.state()?.local_url ?? DEFAULT_LOCAL_URL,
-    sendImage: this.draft()?.sendImage ?? this.state()?.sendImage ?? this.state()?.send_image ?? false,
-    issue: this.draft()?.issue ?? this.state()?.issue ?? '',
-    positive: this.draft()?.positive ?? this.state()?.positive ?? '',
-    negative: this.draft()?.negative ?? this.state()?.negative ?? '',
+  /** The boxes an edit in this opening typed; the server's value shows for the rest. */
+  private readonly stamps = new Map<number, Set<keyof Edited>>();
+  /** The page opening, bumped when a hop sets the page to null, so the next reply seeds the boxes. */
+  private readonly opened = signal(0);
+  /** The opening the boxes were last edited under; only its text stands over the server's. */
+  private boxAt = 0;
+  protected readonly edited = computed<Edited>(() => ({
+    localUrl: this.shown('localUrl', this.state()?.localUrl ?? this.state()?.local_url) || DEFAULT_LOCAL_URL,
+    sendImage: this.typed('sendImage') ? this.draft()?.sendImage ?? false : this.state()?.sendImage ?? this.state()?.send_image ?? false,
+    issue: this.shown('issue', this.state()?.issue),
+    positive: this.shown('positive', this.state()?.positive),
+    negative: this.shown('negative', this.state()?.negative),
   }));
 
   constructor() {
     effect(() => {
-      this.store.page();
-      untracked(() => this.draft.set(null));
+      const page = this.store.page();
+      // The rewrite below reads the edited boxes, which read the page; only the page is tracked.
+      untracked(() => {
+        if (page === null) {
+          this.opened.update((n) => n + 1);
+          this.stamps.delete(this.boxAt);
+          this.boxAt = this.opened();
+          return;
+        }
+        // The server's copy takes each box back once an action has stored it.
+        const shown = this.edited();
+        const state = this.state() ?? {};
+        const server: Edited = {
+          localUrl: state.localUrl ?? state.local_url ?? DEFAULT_LOCAL_URL,
+          sendImage: state.sendImage ?? state.send_image ?? false,
+          issue: state.issue ?? '',
+          positive: state.positive ?? '',
+          negative: state.negative ?? '',
+        };
+        for (const key of Object.keys(shown) as (keyof Edited)[]) if (shown[key] === server[key]) this.stamps.get(this.boxAt)?.delete(key);
+      });
     });
+  }
+
+  private typed(key: keyof Edited): boolean {
+    return this.stamps.get(this.boxAt)?.has(key) ?? false;
+  }
+
+  private shown(key: keyof Edited, server: string | undefined): string {
+    if (!this.typed(key)) return server ?? '';
+    return String((this.draft() as Record<string, unknown> | null)?.[key] ?? '');
   }
 
   protected helping(): boolean {
@@ -113,7 +149,12 @@ export class AssistPage {
   }
 
   protected edit(patch: Partial<AssistState>): void {
-    this.draft.set({ ...this.edited(), ...patch });
+    this.boxAt = this.opened();
+    const box = this.stamps.get(this.boxAt) ?? new Set<keyof Edited>();
+    this.stamps.set(this.boxAt, box);
+    for (const key of Object.keys(patch) as (keyof Edited)[]) box.add(key);
+    // A typed box keeps its text until an action stores it and the reply hands it back.
+    this.draft.update((d) => ({ ...(d ?? {}), ...patch }));
   }
 
   protected help(backend: 'deepseek' | 'local'): void {

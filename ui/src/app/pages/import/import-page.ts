@@ -131,12 +131,17 @@ export class ImportPage {
   protected readonly state = computed(() => this.store.page() as ImportState | null);
   protected readonly knobs = KNOBS;
 
-  /** Every box as typed. A reply re-seeds them unless the box holds a newer keystroke. */
+  /** Every box as typed under the current opening. A reply re-seeds them unless the box holds a newer keystroke. */
   private readonly draft = signal<Partial<ImportState> | null>(null);
+  /** The page opening: a hop sets the page to null, and the next reply seeds every box. */
+  private readonly opened = signal(0);
+  /** The opening the boxes were last typed or seeded under; only its text stands over the server's. */
+  private boxAt = 0;
+  private readonly stamps = new Map<number, Set<string>>();
   protected readonly boxes = computed<Boxes>(() => ({
-    url: this.draft()?.url ?? this.state()?.url ?? '',
-    meta: this.draft()?.meta ?? this.state()?.meta ?? '',
-    workflow: this.draft()?.workflow ?? this.state()?.workflow ?? '',
+    url: this.shown('url', this.state()?.url),
+    meta: this.shown('meta', this.state()?.meta),
+    workflow: this.shown('workflow', this.state()?.workflow),
   }));
 
   protected readonly schedulerOptions = computed(() =>
@@ -168,22 +173,37 @@ export class ImportPage {
     effect(() => {
       const state = this.state();
       untracked(() => {
+        if (state === null) {
+          this.opened.update((n) => n + 1);
+          this.boxAt = this.opened();
+          return;
+        }
         const draft = this.draft();
         if (!draft) return;
         const next = { ...draft } as Record<string, unknown>;
-        if (state?.stashed) delete next['workflow'];
+        if (state.stashed) delete next['workflow'];
         for (const key of Object.keys(next)) {
           if (this.serverValue(state, key) === String(next[key] ?? '')) delete next[key];
         }
-        this.draft.set(Object.keys(next).length ? (next as Partial<ImportState>) : null);
+        if (Object.keys(next).length) this.draft.set(next as Partial<ImportState>);
+        // The reply now holds every box it matched; an edit made during this pass stays.
+        else this.stamps.delete(this.boxAt);
       });
     });
   }
 
+  /** The typed text for one box, while this opening typed it, otherwise the server's. */
+  private shown(key: string, server: string | undefined): string {
+    if (!this.typed(key)) return server ?? '';
+    return String((this.draft() as Record<string, unknown> | null)?.[key] ?? '');
+  }
+
+  private typed(key: string): boolean {
+    return this.stamps.get(this.boxAt)?.has(key) ?? false;
+  }
+
   protected knobValue(key: string): string {
-    const draft = this.draft() as Record<string, string> | null;
-    if (draft && key in draft) return String(draft[key]);
-    return this.state()?.knobs?.find((k) => k.key === key)?.value ?? '';
+    return this.shown(key, this.state()?.knobs?.find((k) => k.key === key)?.value);
   }
 
   /** The server's value for one draft key, so a matched draft can be dropped. */
@@ -195,8 +215,8 @@ export class ImportPage {
   }
 
   protected readonly choices = computed(() => ({
-    scheduler: this.draft()?.scheduler ?? this.state()?.scheduler ?? 'Flux2 (Klein)',
-    unet: this.draft()?.unet ?? this.state()?.unet ?? '',
+    scheduler: this.shown('scheduler', this.state()?.scheduler) || 'Flux2 (Klein)',
+    unet: this.shown('unet', this.state()?.unet),
   }));
 
   protected busy(action: string): boolean {
@@ -209,6 +229,9 @@ export class ImportPage {
    * the paste action has no place for them.
    */
   protected type(key: keyof ImportState | string, value: string): void {
+    this.boxAt = this.opened();
+    const box = this.stamps.get(this.boxAt) ?? new Set<string>();
+    this.stamps.set(this.boxAt, box.add(key));
     this.draft.update((d) => ({ ...(d ?? {}), [key]: value }));
     if (key === 'scheduler' || key === 'unet') return;
     void this.store.act('import', 'set_paste', this.payload());

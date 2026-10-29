@@ -61,14 +61,17 @@ The container groups come from the profile store (`profiles.load_all`); the
 metadata document (`salad_studio/studio-metadata.json`, or your copy at
 `~/.config/salad/studio-metadata.json`, read through `studio_meta`) supplies the
 family markers, the seed unets and the image. The driver lists the Studio groups
-and picks one with `pick_studio_group` — a Ready replica when one exists,
-otherwise the first listed group — then POSTs to that group's gateway
-(`post_to_group`).
+and `pick_studio_group` picks one: a Ready replica when one exists, otherwise the
+first listed group. `post_to_group` then POSTs to that group's gateway.
 
-The POST itself goes through the shared queue (`salad_queue.shared()`), the same
-line Studio's Generate button uses. While another render holds the line the
-request waits its turn, so a verify run can sit behind an in-flight Studio
-render. A container that is not available yet (`502`, `503`, `520`, `521`,
+The POST does not share Studio's line. `post_to_group` calls
+`generator.generate_from_payload` with no queue argument, and that function
+falls back to the process-wide queue (`salad_queue.shared()`). Studio passes its
+own queue and a per-profile line label there; the driver passes neither, so the
+verify POST does not hold Studio's line and does not queue behind an in-flight
+Studio render. The retry and duplicate rules below still apply to it.
+
+A container that is not available yet (`502`, `503`, `520`, `521`,
 `522`, `523`, or a transport that never answered) is retried automatically, up
 to `salad_queue.MAX_ATTEMPTS` attempts with `salad_queue.RETRY_SLEEP_S` seconds between them. A `504` or
 `524` is terminal, because Cloudflare returns those after giving up on a job the

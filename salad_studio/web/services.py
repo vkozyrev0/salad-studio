@@ -164,9 +164,10 @@ class WebServices:
 
     # -- the Salad probe
 
-    def check_salad(self, *, silent: bool = False) -> None:
+    def check_salad(self, *, silent: bool = False) -> bool:
+        """Start a probe of every gateway. False when one is already in flight."""
         if self.shell.busy.get("probe"):
-            return
+            return False
         self.shell.busy["probe"] = True
         gateways = [(name, p.gateway) for name, p in profiles.load_all().items() if p.gateway]
         key = self.salad_key()
@@ -199,6 +200,7 @@ class WebServices:
             self.shell.publish()
 
         self.core.background(work, done)
+        return True
 
     def refresh_salad_logs(self) -> None:
         key = self.salad_key()
@@ -206,7 +208,7 @@ class WebServices:
 
         def work() -> Any:
             if not gateway:
-                return "no gateway configured"
+                return ""
             try:
                 return salad_status.recent_log_lines(gateway, key)
             except Exception as exc:  # noqa: BLE001

@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { ColDef } from 'ag-grid-community';
 import { StudioStore } from '../../core/studio-store';
 import { PageFrame } from '../../shell/page-frame';
@@ -142,7 +142,12 @@ export class LorasPage {
   protected readonly state = computed(() => this.store.page() as LorasState | null);
   protected readonly rows = computed(() => this.state()?.rows ?? []);
   private readonly local = signal<string | null>(null);
-  protected readonly selected = computed(() => this.local() ?? this.state()?.selected ?? null);
+  /** A remove that is waiting on its confirm, so Save edits does not write a row on its way out. */
+  private readonly removing = signal<string | null>(null);
+  protected readonly selected = computed(() => {
+    const id = this.local() ?? this.state()?.selected ?? null;
+    return id && id !== this.removing() ? id : null;
+  });
   protected readonly families = computed(() =>
     (this.state()?.families ?? ['Flux.2 Klein', 'Flux.1 Dev', 'Pony', 'SDXL', 'Krea 2', 'Illustrious', 'unknown']).map(
       (f) => ({ value: f, label: f }),
@@ -170,6 +175,16 @@ export class LorasPage {
     { headerName: 'Model', field: 'model', start: 100 },
     { headerName: 'Source', field: 'source', flex: 1, minWidth: 140, tooltipField: 'source', cellStyle: { 'font-family': 'var(--font-mono)', 'font-size': '11.5px' } },
   ];
+
+  constructor() {
+    // The remove's own reply can land before its confirm is on screen, and a
+    // pending confirm keeps the key set; an answer clears it, which is read here.
+    effect(() => {
+      const box = this.store.confirm();
+      if (!box || this.removing() === null) return;
+      queueMicrotask(() => this.settleRemove());
+    });
+  }
 
   protected busy(action: string): boolean {
     return this.store.inFlight().has(`loras.${action}`);
@@ -214,7 +229,29 @@ export class LorasPage {
   protected act(action: 'save_edits' | 'verify_unverified' | 'remove_selected'): void {
     const id = this.selected();
     const selection = id ? { id } : {};
-    void this.store.act('loras', action, action === 'save_edits' ? { ...selection, ...this.form() } : selection);
-    if (action === 'remove_selected') this.local.set(null);
+    const form = this.form();
+    // The server still reads its own form in the save; sending the fields on
+    // screen is what a server-side read of the payload would need to agree.
+    const fields = {
+      name: form.name ?? '',
+      filename: form.filename ?? '',
+      family: form.family ?? '',
+      strength_model: form.strength_model ?? '',
+      strength_clip: form.strength_clip ?? '',
+    };
+    void this.store.act('loras', action, action === 'save_edits' ? { ...selection, ...fields } : selection);
+    if (action !== 'remove_selected' || !id) return;
+    this.local.set(null);
+    this.removing.set(id);
+    // A refused remove resets inFlight itself; a pending one waits on its confirm.
+    queueMicrotask(() => this.settleRemove());
+  }
+
+  private settleRemove(): void {
+    const id = this.removing();
+    const rows = this.state()?.rows;
+    if (id === null || this.store.inFlight().has('loras.remove_selected')) return;
+    this.removing.set(null);
+    if (rows?.some((row) => row.id === id)) this.local.set(id);
   }
 }

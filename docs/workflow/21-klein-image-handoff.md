@@ -81,8 +81,10 @@ Model Flux2 prepared for dynamic VRAM loading. 8658MB Staged. 112 patches
 attached. Force pre-loaded 80 weights      (measured 2026-09-22)
 ```
 
-A 3 s render becomes 239–576 s, and every one of them 524s. `prefetch.py` takes a
-build-time `KLEIN_UNET_SET` so each image ships only its own unets
+An earlier group held three unets and ran a 3 s render for 239 to 576 s, ending
+in a 524; that group no longer exists. Each image now carries only its own unets.
+The Docker build bakes a `KLEIN_UNET_SET` build arg into the image, and
+`prefetch.py` reads it at first boot to decide what to download
 (`prefetch6-klein` = base + distilled, `prefetch6-snofs` = SNOFS).
 
 **How routing decides.** Salad Studio routes at **Generate**, from the graph's
@@ -98,16 +100,18 @@ profiles.profile_for_gateway(gateway, all_profiles)
                                             -> the group the form would POST to
 ```
 
-A checkpoint **no profile's list names** is **refused with a stated reason**
-rather than sent to a group that cannot serve it; a checkpoint the metadata
+`plan_route` reads the graph's checkpoint and finds the profile whose own
+`checkpoints` list names it, edited on the Config page. One profile listing it
+is the route. If the profile the form's gateway belongs to is that profile, the
+graph is sent where the form points. Otherwise it swaps the profile and logs
+`Routed to profile 'klein5090' (gateway …)`. A checkpoint **no profile's list
+names** is **refused with a stated reason**, and so is one that **two profiles
+list**, rather than sent to a group that cannot serve it. A hand-typed gateway
+that is not one of the saved profiles is left alone. The family only labels the
+route: `plan_route` looks it up in the metadata document, where a checkpoint the
 document does not classify is its own family, so a checkpoint that does not exist
-yet is routable with no document edit. The guard compares the
-graph's family to **the family the current gateway's group serves**. If they
-differ it swaps the profile and logs
-`Routed to profile 'klein5090' (gateway …)`. A hand-typed gateway that is not one
-of the saved profiles is left alone. Which profile serves a checkpoint is that
-profile's own `checkpoints` list, edited on the Config page; the document's
-`unets` and `markers` say what a family *is* (`group` and `gateway` are gone).
+yet is routable with no document edit. The document's `unets` and `markers` say
+what a family *is* (`group` and `gateway` are gone).
 
 > **Fixed 2026-09-22.** The guard used to compare the graph's family to the **form's** unet, which
 > loading a JSON into the Prompt Editor rewrites from the graph, so it could never fire: a SNOFS graph
@@ -154,7 +158,7 @@ Measured dead ends. Do not retry these.
 | HTTP **521** on `/health` and `/ready` | Cloudflare edge up, replica origin down or being reallocated. Salad's API still reports the group `running` and the instance `ready`. | Wait. Do not retry the render. |
 | HTTP **524** on `/prompt` | Response cut at the gateway's ~100 s read window. The job continues server-side, so resubmitting the same graph usually returns the cached plate in ~2 s. | Resubmit once, or reduce the work. |
 | `comfyui-api` **hangs on `/prompt`** while still answering `/ready` 200 | Observed after ~8 sequential renders: Comfy logs nothing for new requests and the client times out. | Reallocate the instance. Keep batches modest; never trust `/ready` alone. |
-| 3 s render becomes 239–576 s | Two unet families resident in one group (§2). | Route by unet family. |
+| 3 s render becomes 239–576 s | Two unets resident in one group (§2). | Route by checkpoint. |
 | Every render fails with `lora_name` errors | A LoRA URL the replica cannot fetch, usually a gated Civitai file with no `?token=`. | Studio appends it at POST; check the Logs tab's `loras:` line. |
 
 **Graph-level traps**
@@ -218,8 +222,8 @@ first step that clears the artifact rate. Score a 6-seed labelled contact sheet
 and show it to the user; do not sign off on anatomy from your own read. The
 harness is `salad_studio.generator.generate_from_payload`, with the gateway and
 key read from `~/.config/salad/`; never print or commit them. Do not download
-weights without asking. Renders stay under the gitignored `target/` and are
-never committed.
+weights without asking. A Studio render writes to `%ELDERMARK_ART%\salad_studio`,
+outside this repo, and is never committed.
 
 ---
 
@@ -276,7 +280,7 @@ Corroboration for §6 item 4: <https://myaiforce.com/flux-2-klein-anatomy-horror
 
 ### 1. Why this exists
 
-Before 2026-09-22 the work produced **zero** acceptable two-body plates, 22 judged, none good, and the cause was misdiagnosed four times (LoRA stack, LoRA download, prompt enumeration, prompt length). Two things were wrong, and neither was the wording: **three unets in one container group thrashed VRAM**, turning 3-second renders into 239–576 s no gateway would wait for (fixed by routing one unet family per group, doc 22 §3.3); and a **template shipped as a prompt**, `prompt_snofs_distilled_v12.json` carried the literal `REPLACE_THIS_PROMPT`, so a "successful" 0.9 s render was a picture of that word. With both fixed, renders are **1–4 s** and acceptable plates arrive at roughly **2 in 7 seeds**. The work now is collecting which prompts work; selection, not wording, is what you spend effort on.
+Before 2026-09-22 the work produced **zero** acceptable two-body plates, 22 judged, none good, and the cause was misdiagnosed four times (LoRA stack, LoRA download, prompt enumeration, prompt length). Two things were wrong, and neither was the wording: a since-retired container group holding **three unets thrashed VRAM**, turning 3-second renders into 239–576 s no gateway would wait for (fixed by shipping one unet family per group, doc 22 §3.3); and a **template shipped as a prompt**, `prompt_snofs_distilled_v12.json` carried the literal `REPLACE_THIS_PROMPT`, so a "successful" 0.9 s render was a picture of that word. With both fixed, renders are **1–4 s** and acceptable plates arrive at roughly **2 in 7 seeds**. The work now is collecting which prompts work; selection, not wording, is what you spend effort on.
 
 ### 2. The verified configuration
 

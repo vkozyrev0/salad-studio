@@ -24,6 +24,7 @@ for _p in (ROOT, ROOT / "salad_studio"):
 
 from salad_studio.web import actions, server  # noqa: E402
 from salad_studio.web.engine import WebEngine  # noqa: E402
+from salad_studio.web.server import TOKEN_HEADER  # noqa: E402
 
 
 def _quiet(_level: str, _text: str) -> None:
@@ -95,6 +96,7 @@ class ServerTest(unittest.TestCase):
                                       engine=WebEngine(_Studio(cls.table)))
         cls.port = cls.web.start(port=0)
         cls.base = f"http://127.0.0.1:{cls.port}"
+        cls.token = cls.web.run_token or ""
         cls.thread = threading.Thread(target=cls.web.serve_forever, daemon=True)
         cls.thread.start()
 
@@ -104,8 +106,10 @@ class ServerTest(unittest.TestCase):
         cls.web.server_close()
         cls.table.core.stop()
 
-    def _post(self, body: bytes, path: str = "/api/action", origin: str | None = None) -> tuple[int, dict]:
-        headers = {"Content-Type": "application/json"}
+    def _post(self, body: bytes, path: str = "/api/action", origin: str | None = None,
+              token: str | None = None) -> tuple[int, dict]:
+        """One POST carrying the run token unless the test passes its own, or none."""
+        headers = {"Content-Type": "application/json", TOKEN_HEADER: self.token if token is None else token}
         if origin is not None:
             headers["Origin"] = origin
         req = urllib.request.Request(
@@ -118,6 +122,27 @@ class ServerTest(unittest.TestCase):
                 return exc.code, json.loads(exc.read())
             finally:
                 exc.close()
+
+    def _get(self, path: str, origin: str | None = None) -> Any:
+        """One GET carrying the token header; the page's own reads all go this way."""
+        headers = {TOKEN_HEADER: self.token}
+        if origin is not None:
+            headers["Origin"] = origin
+        return urllib.request.urlopen(urllib.request.Request(f"{self.base}{path}", headers=headers), timeout=5)
+
+    def _refused(self, req: urllib.request.Request) -> dict:
+        """Open a request that must be refused; its status and JSON body."""
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(req, timeout=5)
+        try:
+            code, body = caught.exception.code, json.loads(caught.exception.read())
+        finally:
+            caught.exception.close()
+        self.assertEqual(code, 403)
+        return body
+
+    def _echo(self, text: str = "x") -> bytes:
+        return json.dumps({"page": "probe", "action": "echo", "args": {"text": text}}).encode()
 
     def test_a_well_formed_call_answers_200_with_its_data(self) -> None:
         status, body = self._post(json.dumps({"page": "probe", "action": "echo", "args": {"text": "hi"}}).encode())
@@ -146,7 +171,7 @@ class ServerTest(unittest.TestCase):
     def test_a_body_that_is_not_json_answers_400(self) -> None:
         req = urllib.request.Request(
             f"{self.base}/api/action", data=b"not json", method="POST",
-            headers={"Content-Type": "application/json"})
+            headers={"Content-Type": "application/json", TOKEN_HEADER: self.token})
         with self.assertRaises(urllib.error.HTTPError) as caught:
             urllib.request.urlopen(req, timeout=5)
         caught.exception.close()
@@ -155,7 +180,7 @@ class ServerTest(unittest.TestCase):
     def test_a_request_with_no_action_answers_400(self) -> None:
         req = urllib.request.Request(
             f"{self.base}/api/action", data=json.dumps({"page": "probe"}).encode(), method="POST",
-            headers={"Content-Type": "application/json"})
+            headers={"Content-Type": "application/json", TOKEN_HEADER: self.token})
         with self.assertRaises(urllib.error.HTTPError) as caught:
             urllib.request.urlopen(req, timeout=5)
         caught.exception.close()
@@ -166,7 +191,8 @@ class ServerTest(unittest.TestCase):
         req = urllib.request.Request(
             f"{self.base}/api/action", data=json.dumps({"page": "probe", "action": "echo", "args": {"text": "x"}}).encode(),
             method="POST",
-            headers={"Content-Type": "application/json", "Origin": "https://evil.example"})
+            headers={"Content-Type": "application/json", "Origin": "https://evil.example",
+                     TOKEN_HEADER: self.token})
         with self.assertRaises(urllib.error.HTTPError) as caught:
             urllib.request.urlopen(req, timeout=5)
         caught.exception.close()
@@ -180,7 +206,7 @@ class ServerTest(unittest.TestCase):
         req = urllib.request.Request(
             f"{self.base}/api/action", data=json.dumps({"page": "probe", "action": "echo", "args": {"text": "y"}}).encode(),
             method="POST",
-            headers={"Content-Type": "application/json", "Origin": self.base})
+            headers={"Content-Type": "application/json", "Origin": self.base, TOKEN_HEADER: self.token})
         with urllib.request.urlopen(req, timeout=5) as resp:
             self.assertEqual(resp.status, 200)
 
@@ -197,7 +223,8 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(status, 403)
 
     def test_a_foreign_get_is_refused(self) -> None:
-        req = urllib.request.Request(f"{self.base}/api/events", headers={"Origin": "https://evil.example"})
+        req = urllib.request.Request(
+            f"{self.base}/api/events", headers={"Origin": "https://evil.example", TOKEN_HEADER: self.token})
         with self.assertRaises(urllib.error.HTTPError) as caught:
             urllib.request.urlopen(req, timeout=5)
         caught.exception.close()
@@ -205,13 +232,14 @@ class ServerTest(unittest.TestCase):
 
     def test_a_page_at_localhost_may_read(self) -> None:
         req = urllib.request.Request(
-            f"{self.base}/api/page/probe", headers={"Origin": f"http://localhost:{self.port}"})
+            f"{self.base}/api/page/probe",
+            headers={"Origin": f"http://localhost:{self.port}", TOKEN_HEADER: self.token})
         with urllib.request.urlopen(req, timeout=5) as resp:
             self.assertEqual(resp.status, 200)
 
     def test_the_health_route_is_gone(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:
-            urllib.request.urlopen(f"{self.base}/api/health", timeout=5)
+            self._get("/api/health")
         caught.exception.close()
         self.assertEqual(caught.exception.code, 404)
 
@@ -228,7 +256,8 @@ class ServerTest(unittest.TestCase):
             try:
                 sock.sendall(
                     b"POST /api/action HTTP/1.1\r\nHost: 127.0.0.1\r\n"
-                    b"Content-Type: application/json\r\nContent-Length: 20\r\n\r\n{"
+                    + f"{TOKEN_HEADER}: {self.token}\r\n".encode()
+                    + b"Content-Type: application/json\r\nContent-Length: 20\r\n\r\n{"
                 )
                 sock.settimeout(3)
                 reply = sock.recv(4096)
@@ -238,16 +267,103 @@ class ServerTest(unittest.TestCase):
 
     def test_a_get_on_the_action_route_answers_405(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:
-            urllib.request.urlopen(f"{self.base}/api/action", timeout=5)
+            self._get("/api/action")
         caught.exception.close()
         self.assertEqual(caught.exception.code, 405)
 
-    def test_the_events_route_serves_an_event_stream(self) -> None:
-        with urllib.request.urlopen(f"{self.base}/api/events", timeout=5) as resp:
+    # -- the run token
+
+    def test_the_token_is_long_and_different_every_run(self) -> None:
+        other = server.StudioServer(actions.Registry(), dist=None, log=_quiet)
+        other.start(port=0)
+        try:
+            self.assertGreaterEqual(len(self.token), 40)
+            self.assertNotEqual(other.run_token, self.token)
+        finally:
+            other.server_close()
+
+    def test_a_post_with_no_token_is_refused_before_the_action_runs(self) -> None:
+        self.calls.clear()
+        status, body = self._post(self._echo(), token="")
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"]["kind"], "unauthorized")
+        self.assertEqual(self.calls, [])
+
+    def test_a_post_with_a_wrong_token_is_refused(self) -> None:
+        self.calls.clear()
+        status, body = self._post(self._echo(), token="not-the-token")
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"]["kind"], "unauthorized")
+        self.assertEqual(self.calls, [])
+
+    def test_a_post_with_the_right_token_runs_the_action(self) -> None:
+        status, body = self._post(self._echo("hi"))
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"], body)
+        self.assertEqual(self.calls[-1], {"text": "hi"})
+
+    def test_a_cross_site_post_with_the_right_token_is_still_refused(self) -> None:
+        self.calls.clear()
+        status, body = self._post(self._echo(), origin="https://evil.example")
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"]["kind"], "cross_origin")
+        self.assertEqual(self.calls, [])
+
+    def test_the_token_in_the_query_does_not_stand_in_for_the_header_on_a_post(self) -> None:
+        """A cross-site form can put anything in a URL but cannot set a header."""
+        self.calls.clear()
+        status, _body = self._post(self._echo(), path=f"/api/action?token={self.token}", token="")
+        self.assertEqual(status, 403)
+        self.assertEqual(self.calls, [])
+
+    def test_a_server_that_never_started_refuses_every_request(self) -> None:
+        """A handler built without ``start`` has no token to match, so nothing gets in."""
+        web = server.StudioServer(actions.Registry(), dist=None, log=_quiet)
+        threading.Thread(target=web.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{web.server_address[1]}"
+        try:
+            for path in ("/api/page/probe", "/?token=", "/api/events?token=", "/main.js"):
+                with self.subTest(path=path):
+                    self._refused(urllib.request.Request(f"{base}{path}"))
+        finally:
+            web.shutdown()
+            web.server_close()
+
+    def test_events_with_no_token_is_refused(self) -> None:
+        body = self._refused(urllib.request.Request(f"{self.base}/api/events"))
+        self.assertEqual(body["error"]["kind"], "unauthorized")
+
+    def test_events_with_the_query_token_streams(self) -> None:
+        with urllib.request.urlopen(f"{self.base}/api/events?token={self.token}", timeout=5) as resp:
             self.assertEqual(resp.status, 200)
             self.assertIn("text/event-stream", resp.headers["Content-Type"])
-            first = resp.readline()
-            self.assertTrue(first.startswith(b":") or first.startswith(b"event:"), first)
+            self.assertTrue(resp.readline().startswith(b":"))
+
+    def test_a_page_read_needs_the_token(self) -> None:
+        self._refused(urllib.request.Request(f"{self.base}/api/page/probe"))
+        with self._get("/api/page/probe") as resp:
+            self.assertEqual(resp.status, 200)
+
+    def test_the_query_token_alone_opens_the_page_route(self) -> None:
+        """The header is the page's way; the query is only for what a browser opens itself."""
+        self._refused(urllib.request.Request(f"{self.base}/api/page/probe?token={self.token}"))
+
+    def test_a_page_read_from_another_site_is_refused_even_with_the_token(self) -> None:
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self._get("/api/page/probe", origin="https://evil.example")
+        caught.exception.close()
+        self.assertEqual(caught.exception.code, 403)
+
+    def test_the_document_opens_from_the_url_the_server_prints(self) -> None:
+        """``/`` and ``/index.html`` take the query token, so the printed URL is the page's."""
+        with urllib.request.urlopen(f"{self.base}/?token={self.token}#/config", timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+            self.assertIn("ng build", resp.read().decode(), "no build here, so the page says how to make one")
+
+    def test_the_document_without_the_token_is_refused(self) -> None:
+        for path in ("/", "/index.html", "/?token=wrong"):
+            with self.subTest(path=path):
+                self._refused(urllib.request.Request(f"{self.base}{path}"))
 
     def test_the_server_binds_loopback_only(self) -> None:
         self.assertEqual(self.web.host, "127.0.0.1")
@@ -270,6 +386,7 @@ class StaticFilesTest(unittest.TestCase):
         cls.web = server.StudioServer(actions.Registry(), dist=root, log=_quiet)
         cls.port = cls.web.start(port=0)
         cls.base = f"http://127.0.0.1:{cls.port}"
+        cls.token = cls.web.run_token or ""
         threading.Thread(target=cls.web.serve_forever, daemon=True).start()
 
     @classmethod
@@ -278,40 +395,59 @@ class StaticFilesTest(unittest.TestCase):
         cls.web.server_close()
         cls.tmp.cleanup()
 
+    def _open(self, path: str) -> Any:
+        """The page's own fetch: the token header, as the built Angular app sends it."""
+        return urllib.request.urlopen(
+            urllib.request.Request(f"{self.base}{path}", headers={TOKEN_HEADER: self.token}), timeout=5)
+
+    def _document(self, path: str = "/") -> Any:
+        """A navigation, which carries no header: the token rides in the URL."""
+        return urllib.request.urlopen(f"{self.base}{path}?token={self.token}", timeout=5)
+
     def test_the_root_serves_index(self) -> None:
-        with urllib.request.urlopen(f"{self.base}/", timeout=5) as resp:
+        with self._document() as resp:
             self.assertEqual(resp.status, 200)
             self.assertIn("text/html", resp.headers["Content-Type"])
             self.assertIn(b"<title>studio</title>", resp.read())
 
     def test_a_script_is_served_with_a_javascript_type(self) -> None:
-        with urllib.request.urlopen(f"{self.base}/main.js", timeout=5) as resp:
+        with self._open("/main.js") as resp:
             self.assertIn("javascript", resp.headers["Content-Type"])
+
+    def test_a_script_without_the_token_is_refused(self) -> None:
+        for path in ("/main.js", "/main-ABCD1234EF.js"):
+            with self.subTest(path=path):
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    urllib.request.urlopen(f"{self.base}{path}?token={self.token}", timeout=5)
+                caught.exception.close()
+                self.assertEqual(caught.exception.code, 403)
 
     def test_a_path_that_escapes_the_build_directory_is_not_served(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:
-            urllib.request.urlopen(f"{self.base}/../etc/passwd", timeout=5)
+            self._open("/../etc/passwd")
         caught.exception.close()
         self.assertIn(caught.exception.code, (400, 404))
 
     def test_a_missing_file_answers_404(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:
-            urllib.request.urlopen(f"{self.base}/nope.js", timeout=5)
+            self._open("/nope.js")
         caught.exception.close()
         self.assertEqual(caught.exception.code, 404)
 
     def test_a_hashed_asset_is_cached_and_the_document_is_not(self) -> None:
         """A new build renames a script, so the old name can never change."""
-        for name, cached in (("main-ABCD1234EF.js", True), ("styles-09ZYXWVU.css", True), ("index.html", False)):
-            with urllib.request.urlopen(f"{self.base}/{name}", timeout=5) as resp:
+        for name in ("main-ABCD1234EF.js", "styles-09ZYXWVU.css"):
+            with self._open(f"/{name}") as resp:
                 policy = resp.headers["Cache-Control"]
-            self.assertEqual("immutable" in policy, cached, f"{name}: {policy}")
+            self.assertIn("immutable", policy, name)
+        with self._document("/index.html") as resp:
+            self.assertIn("no-cache", resp.headers["Cache-Control"])
 
     def test_a_route_that_would_fail_on_disk_answers_json_404(self) -> None:
         """The root answers before the document root; a failure there is still a missing route."""
         with mock.patch.object(server.StudioHandler, "_static", side_effect=PermissionError("denied")):
             with self.assertRaises(urllib.error.HTTPError) as caught:
-                urllib.request.urlopen(f"{self.base}/whatever", timeout=5)
+                self._open("/whatever")
             body = caught.exception.read()
             code = caught.exception.code
             caught.exception.close()
@@ -328,7 +464,7 @@ class MissingBuildTest(unittest.TestCase):
         port = web.start(port=0)
         threading.Thread(target=web.serve_forever, daemon=True).start()
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as resp:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/?token={web.run_token}", timeout=5) as resp:
                 self.assertEqual(resp.status, 200)
                 body = resp.read().decode()
             self.assertIn("ng build", body)

@@ -55,7 +55,7 @@ interface TokensState {
             <div class="control">
               <input
                 [id]="'key-' + slot.id"
-                [type]="revealOf(slot.id) || draft()[slot.id] ? 'text' : 'password'"
+                [type]="revealOf(slot.id) ? 'text' : 'password'"
                 [value]="draft()[slot.id] ?? revealOf(slot.id)"
                 [placeholder]="revealOf(slot.id) ? '' : slot.present ? slot.hint : 'not set'"
                 (input)="edit(slot.id, $event)"
@@ -206,7 +206,12 @@ export class TokensPage {
 
   protected save(): void {
     const values = Object.fromEntries(this.slots().map((s) => [s.id, this.draft()[s.id] ?? '']));
-    void this.store.act('tokens', 'save_key', { values });
+    void this.store.act('tokens', 'save_key', { values }).then((reply) => {
+      if (!reply?.ok) return;
+      const kept = { ...this.draft() };
+      for (const [id, value] of Object.entries(values)) if (value.trim()) delete kept[id];
+      this.draft.set(kept);
+    });
   }
 
   /** Check one provider's saved key, not all five. */

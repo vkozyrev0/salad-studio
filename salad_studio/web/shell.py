@@ -9,6 +9,7 @@ having asked.
 from __future__ import annotations
 
 import secrets
+import urllib.parse
 from pathlib import Path
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -20,6 +21,7 @@ from salad_studio.web.form import Form
 
 REST_TEXT = "Start on Config: pick a profile and its target.   Ctrl+Tab moves between pages."
 PLATE_LIMIT = 60
+CONFIRM_CAP = 64
 LEVELS = ("info", "ok", "warn", "error")
 
 
@@ -60,6 +62,8 @@ class Shell:
     profile: profiles.SaladProfile = field(default_factory=lambda: profiles.SaladProfile(name="klein"))
     controllers: Any = None
     engine: Any = None
+    # The server's run token, set once it starts; a plate's URL carries it.
+    run_token: str | None = None
     confirms: dict[str, tuple[str, str, dict[str, Any]]] = field(default_factory=dict)
     _ids: int = 0
 
@@ -87,9 +91,15 @@ class Shell:
         return f"r{self._ids}"
 
     def issue_confirm(self, page: str, action: str, args: dict[str, Any]) -> str:
-        """A single-use token that names the action a Yes button will run."""
+        """A single-use token that names the action a Yes button will run.
+
+        At most ``CONFIRM_CAP`` live: a dialog left open has no expiry, so the
+        oldest is evicted rather than letting a session grow the dict forever.
+        """
         token = "c_" + secrets.token_hex(8)
         self.confirms[token] = (page, action, dict(args))
+        while len(self.confirms) > CONFIRM_CAP:
+            self.confirms.pop(next(iter(self.confirms)))
         return token
 
     def take_confirm(self, token: str) -> tuple[str, str, dict[str, Any]] | None:
@@ -162,7 +172,10 @@ class Shell:
             key = str(entry.get("key") or "")
             if not key or image.suffix.lower() not in (".jpg", ".jpeg", ".png") or not image.is_file():
                 continue
-            plates.append((key, f"/api/thumbs/{image.name}"))
+            # The page draws a plate with an `img`, which cannot send the token
+            # header, so the URL carries it instead.
+            query = urllib.parse.urlencode({"token": self.run_token or ""})
+            plates.append((key, f"/api/thumbs/{image.name}?{query}"))
             if len(plates) >= PLATE_LIMIT:
                 break
         self.plates = tuple(plates)

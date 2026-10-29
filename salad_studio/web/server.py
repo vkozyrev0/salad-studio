@@ -9,18 +9,25 @@ whose ``Origin`` names another site is refused before the action table runs.
 That second check is what keeps a page on the open internet from driving a
 server that holds the user's provider keys, because a browser sends the origin
 on every cross-site POST and this server needs no cookie to be useful to it.
+
+A third check covers what a browser never sends an origin for: another program
+on this machine. ``start`` mints a token, the terminal prints it in the page's
+URL, and every request must carry it back, in ``X-Studio-Token`` or, where a
+browser navigates or opens a stream on its own, in ``?token=``. A server that
+was never started has no token, and then every request is refused.
 """
 from __future__ import annotations
 
 import json
 import mimetypes
 import re
+import secrets
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from salad_studio.web import events
 from salad_studio.web.actions import Registry
@@ -29,6 +36,9 @@ HOST = "127.0.0.1"
 MAX_BODY = 8 * 1024 * 1024
 BODY_TIMEOUT_S = 15.0
 EVENT_WAIT_S = 15.0
+TOKEN_HEADER = "X-Studio-Token"
+_EVENTS = "/api/events"
+_PLATES = "/api/plates/"
 # A build names each script and stylesheet by its content hash; anything else
 # is the document or a public file, which keeps `no-cache`.
 HASHED = "private, max-age=31536000, immutable"
@@ -59,6 +69,7 @@ class StudioServer(ThreadingHTTPServer):
         self.dist = Path(dist) if dist is not None else None
         self.hub = hub if hub is not None else events.Hub()
         self.log = log or (lambda _level, _text: None)
+        self.run_token: str | None = None
         super().__init__((HOST, 0), StudioHandler)
         self.requested_port = 0
 
@@ -77,6 +88,7 @@ class StudioServer(ThreadingHTTPServer):
             self.server_close()
             ThreadingHTTPServer.__init__(self, (HOST, port), StudioHandler)
         self.requested_port = int(port)
+        self.run_token = secrets.token_urlsafe(32)
         return int(self.server_address[1])
 
     def handle_error(self, request: Any, client_address: Any) -> None:
@@ -101,10 +113,14 @@ class StudioHandler(BaseHTTPRequestHandler):
     # -- routing
 
     def do_GET(self) -> None:
-        path = urlsplit(self.path).path
+        path, query = _split(self.path)
         if path.startswith("/api/") and not self._same_origin():
             return self._json(403, {"error": {"kind": "cross_origin",
                                               "message": "this server answers its own page only"}})
+        # The stream cannot carry a header, and a plate is opened from the terminal
+        # or a link in a browser tab, so these two also take the token in the URL.
+        if path.startswith("/api/") and not self._carries(query, path in (_EVENTS, _PLATES)):
+            return self._unauthorized()
         if path == "/api/events":
             return self._events()
         if path == "/api/action":
@@ -121,18 +137,27 @@ class StudioHandler(BaseHTTPRequestHandler):
             return self._json(404, {"error": {"kind": "not_found", "message": path}})
         # A route it cannot serve is a 404, the same answer `/api` gives for a
         # name it does not know, rather than a 500 and a traceback on stderr.
+        if path in ("/", "/index.html"):
+            return self._document(query)
+        if not self._carries(query, query_token=False):
+            return self._unauthorized()
         try:
             return self._static(path)
         except Exception:  # noqa: BLE001 - an unknown route is a 404, not a broken server
             return self._json(404, {"error": {"kind": "not_found", "message": path}})
 
     def do_POST(self) -> None:
-        path = urlsplit(self.path).path
+        path, query = _split(self.path)
         if path != "/api/action":
             return self._json(405, {"error": {"kind": "method", "message": path}})
+        # The origin goes first: a page from another site that somehow learns
+        # the token must not get the token check's answer. The token is checked
+        # before the body is read, so a refused request costs no upload.
         if not self._same_origin():
             return self._json(403, {"error": {"kind": "cross_origin",
                                               "message": "this server answers its own page only"}})
+        if not self._carries(query, query_token=False):
+            return self._unauthorized()
         body = self._body()
         if body is None:
             return
@@ -171,6 +196,27 @@ class StudioHandler(BaseHTTPRequestHandler):
         # A page opened at localhost is the same page; the bind is loopback
         # either way, and a bookmark should not make every action a 403.
         return (parsed.hostname or "").lower() in ("127.0.0.1", "localhost", "::1")
+
+    def _carries(self, query: str, query_token: bool) -> bool:
+        """Whether this request carries the token ``start`` minted.
+
+        A server that was never started has none, so nothing carries it.
+        """
+        wanted = getattr(self.server, "run_token", None)
+        if not wanted:
+            return False
+        given = self.headers.get(TOKEN_HEADER) or ""
+        if query_token:
+            given = given or (parse_qs(query).get("token") or [""])[0]
+        return secrets.compare_digest(given.encode(), wanted.encode())
+
+    def _vary_token(self) -> None:
+        """These files are cached for an hour, and a browser can fetch them with or without a query."""
+        self.send_header("Vary", TOKEN_HEADER + ", Cookie")
+
+    def _unauthorized(self) -> None:
+        self._json(403, {"error": {"kind": "unauthorized",
+                                   "message": "missing or wrong run token; open the URL the server printed"}})
 
     def _body(self) -> bytes | None:
         try:
@@ -222,6 +268,7 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "image/png" if path.suffix.lower() == ".png" else "image/jpeg")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "private, max-age=3600")
+        self._vary_token()
         self.end_headers()
         self.wfile.write(data)
 
@@ -241,6 +288,7 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "image/png")
         self.send_header("Content-Length", str(len(png)))
         self.send_header("Cache-Control", "private, max-age=3600")
+        self._vary_token()
         self.end_headers()
         self.wfile.write(png)
 
@@ -282,6 +330,12 @@ class StudioHandler(BaseHTTPRequestHandler):
 
     # -- the page
 
+    def _document(self, query: str) -> None:
+        """The page itself, refused without the token so a foreign document cannot embed it."""
+        if not self._carries(query, query_token=True):
+            return self._unauthorized()
+        self._static("/index.html")
+
     def _static(self, path: str) -> None:
         root = self.server.dist
         if root is None or not (root / "index.html").is_file():
@@ -319,6 +373,12 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", HASHED if _hashed(target.name) else "no-cache")
         self.end_headers()
         self.wfile.write(data)
+
+
+def _split(target: str) -> tuple[str, str]:
+    """A request target as its path and its raw query."""
+    parts = urlsplit(target)
+    return parts.path, parts.query
 
 
 def _hashed(name: str) -> bool:

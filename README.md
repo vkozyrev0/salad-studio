@@ -20,8 +20,10 @@ python -m salad_studio
 ```
 
 Run from the repo root. It serves on a free loopback port and opens the page
-there; `python -m salad_studio 8765` pins the port and `--no-open` keeps the
-browser closed. The page opens on Config; paste provider keys on Tokens before
+there; the URL it prints carries a token it mints for the run, and the server
+refuses any request without it, so a local program cannot drive it. Open the
+URL the server prints. `python -m salad_studio 8765` pins the port and
+`--no-open` keeps the browser closed. The page opens on Config; paste provider keys on Tokens before
 the first render. Background removal downloads its model when Generate first
 asks for it, so run `python -m salad_studio --prefetch-cutout` once ahead of
 time; it prints where the model landed and exits.
@@ -29,7 +31,7 @@ time; it prints where the model landed and exits.
 Tests are `unittest`. Run the commands separately:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1129 tests, ~35 s
+python -m unittest discover -s tests -p "test_*.py"    # 1177 tests, ~35 s
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```
@@ -68,7 +70,7 @@ cannot run still finishes with the original plate and a note saying why.
 | `salad_probe_klein.py`, `salad_probe_sdxl.py`, `salad_probe_ages.py`, `salad_age_review.py`, `salad_catalog_faces.py` | Probes and the Eldermark face catalog. |
 | `face_prompt.py`, `face_prompt_pack.json` | Age-locked, DNA-aware face prompts. |
 | `test_salad_comfy_live_findings.py` | Structural checks on the live-findings doc. |
-| `.github/workflows/checks.yml` | CI: the Python suite, the queue check, the Klein suite, the page build, the check that the server builds a missing page, Vitest, and the binding audit. |
+| `.github/workflows/checks.yml` | CI, two jobs. The Python job runs the suite, the queue check, then installs `salad_klein/requirements.txt` before the Klein suite. The `ui` job runs `npx ng build`, the check that the server builds a page missing from disk, Vitest, and `node audit.cjs`. |
 | `.claude/skills/civitai-verify/` | A skill that replays a Civitai link through Studio import and a live container POST. |
 | `.claude/skills/queue-submission-safety/` | A formal check that the queue never POSTs an accepted request twice. |
 
@@ -82,6 +84,7 @@ missing work.
 | `ELDERMARK_ART` | `C:\Users\vkozy\repos\lifesim-design\art` | Art tree the tool writes plates into. |
 | `ELDERMARK_REPO` | `C:\Users\vkozy\repos\lifesim-design` | Checkout the root structural test reads. **The second test command needs this checkout**; without it the command exits 0. |
 | `SALAD_STUDIO_HOME` | the repo root | Where `model_catalog.py` stages Klein weights. |
+| `ELDERMARK_MODEL_CACHE` | `$ELDERMARK_ART\model-cache` | Replaces the `model_catalog.py` cache root; the tests use it. |
 
 The defaults name one machine's paths; set the variables elsewhere.
 
@@ -96,9 +99,11 @@ at POST time.
 
 The studio package and suite are standalone. `salad_catalog_faces.py` imports
 `paperdoll_mask` and `regen_faces`, which stayed in the Eldermark repo, and its
-two probes fail here. `test_salad_comfy_live_findings.py` asserts that failure
-rather than a false pass, and exercises the real freeze path once the gap
-closes.
+two probes fail here. `test_salad_comfy_live_findings.py` accepts exactly that
+import failure with a skip note, so its `salad_catalog_faces --generate` freeze
+assertion does not run until the gap closes. `tests/test_salad_catalog_faces.py`
+drives the same freeze check by exec'ing the shipped functions, and the
+structural test still runs the `regen_faces` freeze check.
 
 ## Content note
 

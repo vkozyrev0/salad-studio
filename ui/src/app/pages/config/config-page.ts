@@ -71,18 +71,13 @@ interface VastState {
   offers?: (Offer | string[])[];
 }
 
-/**
- * The Images section's state. The controller has not written this block yet,
- * so every read below is real, but the key names are this page's guess at the
- * shape the inventory describes (tags, environment rows, a dry run).
- */
+/** The Images section's state, as `_images_state` builds it. */
 interface ImagesState {
   tags?: string[];
   image?: string;
   show_tokens?: boolean;
-  env?: { name: string; value: string; editable?: boolean; note?: string }[];
+  env?: { name: string; value: string; secret?: boolean; note?: string }[];
   script?: string;
-  own_image?: { name?: string; tag?: string; build_arg?: string; context?: string };
 }
 
 interface ConfigState {
@@ -276,15 +271,6 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
                 <div class="btn-row">
                   <button class="btn ghost" type="button" (click)="copyCommands()">Copy commands</button>
                 </div>
-                <details class="own">
-                  <summary class="eyebrow">Your own image</summary>
-                  <div class="rows">
-                    <app-field label="Name" [value]="images().own_image?.name ?? ''" [w]="160" [readonly]="true" />
-                    <app-field label="Tag" [value]="images().own_image?.tag ?? ''" [w]="280" [readonly]="true" [mono]="true" />
-                    <app-field label="Build arg" [value]="images().own_image?.build_arg ?? ''" [w]="300" [readonly]="true" [mono]="true" />
-                    <app-field label="Context" [value]="images().own_image?.context ?? ''" [w]="200" [readonly]="true" [mono]="true" />
-                  </div>
-                </details>
               </div>
             </section>
             }
@@ -429,9 +415,6 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
     .stats dd { margin: 2px 0 0; font-family: var(--font-mono); font-size: 11.5px; }
     .stats .url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
     .env-row { display: flex; align-items: baseline; gap: 10px; padding: 6px 8px; border-bottom: 1px solid var(--hairline); }
-    .own { margin-top: 14px; }
-    .own summary { cursor: pointer; }
-    .own .rows { margin-top: 10px; }
     .gpus { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 12px 0 0; padding: 0; border: 0; }
     .gpus legend { margin-bottom: 6px; }
     /* The seven probe fields add up to less than the pane at 1440px, and wrap
@@ -693,11 +676,13 @@ export class ConfigPage {
   }
 
   protected set(args: Record<string, string>, action: 'add_env' | 'remove_env' | 'save_env' | 'load_policy' | 'apply_policy' | 'reallocate'): void {
-    void this.store.act('config', action, args);
-    if (action === 'add_env') {
-      this.envName.set('');
-      this.envValue.set('');
-    }
+    void this.store.act('config', action, args).then((reply) => {
+      if (!reply?.ok) return;
+      if (action === 'add_env' || action === 'remove_env') {
+        this.envName.set('');
+        this.envValue.set('');
+      }
+    });
   }
 
   // -- Vast.ai

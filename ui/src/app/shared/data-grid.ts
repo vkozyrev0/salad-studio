@@ -10,11 +10,13 @@ import {
   untracked,
   viewChild,
 } from '@angular/core';
+import { withToken } from '../core/api';
 import { StudioStore } from '../core/studio-store';
 import { AgGridAngular } from 'ag-grid-angular';
 import {
   ColDef,
   GetRowIdParams,
+  ICellRendererParams,
   GridApi,
   GridReadyEvent,
   RowSelectionOptions,
@@ -126,6 +128,8 @@ export class DataGrid {
       filter: true,
       resizable: true,
       ...column,
+      // A row image is an `img`, which cannot send the token header, so its URL carries it.
+      cellRenderer: column.cellRenderer && ((p: ICellRendererParams) => column.cellRenderer!(tokenized(p))),
       width: column.width ?? start,
       flex: column.flex ?? (column.width === undefined && start === undefined ? 1 : undefined),
     })),
@@ -176,6 +180,13 @@ export class DataGrid {
   private key(row: unknown): string {
     return String((row as Record<string, unknown> | null | undefined)?.[this.field()] ?? '');
   }
+}
+
+/** The row a renderer got, with a `/api/` image URL carrying the run token. */
+function tokenized(params: ICellRendererParams): ICellRendererParams {
+  const value = params.value;
+  if (typeof value !== 'string' || !value.startsWith('/api/')) return params;
+  return { ...params, value: withToken(value) };
 }
 
 /** A right-aligned, tabular number column. */

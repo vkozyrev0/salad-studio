@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import subprocess
+import threading
 import webbrowser
 from collections.abc import Callable
 from pathlib import Path
@@ -44,7 +45,8 @@ class Studio:
 
     @property
     def url(self) -> str:
-        return f"http://127.0.0.1:{self.port}/#/{START_PAGE}"
+        """The page's address, with the run token where the page finds it and before the route."""
+        return f"http://127.0.0.1:{self.port}/?token={self.server.run_token or ''}#/{START_PAGE}"
 
     def stop(self) -> None:
         # ``shutdown`` waits for ``serve_forever``, so it is only called on a
@@ -59,9 +61,15 @@ class Studio:
     _serving = False
 
     def serve(self, port: int = 0) -> int:
-        """Bind and serve until ``stop``. Returns the port actually bound."""
+        """Bind, send a background thread's answers, and hand the loop to the caller.
+
+        ``stop`` can only wait out a ``serve_forever`` that runs, so the thread
+        starts here, as it does for every server but ``run``'s own loop.
+        """
         port = self.server.start(port=port)
+        self.shell.run_token = self.server.run_token
         self._serving = True
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
         return port
 
 
@@ -167,13 +175,16 @@ def _ng_build() -> bool:
 
 def run(port: int = 0, *, open_browser: bool = True, dist: Path | None = DIST) -> None:
     """Serve until interrupted, then stop the timers and the thread."""
+    # A page opened without the token asks for its first state at once, so a
+    # missing build would otherwise answer that request instead of the page.
     if dist is not None and build_page():
         print("Salad Studio: built the page in ui/dist", flush=True)
     studio = build(dist=dist)
-    actual = studio.serve(port=port)
-    print(f"Salad Studio: http://127.0.0.1:{actual}/#/{START_PAGE}", flush=True)
+    studio.serve(port=port)
+    # The URL carries the run token; a page opened without it reaches nothing.
+    print(f"Salad Studio: {studio.url}", flush=True)
     if open_browser:
-        webbrowser.open(f"http://127.0.0.1:{actual}/#/{START_PAGE}")
+        webbrowser.open(studio.url)
     try:
         studio.server.serve_forever()
     except KeyboardInterrupt:

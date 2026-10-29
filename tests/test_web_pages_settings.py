@@ -168,7 +168,7 @@ class SettingsTest(unittest.TestCase):
         ctx, state = self.call("save")
         self.assertEqual(self.notes[-1][1], "ok")
         self.assertEqual(set(state), {"knobs", "graphs", "graph", "schedulers", "scheduler",
-                                      "checkpoints", "checkpoint", "loras"})
+                                      "checkpoints", "checkpoint", "loras", "removeBg"})
         saved = self.stored()
         self.assertEqual((saved.width, saved.height, saved.steps, saved.cfg, saved.seed),
                          (768, 768, 8, 1.5, 42))
@@ -227,6 +227,18 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(self.ctl.state()["scheduler"], "simple")
         self.call("toggle_lora", id=KLEIN_LORA, on=True)
         self.assertEqual(self.ctl.state()["scheduler"], "simple")
+
+    def test_remove_background_is_on_or_off_and_never_saved(self) -> None:
+        """The cutout runs after the plate exists, so it is not a profile field."""
+        self.assertFalse(self.ctl.state()["removeBg"])
+        _ctx, state = self.call("set_knobs", remove_bg="on")
+        self.assertTrue(state["removeBg"])
+        self.assertEqual(self.studio.form.remove_bg, "on")
+        self.call("save")
+        self.assertEqual(profiles.load_all()["klein"].width, self.stored().width)
+        _ctx, state = self.call("set_knobs", remove_bg="")
+        self.assertFalse(state["removeBg"])
+        self.assertEqual(self.studio.form.remove_bg, "")
 
     def test_a_page_with_no_background_work_answers_at_once(self) -> None:
         status, reply = self.engine.handle({"page": "settings", "action": "set_knobs",

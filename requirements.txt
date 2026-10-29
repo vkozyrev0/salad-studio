@@ -1,1 +1,4 @@
 pillow==12.3.0
+rembg==2.0.86
+# rembg leaves it out, and 1.29.0 is the version this machine's cuts were measured on.
+onnxruntime==1.29.0

@@ -326,6 +326,14 @@ def write_thumb(src: Path, *, ts: int | None = None, key: str = "") -> Path | No
         return None
     try:
         im = Image.open(path)
+        if im.mode in ("RGBA", "LA", "PA") or "transparency" in im.info:
+            # A black subject on a dark plate leaves no silhouette once a cutout's
+            # alpha is dropped. RGB keeps one, as the plain renders always did.
+            im = im.convert("RGBA")
+            box = im.getbbox() or (0, 0, *im.size)
+            bg = Image.new("RGBA", im.size, (255, 255, 255, 255))
+            bg.paste(im, mask=im.getchannel("A"))
+            im = bg.crop(box)
         im = im.convert("RGB")
         im.thumbnail(THUMB_SIZE)
         canvas = Image.new("RGB", THUMB_SIZE, (20, 30, 40))

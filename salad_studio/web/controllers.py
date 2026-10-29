@@ -359,6 +359,9 @@ class ShellController:
                                                 key=self._render_key or "")
                 except (OSError, ValueError, TypeError) as exc:
                     self.studio.services.log("warn", f"history thumb skipped: {exc}")
+            if outcome.warning:
+                self.studio.services.log("warn", f"No background removal: {outcome.warning}")
+                ctx.note(f"No background removal: {outcome.warning}", level="warn")
         self._render_ts = None
         self._render_key = None
         self.studio.gen = GenWord()

@@ -79,6 +79,7 @@ class SettingsController:
             "scheduler": _scheduler_id(form.scheduler),
             "checkpoints": list(request_json.UNET_LABELS),
             "checkpoint": request_json.unet_label(profile.primary_checkpoint),
+            "removeBg": form.remove_bg == "on",
             "loras": [_choice(item, str(item.get("id")) in selected) for item in rows],
         }
 
@@ -94,6 +95,8 @@ class SettingsController:
             form.graph = lora_store.graph_id(str(payload.get("graph") or ""))
         if "scheduler" in payload:
             form.scheduler = _scheduler_id(str(payload.get("scheduler") or ""))
+        if "remove_bg" in payload:
+            form.remove_bg = "on" if payload.get("remove_bg") == "on" else ""
         self.studio.publish()
         return self.state()
 

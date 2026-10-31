@@ -3,7 +3,8 @@ import { ColDef } from 'ag-grid-community';
 import { StudioStore } from '../../core/studio-store';
 import { PageFrame } from '../../shell/page-frame';
 import { DataGrid } from '../../shared/data-grid';
-import { clock, escapeHtml, graphSummary } from '../../shared/format';
+import { Api } from '../../core/api';
+import { clock, graphSummary } from '../../shared/format';
 
 interface HistoryRow {
   id: string;
@@ -140,6 +141,7 @@ interface HistoryState {
 })
 export class HistoryPage {
   protected readonly store = inject(StudioStore);
+  protected readonly api = inject(Api);
 
   protected readonly state = computed(() => this.store.page() as HistoryState | null);
   protected readonly rows = computed(() => this.state()?.rows ?? []);
@@ -182,10 +184,24 @@ export class HistoryPage {
       sortable: false,
       filter: false,
       cellClass: 'plate-cell',
-      cellRenderer: (p: { value?: string }) =>
-        p.value
-          ? `<span class="print small" style="width:36px;height:36px;display:inline-block"><img src="${escapeHtml(p.value)}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover"></span>`
-          : '',
+      // An `img` cannot send the token header, so a row's picture is fetched
+      // through the API and drawn from the blob it returns.
+      cellRenderer: (p: { value?: string }) => {
+        const url = p.value ?? '';
+        if (!url) return '';
+        const cell = document.createElement('span');
+        cell.className = 'print small';
+        cell.style.cssText = 'width:36px;height:36px;display:inline-block';
+        void this.api.image(url).then((blob) => {
+          const img = new Image();
+          img.src = blob;
+          img.alt = '';
+          img.loading = 'lazy';
+          img.style.cssText = 'width:100%;height:100%;object-fit:cover';
+          cell.replaceChildren(img);
+        }, () => undefined);
+        return cell;
+      },
     },
   ];
 

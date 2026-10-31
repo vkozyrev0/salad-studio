@@ -54,9 +54,9 @@ class GalleryTest(unittest.TestCase):
         self.made.studio.refresh_plates()
         plates = self._plates()
         self.assertEqual([p["name"] for p in plates], [entry["key"]])
-        # The page draws this URL in an `img`, which sends no header, so the run token rides in it.
-        self.assertEqual(plates[0]["url"],
-                         f"/api/thumbs/{Path(entry['image']).name}?token={self.made.token}")
+        # The page fetches this URL through its HttpClient, whose interceptor sets the
+        # token header, so the URL the server writes carries nothing the token needs.
+        self.assertEqual(plates[0]["url"], f"/api/thumbs/{Path(entry['image']).name}")
 
     def test_a_render_without_a_picture_is_not_a_plate(self) -> None:
         prompt_history.add_request({"prompt": {"1": {"class_type": "CLIPTextEncode", "inputs": {"text": "no image"}}}})

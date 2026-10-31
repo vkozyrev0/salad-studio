@@ -68,6 +68,9 @@ class Studio:
         """
         port = self.server.start(port=port)
         self.shell.run_token = self.server.run_token
+        # The shell read the gallery before there was a token, so the plate
+        # URLs it holds carry none; read it once more now that there is one.
+        self.shell.refresh_plates()
         self._serving = True
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         return port

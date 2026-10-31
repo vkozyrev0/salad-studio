@@ -38,7 +38,6 @@ BODY_TIMEOUT_S = 15.0
 EVENT_WAIT_S = 15.0
 TOKEN_HEADER = "X-Studio-Token"
 _EVENTS = "/api/events"
-_PLATES = "/api/plates/"
 # A build names each script and stylesheet by its content hash; anything else
 # is the document or a public file, which keeps `no-cache`.
 HASHED = "private, max-age=31536000, immutable"
@@ -117,9 +116,10 @@ class StudioHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/") and not self._same_origin():
             return self._json(403, {"error": {"kind": "cross_origin",
                                               "message": "this server answers its own page only"}})
-        # The stream cannot carry a header, and a plate is opened from the terminal
-        # or a link in a browser tab, so these two also take the token in the URL.
-        if path.startswith("/api/") and not self._carries(query, path in (_EVENTS, _PLATES)):
+        # The stream cannot carry a header, so it alone takes the token in the URL.
+        # A plate's picture goes through the page's HttpClient like every other
+        # read, and that interceptor sets the header.
+        if path.startswith("/api/") and not self._carries(query, path == _EVENTS):
             return self._unauthorized()
         if path == "/api/events":
             return self._events()
@@ -139,8 +139,12 @@ class StudioHandler(BaseHTTPRequestHandler):
         # name it does not know, rather than a 500 and a traceback on stderr.
         if path in ("/", "/index.html"):
             return self._document(query)
-        if not self._carries(query, query_token=False):
-            return self._unauthorized()
+        # The token stops a program from driving the API; it cannot gate the
+        # page's own files. A browser fetches a script, a stylesheet or a
+        # font with no header and, on navigation, no query, so a check here
+        # would only ever answer 403 and the page would never start. The
+        # document above is what carries the token, and it is what names
+        # these files.
         try:
             return self._static(path)
         except Exception:  # noqa: BLE001 - an unknown route is a 404, not a broken server
@@ -212,11 +216,15 @@ class StudioHandler(BaseHTTPRequestHandler):
 
     def _vary_token(self) -> None:
         """These files are cached for an hour, and a browser can fetch them with or without a query."""
-        self.send_header("Vary", TOKEN_HEADER + ", Cookie")
+        self.send_header("Vary", TOKEN_HEADER)
 
     def _unauthorized(self) -> None:
         self._json(403, {"error": {"kind": "unauthorized",
                                    "message": "missing or wrong run token; open the URL the server printed"}})
+        # A refused POST still has its body in the socket. Left there, it is
+        # parsed as the next request on a kept-alive connection and the real
+        # one goes unanswered; closing the connection is the cheap way out.
+        self.close_connection = True
 
     def _body(self) -> bytes | None:
         try:

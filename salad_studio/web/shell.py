@@ -9,7 +9,6 @@ having asked.
 from __future__ import annotations
 
 import secrets
-import urllib.parse
 from pathlib import Path
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -172,10 +171,9 @@ class Shell:
             key = str(entry.get("key") or "")
             if not key or image.suffix.lower() not in (".jpg", ".jpeg", ".png") or not image.is_file():
                 continue
-            # The page draws a plate with an `img`, which cannot send the token
-            # header, so the URL carries it instead.
-            query = urllib.parse.urlencode({"token": self.run_token or ""})
-            plates.append((key, f"/api/thumbs/{image.name}?{query}"))
+            # The page fetches a plate through its HttpClient, whose interceptor
+            # sets the token header, so the URL carries nothing extra.
+            plates.append((key, f"/api/thumbs/{image.name}"))
             if len(plates) >= PLATE_LIMIT:
                 break
         self.plates = tuple(plates)

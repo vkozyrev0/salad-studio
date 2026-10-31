@@ -752,47 +752,6 @@ _GONE_WORDS = ("Failed", "Down")
 _NOT_RUNNING_WORDS = ("Stopped",)
 
 
-def generate_dispatch_reason(
-    info: dict[str, Any] | None,
-    *,
-    word: str = "",
-    profile: str = "",
-    gateway: str = "",
-) -> str | None:
-    """Why Generate must not dispatch at all. None means dispatch it.
-
-    A group the badge says is **stopped** is refused here, at the press, with the
-    same sentence ``salad_queue.ensure_container`` would give: this app does not
-    start containers, so a request aimed at one would only be queued and failed
-    a moment later. ``profile`` and ``gateway`` name the container in that
-    sentence; without them a generic one is returned, so a caller that has only
-    the badge still refuses rather than dispatching.
-
-    A group that is still coming up (Creating, Allocating, Downloading,
-    Starting) **is** dispatched: the queue re-reads the group's state and the
-    generator waits for its ``/ready`` before it POSTs. A replica that is gone
-    is refused with the badge's own reason.
-    """
-    label = short_status(info) if info else str(word or "").strip()
-    if label == "Ready" or label.split()[:1] == ["Ready"]:
-        return None
-    if label.startswith(_NOT_RUNNING_WORDS):
-        if profile or gateway:
-            return salad_queue.container_down_refusal(profile, gateway)
-        return (
-            "the container's group is not running, and this app does not start "
-            "containers. Start it in the Salad console, then Generate again."
-        )
-    if not label.startswith(_GONE_WORDS):
-        return None
-    # A "Down" that came from a probe which never answered says nothing about the
-    # group: the badge has to say something, but the request is dispatched and
-    # the queue reads the group's state itself, which is fresher than the badge.
-    if info and info.get("error") and not (info.get("group") or {}):
-        return None
-    return generate_block_reason(info or {}) or f"Replica is {label}."
-
-
 def attach_last_log(info: dict[str, Any], key: str) -> dict[str, Any]:
     g = info.get("group") or {}
     name = str(g.get("name") or "")

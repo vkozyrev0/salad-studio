@@ -352,11 +352,6 @@ def default() -> dict[str, Any]:
     return doc
 
 
-def reset_cache() -> None:
-    """Forget the cached document (tests, and after writing one)."""
-    _CACHE.clear()
-
-
 def family_for_unet(unet: str, doc: dict[str, Any] | None) -> str:
     """Which family serves this checkpoint, or ``""`` when the document is silent.
 

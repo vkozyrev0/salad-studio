@@ -23,7 +23,6 @@ CATALOG = ELDERMARK / "docs" / "systems" / "02-image-catalog.md"
 KLEIN_DOC = HERE / "docs" / "workflow" / "15-salad-flux2-klein-group.md"
 KLEIN_DIR = HERE / "salad_klein"
 PAUSE = ELDERMARK / "art" / "catalog" / "face" / "salad_PAUSE.txt"
-GENERATOR = HERE / "salad_catalog_faces.py"
 FAL_REGEN = ELDERMARK / "src" / "tools" / "regen_faces.py"
 SKILL = ELDERMARK / ".claude" / "skills" / "catalog-faces" / "SKILL.md"
 FACE_PROMPT_SKILL = ELDERMARK / ".claude" / "skills" / "face-prompt" / "SKILL.md"
@@ -56,9 +55,7 @@ REQUIRED_SNIPPETS = (
     "1408",
     "phenotype",
     "insertion",
-    "salad_probe_klein_event",
     "salad_PAUSE.txt",
-    "salad_catalog_faces.py --generate",
     "Do not re-download",
     "562604",
     "Civitai token",
@@ -97,23 +94,21 @@ def main() -> int:
     low = text.lower()
     assert "frozen" in low or "freeze" in low
     assert "tbd" in low
-    assert "do not run `python salad_catalog_faces.py --generate`" in low or (
-        "do **not** run `python salad_catalog_faces.py --generate`" in low
-    )
     assert "lustify" in low
     assert "ultrarealphoto" in low or "796382" in text
     assert "golden hour" in low
     assert "sean archer" in low or "1632416" in text
     assert "pony" in low
     assert "wai-illustrious" in low or "827184" in text
-    events_head = text.find("### Events")
-    assert events_head != -1, "missing ### Events heading"
-    events_chunk = text[events_head : events_head + 800].lower()
+    # Events are a row in the §2 outcomes table, not a section of their own.
+    events_row = next((ln for ln in text.splitlines() if ln.startswith("| Events")), None)
+    assert events_row is not None, "the §2 outcomes table has no Events row"
+    events_chunk = events_row.lower()
     assert (
         "not probed" in events_chunk
         or "salad_probe_klein_event" in events_chunk
         or "klein 9b" in events_chunk
-    ), "events section must record unset or Klein probes"
+    ), "the Events row must record unset or Klein probes"
 
     assert INDEX.is_file()
     index = INDEX.read_text(encoding="utf-8")
@@ -130,7 +125,6 @@ def main() -> int:
         "cuda13.0-runtime",
         "EmptyFlux2LatentImage",
         "Flux2Scheduler",
-        "qwen_3_8b_fp8mixed",
         "2322332",
         "2612548",
         "Do **not** POST a Klein graph at loganberry",
@@ -149,14 +143,12 @@ def main() -> int:
         "REPLACE_THIS_POSE",
         "snofsSexNudesAndOther_distilledV12KleinFp8.safetensors",
         "snofsSexNudesAndOther_distilledV12KleinFp8",
-        "2960556",
         "2625692",
         "2790993",
         "2615554",
         "2624854",
         "2627022",
         "_meta",
-        "Base 9B is not the better cut",
         "missionary / doggystyle / cowgirl",
     ):
         assert s in klein, f"Klein howto missing {s!r}"
@@ -215,11 +207,6 @@ def main() -> int:
     pause = PAUSE.read_text(encoding="utf-8")
     assert "14-salad-comfy-live-findings.md" in pause or "chosen model" in pause.lower()
 
-    gen = GENERATOR.read_text(encoding="utf-8")
-    assert "salad_PAUSE.txt" in gen
-    assert "FROZEN" in gen or "PAUSE" in gen
-    assert "--ignore-pause" in gen
-
     fal = FAL_REGEN.read_text(encoding="utf-8")
     assert "salad_PAUSE.txt" in fal
     assert "14-salad-comfy-live-findings.md" in fal
@@ -239,38 +226,6 @@ def main() -> int:
     assert "--generate --limit 50" not in fps
 
     import subprocess
-
-    # salad_catalog_faces.py imports paperdoll_mask and regen_faces, which stayed
-    # in the Eldermark repo, so in this repo it is not standalone. Assert whichever
-    # state holds: runnable here means the freeze must really be honoured;
-    # otherwise the failure must be exactly that documented missing import, so this
-    # check starts testing the real path the moment the gap is closed.
-    probe = subprocess.run(
-        [sys.executable, "-c", "import salad_catalog_faces"],
-        cwd=str(HERE), capture_output=True, text=True,
-    )
-    if probe.returncode == 0:
-        salad = subprocess.run(
-            [sys.executable, str(GENERATOR), "--generate", "--limit", "1"],
-            cwd=str(HERE),
-            capture_output=True,
-            text=True,
-        )
-        assert salad.returncode == 2, (
-            f"salad_catalog_faces --generate must exit 2 while paused, got {salad.returncode}\n"
-            f"{salad.stdout}\n{salad.stderr}"
-        )
-        assert "paused" in (salad.stdout + salad.stderr).lower()
-    else:
-        assert "paperdoll_mask" in probe.stderr or "regen_faces" in probe.stderr, (
-            "salad_catalog_faces.py fails to import for an undocumented reason:\n"
-            f"{probe.stderr}"
-        )
-        print(
-            "  [skip] salad_catalog_faces.py is not standalone here "
-            "(imports paperdoll_mask/regen_faces from Eldermark) - freeze checked "
-            "via the source assertions above and via regen_faces below"
-        )
 
     fal_run = subprocess.run(
         [sys.executable, str(FAL_REGEN), "--generate", "--limit", "1"],

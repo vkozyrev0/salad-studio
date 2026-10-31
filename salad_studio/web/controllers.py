@@ -38,11 +38,6 @@ def _slot_value(kind: str) -> str:
         return ""
 
 
-def _slot_state(kind: str) -> str:
-    """The dot's state until a check answers: a stored key is unconfirmed, not valid."""
-    return "unknown"
-
-
 class TokensController:
     page = "tokens"
 

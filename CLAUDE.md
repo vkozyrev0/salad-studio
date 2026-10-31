@@ -10,7 +10,7 @@ the orientation; `salad_studio/README.md` is the server manual.
 `unittest`, on Python 3.14.7. Run the three suites separately:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"           # ~1181 tests, ~60 s
+python -m unittest discover -s tests -p "test_*.py"           # ~1162 tests, ~60 s
 python test_salad_comfy_live_findings.py                      # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"  # ~18 tests
 ```

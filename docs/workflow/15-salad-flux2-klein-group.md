@@ -49,9 +49,11 @@ launch; gateway files `~/.config/salad/gateway-klein` and
 | Created | 2026-09-18; **v7** 2026-09-20 | 2026-09-20 **v1** |
 
 Do **not** mix 5090 into `flux2-klein2` until `flux2-klein-5090` has
-`/ready` 200. First boot still downloads the tag's weights in parallel after
-the 12 GB image pull: ~28 GB for `…-prefetch6-klein`, ~18 GB for
-`…-prefetch6-snofs`.
+`/ready` 200. Both images build on
+`ghcr.io/saladtechnologies/comfyui-api:comfy0.35.0-api1.19.2-torch2.13.0-cuda13.0-runtime`
+(`salad_klein/Dockerfile`). First boot still downloads the tag's weights in
+parallel after the 12 GB image pull: ~28 GB for `…-prefetch6-klein`, ~18 GB
+for `…-prefetch6-snofs`.
 
 ---
 
@@ -170,7 +172,7 @@ Decode `.images[0]` to a JPEG. Trigger words in the positive prompt: `ArsMJStyle
 
 ### After it works
 
-Scale replicas only if you will actually queue jobs. Do not load Flux.1 / Krea / SDXL checkpoints into this image. Keep `salad_PAUSE.txt` and keep `salad_catalog_faces.py` off this group until Klein is an explicit **chosen** house in doc 14 (freeze: [doc 14 §3](14-salad-comfy-live-findings.md)).
+Scale replicas only if you will actually queue jobs. Do not load Flux.1 / Krea / SDXL checkpoints into this image. Keep `salad_PAUSE.txt` and keep the Eldermark face catalog off this group until Klein is an explicit **chosen** house in doc 14 (freeze: [doc 14 §3](14-salad-comfy-live-findings.md)).
 
 The Klein graph (`UNETLoader`, `CLIPLoader` type `flux2`, `VAELoader`, `EmptyFlux2LatentImage`, `Flux2Scheduler`, `SamplerCustomAdvanced`) and group routing are [doc 21 §1–§2](21-klein-image-handoff.md) and [doc 14 §4b](14-salad-comfy-live-findings.md).
 

@@ -11,7 +11,11 @@ log lines, action results, dialogs and the shell state arrive on `GET /api/event
 as server-sent events. The server binds loopback and refuses a request whose
 `Origin` is another site; it also prints a token in its URL and refuses a
 request that does not carry it, so a local program cannot drive it either. Open
-the URL the server prints.
+the URL the server prints. The page carries the token in `X-Studio-Token` on
+every request, set in one interceptor; the event stream, which cannot send a
+header, is the one route that takes it in `?token=`. The page's own files need
+no token, and a picture is fetched through the page so its request carries the
+header too.
 
 **Top action bar**: a rose **Generate**, **Clean gallery**, **Check Salad
 status**, live status every 2 s, and ready

@@ -170,7 +170,7 @@ The gateway is `<group>-<hash>.salad.cloud`, saved to a per-group file
 | Run a graph | `POST /prompt` with the Comfy API body (the `prompt_*.json` files) |
 | Result | Wrapper `POST /prompt` returns `images[]`. Native Comfy 8188 returns a `prompt_id`. GET `/history/<prompt_id>` then `/view` is the fallback when `images[]` is empty |
 
-The working callers are `salad_gen.py`, `salad_probe_klein.py` and `salad_age_review.py`. `salad_probe_ages.py`, `salad_probe_sdxl.py` and `salad_catalog_faces.py` need the Eldermark checkout (`paperdoll_mask` / `regen_faces`) and fail on import here. Studio's **Ready** badge and Generate's `/ready` pre-probe use the same path, and Studio skips the `/ready` probe while a replica is still pulling so a stale 200 cannot be trusted.
+The working callers here are `salad_gen.py` and `salad_probe_klein.py`. The face catalog (`salad_catalog_faces.py`) and its probes need the Eldermark checkout (`paperdoll_mask` / `regen_faces`) and were removed from this repo on 2026-10-31. Studio's **Ready** badge and Generate's `/ready` pre-probe use the same path, and Studio skips the `/ready` probe while a replica is still pulling so a stale 200 cannot be trusted.
 
 Do not POST a Klein graph at the Flux.1 group. It OOMs or 524s on 24 GB.
 

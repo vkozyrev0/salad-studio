@@ -49,8 +49,6 @@ Secrets stay **out of git**: Salad key `~/.config/salad/key`, gateway
 | Script | Role |
 |---|---|
 | `salad_gen.py` | `POST /prompt` Flux graph. Flags `--prompt`, `--negative`, `--out`, `--seed`, `--steps`, `--width`, `--height`, `--wait-ready`, `--timeout`; `ckpt_name` / `lora_name` are `flux_payload()` parameters, not flags |
-| `salad_catalog_faces.py` | Mass face catalog. **`--generate` exits if `salad_PAUSE.txt` exists** unless `--ignore-pause` |
-| `salad_probe_ages.py` | Age×sex face probes (`--prefix`, `--ckpt`, `--lora`) |
 
 HOUSE for Flux faces: photoreal DSLR 85mm string **first**, then `Portrait of a man/woman`, then age (sex-neutral). Do not put `TRUE woman/man` in the age line (CLIP latched onto **woman** for male thirties). Adult males get a short haircut + `woman, female` in the negative.
 
@@ -101,15 +99,11 @@ Grok Imagine **content-moderated** the same explicit doggy prompt (400). Salad d
 Until **faces, bodies, events, and sex** each have an explicit chosen
 model recorded in §2 as **chosen** (not merely "worked in a probe"):
 
-1. Do **not** run `python salad_catalog_faces.py --generate`.
-2. Do **not** pass `--ignore-pause` unless the user explicitly resumes.
-3. Keep `art/catalog/face/salad_PAUSE.txt`. The generator already exits 2
-   when that file exists.
-4. Do **not** start a 5-minute scheduler that relaunches catalog gen when
+1. Keep `art/catalog/face/salad_PAUSE.txt`.
+2. Do **not** start a 5-minute scheduler that relaunches catalog gen when
    the PID is dead (that already burned GPU against a review pause).
-5. Probe scripts (`salad_probe_ages.py`, one-off `/prompt`) are allowed
-   **only** when the user asks for a named model probe, not as catalog
-   rebuild.
+3. Probe scripts (one-off `/prompt`) are allowed **only** when the user asks
+   for a named model probe, not as a catalog rebuild.
 
 Stop condition for this freeze: four one-line **chosen** entries in §2.
 
@@ -150,7 +144,7 @@ Klein T2I is a different graph: `UNETLoader` + `CLIPLoader` type `flux2` (`qwen_
 ## 5. Pointers
 
 - Catalog spec: `lifesim-design/docs/systems/02-image-catalog.md` (another checkout)
-- Face compose: `salad_catalog_faces.py` `HOUSE` + `compose()`
+- Face compose: `salad_catalog_faces.py` `HOUSE` + `compose()` in the Eldermark checkout; the script was removed from this repo on 2026-10-31.
 - Body compose: `salad_probe_klein.py` `_klein_body_prompt` + the pack's `body_age_markers` / `body_pregnancy` (the body path is hand-written prose; the old body templates were removed)
 - Local LoRA/checkpoint cache (gitignored): `art/model-cache/`. `python model_catalog.py seed` then `fetch-missing`. Each index row keeps Civitai page + version id + sha256. Salad still URL-loads on a new replica; this cache is this machine + a future custom image bake. UltraRealPhoto v2 is ~2 GB, metadata only unless `--force`.
 - Flux.2 Klein group `flux2-klein2` and its gateway: doc 15 §Live groups.

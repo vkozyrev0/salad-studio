@@ -38,9 +38,10 @@ cd ui && npx ng test                                   # the page's own tests
 ```
 
 To check the page itself, drive it in a headless browser — Playwright's
-Chromium — never a windowed one and never Microsoft Edge. Start the studio
-with `--no-open` and load the URL it prints, run token and all; a headless run
-is what records the page's failed requests and console errors.
+Chromium. Start the studio with `--no-open` and load the URL it prints, run
+token and all; a headless run is what records the page's failed requests and
+console errors. Do not use Microsoft Edge, in a window or headless: it is the
+person's own app here, and closing it closes their work.
 
 ## Requirements
 

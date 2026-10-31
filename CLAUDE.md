@@ -21,13 +21,30 @@ stale; `cd ui && npx ng build` is the same build by hand. CI is
 
 ## Checking the page
 
-Drive the page in a headless browser — Playwright's Chromium (`python -c "import
-playwright"`, `playwright install chromium`) or Playwright through `npx`. Never
-open it in a windowed browser, and never use Microsoft Edge, for a test or a
-probe: a headless browser is one the run controls, and its logs, failed
-requests and page errors are the evidence. Start the studio with
-`python -m salad_studio --no-open`, read the URL it prints (it carries the run
-token), and load that URL.
+Drive the page in a headless browser, Playwright's own Chromium (`python -c
+"import playwright"`, `playwright install chromium`) or Playwright through
+`npx`. Start the studio with `python -m salad_studio --no-open`, read the URL
+it prints (it carries the run token), and load that URL. A headless browser is
+one the run controls, and its logs, failed requests and page errors are the
+evidence.
+
+Never use Microsoft Edge for a test or a probe, and never drive it in headless
+mode. On this machine Edge is the person's settings app for several programs,
+and closing an Edge process closes their work, not a throwaway browser.
+
+Close only what the run started. Leave the Playwright browser alone. Do not run
+any of these:
+
+```
+Stop-Process -Name msedge
+taskkill /IM msedge.exe
+Get-Process -Id <edge pid> | Stop-Process
+Get-CimInstance Win32_Process -Filter "Name='<any browser>.exe'" | Stop-Process
+```
+
+Stop a server by the process this run launched, one id at a time, and confirm
+the command line names `salad_studio` before ending it. Do not match on a name
+shared with a program the person is using.
 
 ## Background removal
 

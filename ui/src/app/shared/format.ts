@@ -3,11 +3,6 @@
  * render them with `time.localtime`; the desktop and the server are one machine.
  */
 
-/** `2026-10-21 18:47` from epoch seconds, or empty for a missing stamp. */
-export function dateTime(ts: unknown): string {
-  return inZone(ts, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-}
-
 /** `18:47` from epoch seconds, or empty. */
 export function clock(ts: unknown): string {
   return inZone(ts, { hour: '2-digit', minute: '2-digit' });
@@ -59,13 +54,4 @@ export function escapeHtml(value: string): string {
     "'": '&#39;',
   };
   return value.replace(/[&<>"']/g, (char) => entities[char] ?? char);
-}
-
-/** A number read from a text box, or null when the box is blank or not a number. */
-export function numberOrNull(raw: string, integer = false): number | null {
-  const text = raw.trim();
-  if (!text) return null;
-  const value = Number(text);
-  if (!Number.isFinite(value)) return null;
-  return integer ? Math.trunc(value) : value;
 }

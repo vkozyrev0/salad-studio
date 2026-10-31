@@ -1059,12 +1059,6 @@ def pick_offers(
     return matching_offers(offers, replace)[: max(0, int(limit))]
 
 
-def pick_offer(offers: list[dict[str, Any]], replace: Any) -> dict[str, Any] | None:
-    """The highest-value offer that clears the floors, or None."""
-    options = pick_offers(offers, replace, limit=1)
-    return options[0] if options else None
-
-
 def offer_cells(offer: Any) -> dict[str, str]:
     """One offer as the results table's cell text, keyed by the page's columns."""
     data = offer if isinstance(offer, dict) else {}

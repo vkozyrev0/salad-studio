@@ -6,11 +6,6 @@
  * (profiles, images) is built from state instead and is not here.
  */
 
-export const GRAPHS = [
-  { value: 'klein', label: 'Flux.2 Klein' },
-  { value: 'flux1', label: 'Flux.1 Dev' },
-] as const;
-
 export const SCHEDULERS = [
   { value: 'flux2', label: 'Flux2 (Klein)' },
   { value: 'simple', label: 'Simple (Civitai)' },
@@ -23,9 +18,6 @@ export const UNETS = [
   { value: 'Distilled 9B', label: 'Distilled 9B' },
   { value: 'SNOFS 9B', label: 'SNOFS 9B' },
 ] as const;
-
-/** `lora_store.FAMILY_CHOICES`. */
-export const FAMILIES = ['Flux.2 Klein', 'Flux.1 Dev', 'Pony', 'SDXL', 'Krea 2', 'Illustrious', 'unknown'] as const;
 
 /** `pages/config.PROBE_KEYS`, in the order the probe rows show them. */
 export const PROBE_KEYS = [
@@ -63,12 +55,3 @@ export const PROBE_WIDTHS: Record<ProbeKey, number> = {
 };
 
 export const DEFAULT_LOCAL_URL = 'http://localhost:1234/v1';
-
-/** Add a blank choice only when `current` is not already in the list. */
-export function withCurrent(
-  options: readonly { value: string; label: string }[],
-  current: string,
-): { value: string; label: string }[] {
-  if (!current || options.some((o) => o.value === current)) return [...options];
-  return [{ value: current, label: current }, ...options];
-}

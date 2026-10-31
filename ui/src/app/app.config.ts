@@ -1,7 +1,8 @@
 import { ApplicationConfig, inject, provideAppInitializer, provideBrowserGlobalErrorListeners } from '@angular/core';
-import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { provideRouter, withHashLocation } from '@angular/router';
 import { routes } from './app.routes';
+import { tokenInterceptor } from './core/api';
 import { StudioStore } from './core/studio-store';
 import { RouteSync } from './core/route-sync';
 import { AllCommunityModule, ModuleRegistry } from 'ag-grid-community';
@@ -13,7 +14,7 @@ ModuleRegistry.registerModules([AllCommunityModule]);
 export const appConfig: ApplicationConfig = {
   providers: [
     provideBrowserGlobalErrorListeners(),
-    provideHttpClient(),
+    provideHttpClient(withInterceptors([tokenInterceptor])),
     provideRouter(routes, withHashLocation()),
     // The stream opens before the first page asks for state, so the first
     // `hello` and the first page fetch agree on what the server is showing.

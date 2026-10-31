@@ -322,7 +322,7 @@ class ServerTest(unittest.TestCase):
         threading.Thread(target=web.serve_forever, daemon=True).start()
         base = f"http://127.0.0.1:{web.server_address[1]}"
         try:
-            for path in ("/api/page/probe", "/?token=", "/api/events?token=", "/main.js"):
+            for path in ("/api/page/probe", "/?token=", "/api/events?token=", "/api/action"):
                 with self.subTest(path=path):
                     self._refused(urllib.request.Request(f"{base}{path}"))
         finally:
@@ -414,13 +414,31 @@ class StaticFilesTest(unittest.TestCase):
         with self._open("/main.js") as resp:
             self.assertIn("javascript", resp.headers["Content-Type"])
 
-    def test_a_script_without_the_token_is_refused(self) -> None:
-        for path in ("/main.js", "/main-ABCD1234EF.js"):
+    def test_a_script_the_page_loads_is_served_without_a_header_or_query(self) -> None:
+        """A browser asks for a script with the document's origin and nothing else."""
+        for path in ("/main.js", "/main-ABCD1234EF.js", "/styles-09ZYXWVU.css"):
             with self.subTest(path=path):
-                with self.assertRaises(urllib.error.HTTPError) as caught:
-                    urllib.request.urlopen(f"{self.base}{path}?token={self.token}", timeout=5)
-                caught.exception.close()
-                self.assertEqual(caught.exception.code, 403)
+                with urllib.request.urlopen(f"{self.base}{path}", timeout=5) as resp:
+                    self.assertEqual(resp.status, 200)
+
+    def test_a_plate_takes_the_token_in_the_header_not_the_query(self) -> None:
+        """The page fetches a plate through its HttpClient, whose interceptor sets the header."""
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(f"{self.base}/api/thumbs/x.jpg?token={self.token}", timeout=5)
+        caught.exception.close()
+        self.assertEqual(caught.exception.code, 403)
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self._open("/api/thumbs/x.jpg")
+        caught.exception.close()
+        self.assertEqual(caught.exception.code, 404, "a file there is refused on the header, not before it")
+
+    def test_opening_files_does_not_open_the_api(self) -> None:
+        """The token still stops a program from driving the studio; only the page's files are open."""
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(f"{self.base}/api/page/nope", timeout=5)
+        body = caught.exception.read()
+        caught.exception.close()
+        self.assertEqual(json.loads(body)["error"]["kind"], "unauthorized")
 
     def test_a_path_that_escapes_the_build_directory_is_not_served(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:

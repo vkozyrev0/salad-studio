@@ -1,9 +1,9 @@
-import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { NO_TOKEN, TOKEN, runToken } from './api';
+import { NO_TOKEN, TOKEN, runToken, tokenInterceptor } from './api';
 import { EMPTY_SHELL, ActionReply, PageReply } from './models';
 import { StudioStore } from './studio-store';
 
@@ -13,7 +13,7 @@ describe('StudioStore.load', () => {
 
   beforeEach(() => {
     TestBed.configureTestingModule({
-      providers: [provideRouter([]), provideHttpClient(), provideHttpClientTesting()],
+      providers: [provideRouter([]), provideHttpClient(withInterceptors([tokenInterceptor])), provideHttpClientTesting()],
     });
     store = TestBed.inject(StudioStore);
     http = TestBed.inject(HttpTestingController);
@@ -72,7 +72,7 @@ describe('Api.act', () => {
 
   beforeEach(() => {
     TestBed.configureTestingModule({
-      providers: [provideRouter([]), provideHttpClient(), provideHttpClientTesting()],
+      providers: [provideRouter([]), provideHttpClient(withInterceptors([tokenInterceptor])), provideHttpClientTesting()],
     });
     store = TestBed.inject(StudioStore);
     http = TestBed.inject(HttpTestingController);
@@ -96,7 +96,7 @@ describe('StudioStore.act', () => {
 
   beforeEach(() => {
     TestBed.configureTestingModule({
-      providers: [provideRouter([]), provideHttpClient(), provideHttpClientTesting()],
+      providers: [provideRouter([]), provideHttpClient(withInterceptors([tokenInterceptor])), provideHttpClientTesting()],
     });
     store = TestBed.inject(StudioStore);
     http = TestBed.inject(HttpTestingController);

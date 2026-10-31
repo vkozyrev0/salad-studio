@@ -663,9 +663,8 @@ class KleinMetaAdviceMatchesTheRecipes(unittest.TestCase):
 # option column counts as an option unless the row says whose parameter it is.
 DOCUMENTED_SCRIPTS = (
     "model_catalog.py",
-    "salad_catalog_faces.py",
     "salad_gen.py",
-    "salad_probe_ages.py",
+    "salad_probe_klein.py",
 )
 ADD_ARGUMENT = re.compile(r'add_argument\(\s*"(--[a-z][a-z-]*)"')
 BACKTICKED_OPTION = re.compile(r"`(--[a-z][a-z-]*|[a-z][a-z0-9]*_[a-z0-9_]+)`")

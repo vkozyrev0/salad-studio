@@ -11,7 +11,11 @@ log lines, action results, dialogs and the shell state arrive on `GET /api/event
 as server-sent events. The server binds loopback and refuses a request whose
 `Origin` is another site; it also prints a token in its URL and refuses a
 request that does not carry it, so a local program cannot drive it either. Open
-the URL the server prints.
+the URL the server prints. The page carries the token in `X-Studio-Token` on
+every request, set in one interceptor; the event stream, which cannot send a
+header, is the one route that takes it in `?token=`. The page's own files need
+no token, and a picture is fetched through the page so its request carries the
+header too.
 
 **Top action bar**: a rose **Generate**, **Clean gallery**, **Check Salad
 status**, live status every 2 s, and ready
@@ -350,7 +354,7 @@ the root [`README.md`](../README.md) (Configuration, Known limitations).
 Run the commands separately:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1177 tests, ~35 s
+python -m unittest discover -s tests -p "test_*.py"    # 1162 tests, ~35 s
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
 ```

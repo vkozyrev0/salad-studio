@@ -10,6 +10,7 @@ asserts the paths came back exactly.
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -20,12 +21,18 @@ for _p in (str(TOOLS), str(TOOLS / "salad_studio")):
         sys.path.insert(0, _p)
 
 import image_deploy  # noqa: E402
+import model_catalog  # noqa: E402
 import profiles  # noqa: E402
 import prompt_catalog  # noqa: E402
 import prompt_history  # noqa: E402
 import salad_queue  # noqa: E402
 import tokens  # noqa: E402
 import vast  # noqa: E402
+import run_salad_studio  # noqa: E402
+from salad_studio.web.pages import config as config_page  # noqa: E402
+from tests._paths import _TempPaths  # noqa: E402
+
+server_package = run_salad_studio.PACKAGE
 
 STORE_PATHS = (
     (profiles, "PROFILES_PATH"),
@@ -82,6 +89,34 @@ class TheStudioMovesEveryStore(unittest.TestCase):
         restored = {key: getattr(module, name) for module, name in STORE_PATHS
                     for key in [f"{module.__name__}.{name}"]}
         self.assertEqual(restored, shipped)
+
+
+class ReadingAKeyLeavesTheUserStoreAlone(unittest.TestCase):
+    """Reading a key seeds the store, and seeding writes.
+
+    Several modules read ``salad_studio.tokens``: ``model_catalog`` fetching a
+    model, the Tokens page, the Logs page redacting a line. A seed through any
+    of them must land in a test's temp store, never the operator's. That one
+    gap let a doc test at the front of the suite and a fetch test further down
+    repoint a path together and write the real ``studio-tokens.json``.
+    """
+
+    def test_a_seed_from_any_module_does_not_write_the_shipped_store(self) -> None:
+        # The path the store ships with, not whichever module a test holds now.
+        real = server_package / "studio-tokens.json"
+        before = real.read_bytes() if real.is_file() else None
+        with tempfile.TemporaryDirectory() as td, _TempPaths(Path(td)):
+            # Every module that can read a key: a fetch, a page state, a history
+            # prompt, a connection test.
+            model_catalog.civitai_token()
+            config_page._token_map(None)
+            prompt_history.prompt_text_of({"prompt": {"1": {"class_inputs": {}}}})
+            vast.fetch_instances("", sender=lambda request, timeout: (0, b""))
+            for kind, _label, _rel in tokens.TOKEN_SPECS:
+                tokens.read_token(kind)
+            self.assertNotEqual(tokens.LOCAL_PATH, real, "the fixture moved no token store")
+        after = real.read_bytes() if real.is_file() else None
+        self.assertEqual(after, before, "reading a key wrote the shipped token store")
 
 
 if __name__ == "__main__":

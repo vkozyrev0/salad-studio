@@ -620,13 +620,6 @@ def toggle_selection(selected: tuple[str, ...], nid: str) -> tuple[str, ...]:
     return tuple(toggle_live_selection(list(selected), nid))
 
 
-def begin_drag(model: GraphModel, sx: float, sy: float) -> tuple[GraphModel, str | None]:
-    node = hit_test(model, sx, sy)
-    if node is None:
-        return model, None
-    return model.with_selection(toggle_selection(model.selected, node.id)), node.id
-
-
 def drag_node(model: GraphModel, nid: str, dx: float, dy: float) -> GraphModel:
     """Move a node by a world delta. Edges follow because they are drawn from ports."""
     node = model.node(nid)

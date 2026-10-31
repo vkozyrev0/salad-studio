@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, ElementRef, effect, inject, input, signal } from '@angular/core';
-import { withToken } from '../core/api';
+import { Api } from '../core/api';
 import { StudioStore } from '../core/studio-store';
 
 /**
@@ -56,7 +56,7 @@ import { StudioStore } from '../core/studio-store';
               [attr.title]="'Double-click to open ' + plate.name"
             >
               <span class="print small">
-                <img [src]="withToken(plate.url)" [alt]="" loading="lazy" />
+                <img [src]="sources().get(plate.name)" [alt]="" loading="lazy" />
               </span>
               <span class="cap"><b>{{ i + 1 }}</b> · {{ caption(plate.name) }}</span>
             </button>
@@ -121,16 +121,26 @@ import { StudioStore } from '../core/studio-store';
 })
 export class HistoryStrip {
   private readonly store = inject(StudioStore);
+  private readonly api = inject(Api);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   readonly plates = input<readonly { name: string; url: string }[]>([]);
   protected readonly ring = signal(0);
-  protected readonly withToken = withToken;
+  /** Each plate's picture, fetched with the token header and drawn from a blob URL. */
+  protected readonly sources = signal<ReadonlyMap<string, string>>(new Map());
 
   constructor() {
     // Clean gallery can shrink the reel under the ring; keep the ring on a plate.
     effect(() => {
       const last = Math.max(0, this.plates().length - 1);
       if (this.ring() > last) this.ring.set(last);
+    });
+    // An `img` cannot send the token header, so each picture is fetched here.
+    // A new reel is a new list of names, so a plate's blob is fetched once.
+    effect(() => {
+      const plates = this.plates();
+      void Promise.all(
+        plates.map(async (plate) => [plate.name, await this.api.image(plate.url).catch(() => '')] as const),
+      ).then((pairs) => this.sources.set(new Map(pairs)));
     });
   }
 

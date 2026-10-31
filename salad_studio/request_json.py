@@ -805,43 +805,6 @@ def coerce_int(val: Any, default: Any = None) -> int | None:
         return default
 
 
-def apply_prompt_texts(body: dict[str, Any], positive: str, negative: str) -> bool:
-    """Write Prompt-page text into the CLIP nodes the current graph already uses.
-
-    Returns False when the document has no CFGGuider wiring, so the caller can
-    fall back to building a fresh request. Does not replace the graph.
-    """
-    prompt = body.get("prompt") if isinstance(body, dict) else None
-    if not isinstance(prompt, dict):
-        return False
-    pos_ids: set[str] = set()
-    neg_ids: set[str] = set()
-    for node in prompt.values():
-        if not isinstance(node, dict) or node.get("class_type") != "CFGGuider":
-            continue
-        inputs = node.get("inputs") if isinstance(node.get("inputs"), dict) else {}
-        pos = inputs.get("positive")
-        neg = inputs.get("negative")
-        if isinstance(pos, list) and pos:
-            pos_ids.add(str(pos[0]))
-        if isinstance(neg, list) and neg:
-            neg_ids.add(str(neg[0]))
-    if not pos_ids and not neg_ids:
-        return False
-    for nid, node in prompt.items():
-        if not isinstance(node, dict) or node.get("class_type") != "CLIPTextEncode":
-            continue
-        inputs = node.get("inputs")
-        if not isinstance(inputs, dict):
-            continue
-        key = str(nid)
-        if key in pos_ids:
-            inputs["text"] = positive
-        elif key in neg_ids:
-            inputs["text"] = negative
-    return True
-
-
 def config_from_payload(
     body: dict[str, Any], extras_path: Path | None = None
 ) -> dict[str, Any]:

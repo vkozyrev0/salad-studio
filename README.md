@@ -21,8 +21,8 @@ python -m salad_studio
 
 Run from the repo root. It serves on a free loopback port and opens the page
 there; the URL it prints carries a token it mints for the run, and the server
-refuses any request without it, so a local program cannot drive it. Open the
-URL the server prints. `python -m salad_studio 8765` pins the port and
+refuses any API request without it, so a local program cannot drive it. The
+page sends it in a header on every request. Open the URL the server prints. `python -m salad_studio 8765` pins the port and
 `--no-open` keeps the browser closed. The page opens on Config; paste provider keys on Tokens before
 the first render. Background removal downloads its model when Generate first
 asks for it, so run `python -m salad_studio --prefetch-cutout` once ahead of
@@ -31,10 +31,17 @@ time; it prints where the model landed and exits.
 Tests are `unittest`. Run the commands separately:
 
 ```
-python -m unittest discover -s tests -p "test_*.py"    # 1177 tests, ~35 s
+python -m unittest discover -s tests -p "test_*.py"    # 1162 tests, ~35 s
 python test_salad_comfy_live_findings.py               # root structural checks
 cd salad_klein && python -m unittest discover -p "test_*.py"   # 18 tests
+cd ui && npx ng test                                   # the page's own tests
 ```
+
+To check the page itself, drive it in a headless browser — Playwright's
+Chromium. Start the studio with `--no-open` and load the URL it prints, run
+token and all; a headless run is what records the page's failed requests and
+console errors. Do not use Microsoft Edge, in a window or headless: it is the
+person's own app here, and closing it closes their work.
 
 ## Requirements
 
@@ -67,8 +74,8 @@ cannot run still finishes with the original plate and a note saying why.
 | `docs/workflow/` | Five playbooks: [23](docs/workflow/23-salad-container-group-deployment.md) deployment, [21](docs/workflow/21-klein-image-handoff.md) the Klein handoff, [15](docs/workflow/15-salad-flux2-klein-group.md) the 2026-09-21 Klein group record, [14](docs/workflow/14-salad-comfy-live-findings.md) live findings, [22](docs/workflow/22-two-body-correctness-research.md) anatomy research. The graph pane is in [the manual](salad_studio/README.md#prompt-graph-pane-drawn-from-the-model). |
 | `model_catalog.py` | Local LoRA and checkpoint cache. `fetch-klein --stage` warms the Docker build. |
 | `salad_gen.py` | One-shot SaladCloud ComfyUI Flux generate. |
-| `salad_probe_klein.py`, `salad_probe_sdxl.py`, `salad_probe_ages.py`, `salad_age_review.py`, `salad_catalog_faces.py` | Probes and the Eldermark face catalog. |
-| `face_prompt.py`, `face_prompt_pack.json` | Age-locked, DNA-aware face prompts. |
+| `salad_probe_klein.py` | Klein face, body and event probes. The studio imports its request builder, so this one is product code. |
+| `face_prompt.py`, `face_prompt_pack.json` | Age-locked, DNA-aware face prompts, read by `salad_probe_klein.py`. |
 | `test_salad_comfy_live_findings.py` | Structural checks on the live-findings doc. |
 | `.github/workflows/checks.yml` | CI, two jobs. The Python job runs the suite, the queue check, then installs `salad_klein/requirements.txt` before the Klein suite. The `ui` job runs `npx ng build`, the check that the server builds a page missing from disk, Vitest, and `node audit.cjs`. |
 | `.claude/skills/civitai-verify/` | A skill that replays a Civitai link through Studio import and a live container POST. |
@@ -97,13 +104,13 @@ at POST time.
 
 ## Known limitations
 
-The studio package and suite are standalone. `salad_catalog_faces.py` imports
-`paperdoll_mask` and `regen_faces`, which stayed in the Eldermark repo, and its
-two probes fail here. `test_salad_comfy_live_findings.py` accepts exactly that
-import failure with a skip note, so its `salad_catalog_faces --generate` freeze
-assertion does not run until the gap closes. `tests/test_salad_catalog_faces.py`
-drives the same freeze check by exec'ing the shipped functions, and the
-structural test still runs the `regen_faces` freeze check.
+The studio package and suite are standalone. The Eldermark face catalog
+(`salad_catalog_faces.py`) and the probes built on it were removed in 2026-10-31
+because they need `paperdoll_mask` and `regen_faces` from the Eldermark
+checkout and nothing in the studio imports them; they are still in that repo.
+`test_salad_comfy_live_findings.py` checks the catalog freeze against
+Eldermark's `regen_faces.py`. The Klein probe records of 2026-09 still name the
+removed scripts; read them as history.
 
 ## Content note
 

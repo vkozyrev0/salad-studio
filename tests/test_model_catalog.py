@@ -213,5 +213,37 @@ class TheVersionGuard(unittest.TestCase):
             self.assertEqual(mc.civitai_version(999, 2786085, "k")["id"], 2786085)
 
 
+class TokensStayOffTheUserStore(unittest.TestCase):
+    """``cmd_fetch`` reads the Civitai key, and reading seeds the token store.
+
+    Every module reads ``salad_studio.tokens``. Whoever loads the package first
+    decides which object that is, and a test module that ran before ``tests``
+    could leave it a second copy on the operator's real ``studio-tokens.json``.
+    Seeding through that copy wrote the real file, and the suite never noticed
+    because it only ever moved the copy it knew about.
+    """
+
+    def test_fetching_a_model_never_writes_the_real_token_store(self) -> None:
+        from salad_studio import tokens
+        from tests._paths import _TempPaths
+
+        # The path the store ships with, not whichever copy a module holds now.
+        from run_salad_studio import PACKAGE
+
+        real = PACKAGE / "studio-tokens.json"
+        before = real.read_bytes() if real.is_file() else None
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        paths = _TempPaths(Path(td.name))
+        # Seeding runs inside the first key read, so this is where the write lands.
+        with paths, mock.patch.object(mc, "civitai_version", side_effect=SystemExit("no network here")):
+            with mock.patch.dict(os.environ, {"ELDERMARK_MODEL_CACHE": td.name}):
+                with self.assertRaises(SystemExit):
+                    mc.cmd_fetch(argparse.Namespace(ref="civitai:999999@888888", kind="checkpoint",
+                                                    use="", status="", force=False))
+        after = real.read_bytes() if real.is_file() else None
+        self.assertEqual(after, before, "fetching a model wrote the real token store")
+
+
 if __name__ == "__main__":
     unittest.main()

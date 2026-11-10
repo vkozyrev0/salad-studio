@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 import json
 import secrets
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -21,46 +22,63 @@ MAX_ENTRIES = 100
 THUMB_SIZE = (48, 48)
 
 
+# Parsed rows keyed by the file's identity. A page read is a copy, so a
+# caller's edit cannot mutate the cache; a save clears it.
+_CACHE: tuple[str, int, int, list[dict[str, Any]]] | None = None
+_LOCK = threading.RLock()
+
+
 def _load() -> list[dict[str, Any]]:
-    if not HISTORY_PATH.is_file():
-        return []
-    try:
-        data = json.loads(HISTORY_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    if not isinstance(data, list):
-        return []
-    out: list[dict[str, Any]] = []
-    for row in data:
-        if not isinstance(row, dict):
-            continue
-        text = str(row.get("text") or "").strip()
-        req = row.get("request")
-        if not isinstance(req, dict):
-            req = None
-        if not text and req is not None:
-            text = prompt_text_of(req)
-        if not text and req is None:
-            continue
-        entry: dict[str, Any] = {"text": text, "ts": int(row.get("ts") or 0)}
-        if row.get("key"):
-            entry["key"] = str(row.get("key"))
-        if req is not None:
-            entry["request"] = req
-        if row.get("profile"):
-            entry["profile"] = str(row.get("profile"))
-        if row.get("gateway"):
-            entry["gateway"] = str(row.get("gateway"))
-        if row.get("image"):
-            entry["image"] = str(row.get("image"))
-        if rating_of(row):
-            entry["rating"] = rating_of(row)
-        out.append(entry)
-    return out
+    global _CACHE
+    with _LOCK:
+        try:
+            stat = HISTORY_PATH.stat()
+        except OSError:
+            return []
+        key = (str(HISTORY_PATH), stat.st_mtime_ns, stat.st_size)
+        if _CACHE is not None and _CACHE[:3] == key:
+            return copy.deepcopy(_CACHE[3])
+        try:
+            data = json.loads(HISTORY_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        if not isinstance(data, list):
+            return []
+        out: list[dict[str, Any]] = []
+        for row in data:
+            if not isinstance(row, dict):
+                continue
+            text = str(row.get("text") or "").strip()
+            req = row.get("request")
+            if not isinstance(req, dict):
+                req = None
+            if not text and req is not None:
+                text = prompt_text_of(req)
+            if not text and req is None:
+                continue
+            entry: dict[str, Any] = {"text": text, "ts": int(row.get("ts") or 0)}
+            if row.get("key"):
+                entry["key"] = str(row.get("key"))
+            if req is not None:
+                entry["request"] = req
+            if row.get("profile"):
+                entry["profile"] = str(row.get("profile"))
+            if row.get("gateway"):
+                entry["gateway"] = str(row.get("gateway"))
+            if row.get("image"):
+                entry["image"] = str(row.get("image"))
+            if rating_of(row):
+                entry["rating"] = rating_of(row)
+            out.append(entry)
+        _CACHE = (*key, out)
+        return out
 
 
 def _save(rows: list[dict[str, Any]]) -> None:
-    atomic.write_text(HISTORY_PATH, json.dumps(rows, indent=2) + "\n")
+    global _CACHE
+    with _LOCK:
+        atomic.write_text(HISTORY_PATH, json.dumps(rows, indent=2) + "\n")
+        _CACHE = None
 
 
 def list_prompts() -> list[dict[str, Any]]:

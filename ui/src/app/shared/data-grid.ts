@@ -3,6 +3,7 @@ import {
   Component,
   computed,
   effect,
+  ElementRef,
   inject,
   input,
   output,
@@ -91,6 +92,7 @@ export class DataGrid {
   readonly selected = input<string | null>(null);
   readonly loading = input(false);
   readonly empty = input('No rows.');
+  readonly label = input('Data table');
 
   readonly picked = output<string>();
 
@@ -103,6 +105,7 @@ export class DataGrid {
   });
 
   private readonly store = inject(StudioStore);
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
 
   /** A failed page load is not "no rows"; say which one it is. */
   protected readonly emptyText = computed(() =>
@@ -138,6 +141,10 @@ export class DataGrid {
 
   constructor() {
     effect(() => {
+      this.label();
+      this.nameGrid();
+    });
+    effect(() => {
       this.readyRev();
       const api = this.api;
       if (!api) return;
@@ -158,6 +165,14 @@ export class DataGrid {
   protected ready(event: GridReadyEvent): void {
     this.api = event.api;
     this.readyRev.update((n) => n + 1);
+    this.nameGrid();
+  }
+
+  /** AG Grid puts `role="grid"` on an inner element; the label goes there. */
+  private nameGrid(): void {
+    const root = this.host.nativeElement;
+    const grid = root.querySelector<HTMLElement>('[role="grid"]') ?? root;
+    grid.setAttribute('aria-label', this.label());
   }
 
   protected pick(event: SelectionChangedEvent): void {

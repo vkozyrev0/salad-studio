@@ -48,7 +48,7 @@ import { StudioStore } from '../core/studio-store';
   styles: `
     .scrim {
       position: fixed; inset: 0; z-index: 40;
-      background: rgb(10 16 23 / 0.62);
+      background: var(--scrim);
       backdrop-filter: blur(1.5px);
     }
     .box {
@@ -63,7 +63,7 @@ import { StudioStore } from '../core/studio-store';
       border: 1px solid var(--border);
       border-top: 2px solid var(--accent);
       border-radius: var(--radius-card);
-      box-shadow: 0 18px 48px rgb(0 0 0 / 0.45);
+      box-shadow: var(--dialog-shadow);
     }
     .head { display: flex; align-items: baseline; gap: 10px; }
     .mark { width: 8px; height: 8px; border-radius: 1px; background: var(--accent); }

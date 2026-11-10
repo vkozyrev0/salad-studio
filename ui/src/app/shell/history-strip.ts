@@ -55,9 +55,10 @@ import { StudioStore } from '../core/studio-store';
               [attr.aria-label]="caption(plate.name) + ', ' + plate.name"
               [attr.title]="'Double-click to open ' + plate.name"
             >
-              <span class="print small">
-                <img [src]="sources().get(plate.name)" [alt]="" loading="lazy" />
-              </span>
+              <span
+                class="print small"
+                [style.background-image]="sources().get(plate.name) ? 'url(' + sources().get(plate.name) + ')' : null"
+              ></span>
               <span class="cap"><b>{{ i + 1 }}</b> · {{ caption(plate.name) }}</span>
             </button>
           }
@@ -100,8 +101,7 @@ import { StudioStore } from '../core/studio-store';
       border: 0; background: none; color: inherit; cursor: pointer;
     }
     .plate:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-    .plate .print { width: 56px; height: 48px; }
-    .plate .print img { object-fit: cover; }
+    .plate .print { width: 56px; height: 48px; background-size: cover; background-position: center; }
     .plate:hover .print { outline: 1px solid var(--rule); outline-offset: 2px; }
     .plate.current .print { outline: 2px solid var(--accent); outline-offset: 2px; }
     .cap {

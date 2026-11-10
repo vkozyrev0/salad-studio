@@ -88,6 +88,7 @@ const STANDING_NOTE =
               [columns]="columns"
               field="key"
               [selected]="selected()"
+              label="Queue"
               (picked)="pick($event)"
             />
           } @else {

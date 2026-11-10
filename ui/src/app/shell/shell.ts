@@ -135,7 +135,7 @@ import { DialogHost } from './dialog-host';
     }
     .state { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--fg-muted); padding-left: 6px; }
     .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--rule); }
-    .pulse.live { background: var(--accent); box-shadow: 0 0 0 3px rgb(227 154 169 / 0.16); }
+    .pulse.live { background: var(--accent); box-shadow: var(--glow-accent); }
     .spinner {
       width: 11px; height: 11px; border-radius: 50%;
       border: 2px solid currentColor; border-right-color: transparent;
@@ -261,14 +261,20 @@ import { DialogHost } from './dialog-host';
         grid-template-columns: 1fr;
         grid-template-rows: auto auto minmax(0, 1fr) auto auto;
         grid-template-areas: 'bar' 'rail' 'pane' 'status' 'strip';
+        max-width: 100vw;
+        overflow-x: hidden;
       }
       .window:has(.locked) { grid-template-areas: 'locked' 'bar' 'rail' 'pane' 'status' 'strip'; }
+      .bar, .rail, .pane, .status, app-history-strip { min-width: 0; }
+      app-history-strip { overflow: hidden; }
       .bar { flex-wrap: wrap; height: auto; padding: 8px 16px; }
-      .meters { width: auto; margin-left: auto; }
-      .rail { flex-direction: row; flex-wrap: wrap; align-items: center; overflow-x: auto; padding: 6px 10px; border-right: 0; border-bottom: 1px solid var(--rule); }
+      .meters { width: auto; min-width: 0; margin-left: auto; flex-wrap: wrap; gap: 10px; row-gap: 6px; }
+      .meter { min-width: 0; }
+      .meter .eyebrow { font-size: 9px; letter-spacing: 0.06em; }
+      .rail { flex-direction: row; flex-wrap: nowrap; align-items: center; overflow-x: auto; padding: 6px 10px; border-right: 0; border-bottom: 1px solid var(--rule); }
       .rail-head, .rail-eyebrow, .rail-foot { display: none; }
-      .rail-list { flex-direction: row; flex-wrap: wrap; }
-      .rail-link { border-left: 0; border-bottom: 2px solid transparent; white-space: nowrap; }
+      .rail-list { flex-direction: row; flex-wrap: nowrap; min-width: 0; }
+      .rail-link { border-left: 0; border-bottom: 2px solid transparent; white-space: nowrap; min-height: 44px; align-items: center; }
       .rail-link.active { border-bottom-color: var(--accent); }
       .pane { padding: 14px 16px; }
       /* The strip's keyboard hint is the first thing to go when the status

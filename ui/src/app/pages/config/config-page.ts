@@ -127,7 +127,7 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
       <div class="body" role="tabpanel" [id]="'panel-' + section()" [attr.aria-labelledby]="'tab-' + section()">
         @switch (section()) {
           @case ('profile') {
-            <p class="empty-line">Provider keys live on <a class="inline-link" routerLink="/tokens">Tokens</a>. Paste them there before the first render.</p>
+            <p class="keys-note">Provider keys live on <a class="inline-link" routerLink="/tokens">Tokens</a>. Paste them there before the first render.</p>
             <div class="cols">
               <section class="main" aria-labelledby="profiles-head">
                 <div class="section" role="group" aria-labelledby="profiles-head">
@@ -337,7 +337,7 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
                 <div class="section-head"><h2 class="eyebrow" id="vast-head">vast.ai instances</h2></div>
                 <div class="table short">
                   @if (instances().length || store.loading() || store.loadError()) {
-                    <app-data-grid [rows]="instances()" [columns]="instanceColumns" field="key" [selected]="instanceKey()" (picked)="pickInstance($event)" />
+                    <app-data-grid [rows]="instances()" [columns]="instanceColumns" field="key" [selected]="instanceKey()" label="Vast.ai instances" (picked)="pickInstance($event)" />
                   } @else {
                     <p class="empty-line">(no instances)</p>
                   }
@@ -370,7 +370,7 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
                 <p class="hint mono">Floors: {{ vast().floors }}</p>
                 <div class="table tall">
                   @if (offers().length || store.loading() || store.loadError()) {
-                    <app-data-grid [rows]="offers()" [columns]="offerColumns" field="id" [selected]="offerId()" (picked)="pickOffer($event)" />
+                    <app-data-grid [rows]="offers()" [columns]="offerColumns" field="id" [selected]="offerId()" label="Vast.ai offers" (picked)="pickOffer($event)" />
                   } @else {
                     <p class="empty-line">(Find offers)</p>
                   }
@@ -403,6 +403,7 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
     .inline-link:hover { color: var(--accent-hi); }
     .body { min-height: 0; height: calc(100% - 45px); padding-top: 16px; overflow: auto; }
     .cols { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 30px; align-items: start; }
+    .keys-note { margin: 0 0 10px; font-size: 12.5px; color: var(--fg-muted); }
     .main { display: flex; flex-direction: column; gap: 22px; max-width: 1180px; padding-bottom: 16px; }
     .rows { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
     .rows.url { margin-top: 14px; }
@@ -425,6 +426,7 @@ const PROBE_KINDS = ['startup', 'readiness'] as const;
     .table.short { height: 190px; }
     .table.tall { height: 300px; }
     @media (max-width: 1080px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+    @media (max-width: 860px) { .tab { height: 44px; } }
   `,
 })
 export class ConfigPage {

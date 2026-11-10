@@ -40,7 +40,7 @@ interface CatalogState {
 
         <div class="table">
           @if (rows().length || store.loading() || store.loadError()) {
-            <app-data-grid [rows]="rows()" [columns]="columns" field="id" [selected]="selected()" (picked)="pick($event)" />
+            <app-data-grid [rows]="rows()" [columns]="columns" field="id" [selected]="selected()" label="Prompt catalog" (picked)="pick($event)" />
           } @else {
             <div class="empty-sheet">
               <p class="empty-title">The shelf is empty</p>

@@ -41,7 +41,6 @@ interface TokensState {
               <span class="dot unknown"></span>
               <span class="name"><span class="word">{{ label }}</span></span>
               <div class="control"><input disabled placeholder="Loading…" /></div>
-              <button class="btn ghost probe" type="button" disabled>Check</button>
             </div>
           }
         }
@@ -100,7 +99,7 @@ interface TokensState {
     .slots { display: grid; gap: var(--space-sm); max-width: 900px; }
     .slot {
       display: grid;
-      grid-template-columns: 14px 142px minmax(0, 1fr) auto;
+      grid-template-columns: 14px minmax(142px, max-content) minmax(0, 1fr) auto;
       align-items: center;
       gap: var(--space-md);
     }
@@ -133,7 +132,7 @@ interface TokensState {
       color: var(--fg);
       font-family: var(--font-mono);
       font-size: 12.5px;
-      box-shadow: inset 0 1px 0 rgb(0 0 0 / 0.35);
+      box-shadow: var(--field-inset);
       transition: border-color 120ms ease, background 120ms ease;
     }
     input:hover { border-color: var(--fg-muted); }
@@ -155,10 +154,12 @@ interface TokensState {
     .foot { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: var(--space-sm); }
     .foot .hint { flex-basis: 100%; }
     @media (max-width: 760px) {
-      .slot { grid-template-columns: 14px minmax(0, 1fr) auto; }
+      .slot { grid-template-columns: 14px minmax(0, 1fr); }
       .name { grid-column: 2; }
       .control { grid-column: 2; }
-      .probe { grid-column: 3; grid-row: 2; }
+      .probe { grid-column: 2; grid-row: 3; justify-self: start; }
+      .control input,
+      .reveal { height: 44px; }
     }
   `,
 })

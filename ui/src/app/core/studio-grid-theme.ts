@@ -1,16 +1,22 @@
 import { themeQuartz } from 'ag-grid-community';
 
-/** The studio's palette, role for role, so a grid matches the page around it. */
+/** A token from the page, with the shipped value as the pre-CSS fallback. */
+function token(name: string, fallback: string): string {
+  if (typeof document === 'undefined') return fallback;
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+}
+
+/** The studio's palette, read from the page's tokens so a grid matches it. */
 const PALETTE = {
-  bg: '#1B2836',
-  surface: '#243344',
-  surfaceHi: '#2E4458',
-  well: '#141E28',
-  fg: '#E8DCC8',
-  fgMuted: '#A6B0C0',
-  accent: '#E39AA9',
-  accentFg: '#1B2836',
-  border: '#3A4F63',
+  bg: token('--bg', '#1B2836'),
+  surface: token('--surface', '#243344'),
+  surfaceHi: token('--surface-hi', '#2E4458'),
+  well: token('--well', '#141E28'),
+  fg: token('--fg', '#E8DCC8'),
+  fgMuted: token('--fg-muted', '#A6B0C0'),
+  accent: token('--accent', '#E39AA9'),
+  accentFg: token('--accent-fg', '#1B2836'),
+  border: token('--border', '#3A4F63'),
 } as const;
 
 /** The one AG Grid theme the studio uses. A grid that needs its own look adds params here. */

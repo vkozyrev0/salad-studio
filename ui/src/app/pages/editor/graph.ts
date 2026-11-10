@@ -140,7 +140,7 @@ const PORT_R = 4.5;
       background: var(--surface);
       border: 1px solid var(--rule);
       border-radius: var(--radius-control);
-      box-shadow: 0 2px 8px rgb(0 0 0 / 0.3);
+      box-shadow: var(--card-shadow);
     }
     .zoom button {
       height: 24px; min-width: 26px; padding: 0 6px;

@@ -138,6 +138,11 @@ class WebServices:
         self.bind()
         if not timers:
             return
+        # Pay the history's cold parse before the server prints its URL, so the
+        # first History page reads the cache instead of waiting on the disk.
+        from salad_studio import prompt_history
+
+        prompt_history.list_prompts()
         self._timers = [
             self.core.call_later(probe_after_ms, lambda: self.check_salad(silent=True)),
             self.core.every(SALAD_POLL_MS, self._salad_tick),

@@ -1,6 +1,5 @@
 import { Routes } from '@angular/router';
 import { Shell } from './shell/shell';
-import { TokensPage } from './pages/tokens/tokens-page';
 
 /**
  * Hash routing: the server needs no rewrite rule, only the one document.
@@ -22,7 +21,10 @@ export const routes: Routes = [
         path: 'settings',
         loadComponent: () => import('./pages/settings/settings-page').then((m) => m.SettingsPage),
       },
-      { path: 'tokens', component: TokensPage },
+      {
+        path: 'tokens',
+        loadComponent: () => import('./pages/tokens/tokens-page').then((m) => m.TokensPage),
+      },
       {
         path: 'loras',
         loadComponent: () => import('./pages/loras/loras-page').then((m) => m.LorasPage),
